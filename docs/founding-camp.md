@@ -7,7 +7,7 @@ prologue before the settlement confirmation:
 
 1. **Beyond the Milky Way:** humanity opens a wormhole to another galaxy.
 2. **Your stellar charter:** a corporation receives the right to settle a planet.
-3. **A world to call home:** two thousand settlers begin a small frontier colony.
+3. **A world to call home:** seven thousand settlers begin a small frontier colony.
 4. **Stay vigilant:** pirates and privateers from other charters threaten frontier trade; protect your ships and your new home.
 
 Each scene has a new original illustration, responsive 768/1280/1672px WebP
@@ -42,7 +42,7 @@ world" step, which defaulted to Mineral Highlands.
 These are alternative profiles for the allocated home world, not three free
 colonies. Whole-system ownership and galaxy geography are unchanged. No extra
 habitable planets are generated. All profiles retain the same starter package:
-6,000 people (Oct 16 2026: one workforce per charter post), 2,000 credits
+7,000 people (one workforce per charter post), 2,000 credits
 and the charter kit, and no ships
 ([founding-charter.md](founding-charter.md), charter v4, Oct 14 2026).
 
@@ -52,7 +52,10 @@ Warehouse, farms, Habitat, power plant or mine. The ship's holds, 1,000 goods,
 are the colony's storage, and its reactor gives the planet 1 MW. The settlers
 live aboard until the founder builds the Habitat. The founder builds the
 Bioharvester, Habitat, Agroplex and Mining Complex as the charter's first four
-steps. Camp accommodation is 3,000 people once Habitat I stands.
+steps. The Habitat is a plain Habitat I: 8,000 people a level × the world's
+size and environment, so 12,500 on the Large Terran home (§habitat-rebase,
+Nov 1 2026; until then the camp's Habitat I was a smaller "Founding
+Quarters" of 8,000, or 12,000 after a Permanent Quarters project).
 
 The camp world is a Large habitable planet with 4 Infrastructure sites: the
 Habitat and Agroplex take 2, which leaves two, one for the charter's Academy.
@@ -115,7 +118,6 @@ unchanged. See `client/art-src/planet-view/habitable-v1/README.md`.
 | Prospect the home world | None | 60 seconds | Profile opportunity; prerequisite for surface workings |
 | Open surface workings | 8 Alloys, 2 Machinery | 120 seconds | 50% more Ferrite deposit output; requires a built mine |
 | Expand the storehouse | 7 Alloys, 1 Machinery | 90 seconds | The colony ship's holds rise from 1,000 to 1,300 |
-| Build permanent quarters | 5 Alloys, 1 Machinery | 120 seconds | Base accommodation rises from 3,000 to 6,000; needs Habitat I |
 
 Projects appear in the planet panel and the parallel founding goals. They are
 not additional mandatory export milestones. They use unreserved local goods
@@ -125,7 +127,7 @@ Order delivery, build progress, completion notices and resulting capacity
 changes follow the normal command/report light delays. Research-gated structure
 tiers remain gated; these projects do not grant Tier II structures.
 
-The charter kit covers all four projects alongside the charter's own builds,
+The charter kit covers all three projects alongside the charter's own builds,
 in any order. Project costs do not create an early requirement to import
 materials before the opening can be completed.
 

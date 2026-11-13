@@ -128,7 +128,7 @@ mod tests {
                 let there = Vec2::new(distance, 0.0);
                 let fuel = crate::fuel::route_estimate(Vec2::ZERO, there, empty, 1.0, [Vec2::ZERO, there])
                     + crate::fuel::route_estimate(there, Vec2::ZERO, barge.mass(), 1.0, [Vec2::ZERO, there]);
-                assert!(fuel <= barge.fuel_capacity(), "seed {seed}: {fuel:.1} > {:.1}", barge.fuel_capacity());
+                assert!(fuel <= barge.energy_capacity(), "seed {seed}: {fuel:.1} > {:.1}", barge.energy_capacity());
             }
         }
     }

@@ -46,13 +46,13 @@ export async function buildPlanetSurfaceStructureArt() {
   // giants), each covering a range of its tiers.
   const orbitals = additions.orbitals ?? [];
   const assets = [...buildings, ...biomes, ...orbitals];
-  assert.equal(buildings.length, 148);
+  assert.equal(buildings.length, 151);
   assert.equal(biomes.length, 13);
   assert.equal(orbitals.length, 2);
-  assert.equal(new Set(assets.map(a => a.file)).size, 163);
+  assert.equal(new Set(assets.map(a => a.file)).size, 166);
   const families = Object.fromEntries([...new Set(buildings.map(a => a.family))].sort().map(key => {
     const tiers = buildings.filter(a => a.family === key).map(a => a.tier).sort((a, b) => a - b);
-    const max = key === "command_center" ? 3 : key === "service_berth" ? 1 : 6;
+    const max = key === "command_center" || key === "veil_projector" ? 3 : key === "service_berth" ? 1 : 6;
     assert.deepEqual(tiers, Array.from({ length: max }, (_, i) => i + 1), `${key}: complete tiers`);
     return [key, max];
   }));

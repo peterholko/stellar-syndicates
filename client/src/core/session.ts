@@ -1,6 +1,8 @@
 import type {
+  Commodity,
   BattleRecordView,
   EngagementEstimate,
+  FoundingStage,
   GroundRecordView,
   JumpDepartureView,
   ServerMsg,
@@ -16,6 +18,7 @@ import { loadBattleMarks } from "../battlehistory";
 import { chartStars } from "../stars";
 import { crackdownOf, decreeOf } from "./derive/season";
 import { vendettaBeatOf } from "./derive/vendetta";
+import { FOUNDING_STEP } from "./derive/founding";
 import { noteSurveyReports } from "./derive/geo";
 import {
   marketReservations,
@@ -35,11 +38,14 @@ export const jumpDepartureKey = (
   departure: Pick<JumpDepartureView, "fleet" | "departed_at">,
 ): string => `${departure.fleet}:${departure.departed_at.toFixed(6)}`;
 
-/** §chapters: the milestone lines that open the charter's painted chapters
- * (`founding::charter_stipend`'s titles). */
-const CHAPTER_OPENINGS: Record<string, ChapterOpening> = {
-  "Shipyard staffed": "pirates", "Privateer den eliminated": "expansion", "Nearby system charted": "reach",
-};
+/** §chapters: the steps that open the charter's painted chapters, as the
+ * served stage reaches them. §three-stipends (Peter, Nov 6 2026: "There are
+ * too many milestones"): the "Shipyard staffed" and "Nearby system charted"
+ * stipends that opened them are gone. §den-loot (Peter, Nov 5 2026: "remove
+ * the 'Trade Lanes Open' event panel, we can have that later on"): the den's
+ * fall ("{Family} den eliminated · contract") opens the loot's panel instead
+ * of the Expansion chapter. */
+const CHAPTER_STAGES: [ChapterOpening, FoundingStage][] = [["pirates", "build_interceptor"], ["reach", "build_barge"]];
 
 export function applyLinkStatus(status: LinkStatus, st: ViewState): CoreEvent[] {
   st.link = status;
@@ -115,6 +121,8 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       const hadServedView = st.systems.length > 0 || st.ghosts.length > 0;
       const previousGhosts = new Map(st.ghosts.map((ghost) => [ghost.id, ghost]));
       const previousSystems = new Map(st.systems.map((system) => [system.id, system]));
+      // §signal-report: the signals whose report had already reached command.
+      const previousReports = new Set((st.signals?.signals ?? []).filter((signal) => signal.report).map((signal) => signal.id));
       const previousOrders = { ...st.orders };
       const previousCompletedResearch = new Set(
         st.research?.programmes.filter((programme) => programme.state === "completed").map((programme) => programme.id) ?? [],
@@ -154,6 +162,7 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
       st.credits = msg.wallet.credits;
       st.freight = msg.freight;
       st.charter = msg.charter;
+      const previousStage = st.founding?.stage;
       st.founding = msg.founding;
       st.charterLedger = msg.charter_ledger ?? null;
       st.leave = msg.leave ?? null;
@@ -222,6 +231,11 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
             derived.push({ kind: "ResearchCompleted", programmeId: programme.id, programmeName: programme.name });
           }
         }
+        // §signal-report (Peter, Nov 11 2026): a signal's report reaching
+        // command opens its panel: what happened, and what came home.
+        for (const signal of st.signals?.signals ?? []) {
+          if (signal.report && !previousReports.has(signal.id)) derived.push({ kind: "StoryEvent", story: "signal", signalId: signal.id });
+        }
       }
 
       for (const [id, dest] of Object.entries(st.orders)) {
@@ -230,6 +244,16 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
         const parked = Math.hypot(ghost.vel.x, ghost.vel.y) < 0.5;
         if (parked && Math.hypot(ghost.pos.x - dest.x, ghost.pos.y - dest.y) < 500) {
           delete st.orders[id];
+        }
+      }
+      // §chapters: a chapter opens painted as the stage reaches its step.
+      const stage = msg.founding?.stage;
+      if (hadServedView && previousStage && stage) {
+        for (const [chapter, opens] of CHAPTER_STAGES) {
+          const step = FOUNDING_STEP[opens];
+          if (FOUNDING_STEP[previousStage] < step && FOUNDING_STEP[stage] >= step) {
+            derived.push({ kind: "StoryEvent", story: "chapter", chapter });
+          }
         }
       }
       recordPriceHistory(st);
@@ -418,13 +442,30 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
           const reward = /^Charter milestone · (.+?) · (.+)\.$/.exec(entry.text);
           if (reward) return { kind: "CharterMilestone", title: "Charter milestone", message: `${reward[1]} · ${reward[2]}` };
           // §charter-v5: the raid's report is a story pop-up, not a toast.
+          // §raid-losses (Peter, Nov 8 2026): what it took, from the entry's
+          // goods (negative is lost): every good the raid takes, engines too.
           const raid = /^Pirates raided .+ and took (.+)\.$/.exec(entry.text);
           if (raid) {
-            const took = (good: string) => Number(new RegExp(`([\\d,]+) ${good}`).exec(raid[1])?.[1]?.replace(/,/g, "") ?? 0);
-            return { kind: "StoryEvent", story: "pirates", semiconductors: took("semiconductors"), armaments: took("armaments") };
+            const goods: Partial<Record<Commodity, number>> = {};
+            for (const [good, n] of Object.entries(entry.data?.goods ?? {}) as [Commodity, number][]) {
+              if (n < 0) goods[good] = -n;
+            }
+            if (!Object.keys(goods).length) {
+              // A line without its goods: read the two the old lines named.
+              const took = (name: string) => Number(new RegExp(`([\\d,]+) ${name}`).exec(raid[1])?.[1]?.replace(/,/g, "") ?? 0);
+              if (took("semiconductors")) goods.electronics = took("semiconductors");
+              if (took("armaments")) goods.armaments = took("armaments");
+            }
+            return { kind: "StoryEvent", story: "pirates", goods };
           }
           // The trader's docking is the first the founder hears of it.
           if (entry.text.startsWith("A free trader docked at ")) return { kind: "StoryEvent", story: "free_trader" };
+          // §den-contract: the Authority's contract on the den, with the kill's report.
+          const contract = /^Authority contract · (.+) · (.+?)\.$/.exec(entry.text);
+          if (contract) return { kind: "StoryEvent", story: "den_contract", title: contract[1], reward: contract[2] };
+          // §privateer-contract: the Authority's contract on the privateer, as the hunt begins.
+          const offered = /^Authority contract offered · (.+) · (.+?)\.$/.exec(entry.text);
+          if (offered) return { kind: "StoryEvent", story: "privateer_contract", title: offered[1], reward: offered[2] };
           // §vendetta: each turn of the pirate family's story is a transmission.
           const beat = vendettaBeatOf(entry.text);
           if (beat) return { kind: "StoryEvent", story: "vendetta", beat, text: entry.text.slice("Vendetta · ".length) };
@@ -443,22 +484,19 @@ export function applyServerMessage(msg: ServerMsg, st: ViewState): CoreEvent[] {
           // §signals: a new signal near home, and each report.
           const signal = /^New signal · (.+)\.$/.exec(entry.text);
           if (signal) return { kind: "SignalNews", title: "New signal", message: signal[1], tone: "quiet" };
-          const find = /^(First find \d+\/\d+|Report in) · (.+)\.$/.exec(entry.text);
-          if (find) return { kind: "SignalNews", title: find[1], message: find[2], tone: "good" };
+          // §signal-report (Nov 12 2026): a report's panel tells it, so its
+          // line raises no notice of its own; the log keeps it.
+          if (/^(First find \d+\/\d+|Report in) · /.test(entry.text)) return null;
           // §medals: rewards are moments too.
           const medal = /^Week (\d+) · (Gold|Silver|Bronze) medal · (.+)\.$/.exec(entry.text);
           if (medal) return { kind: "CharterMilestone", title: `${medal[2]} medal`, message: `Week ${medal[1]} · ${medal[3]}` };
           return null;
         })
         .filter((event): event is CoreEvent => event !== null) : [];
-      // §chapters: three of the charter's chapters open with a painting, on
-      // the milestone line that starts them (the toast still shows).
-      const chapters = hadTimeline ? msg.entries
-        .filter((entry) => !previous.has(`${entry.at_time}:${entry.severity}:${entry.text}`))
-        .map((entry) => CHAPTER_OPENINGS[/^Charter milestone · (.+?) · /.exec(entry.text)?.[1] ?? ""])
-        .filter((chapter): chapter is ChapterOpening => !!chapter)
-        .map((chapter): CoreEvent => ({ kind: "StoryEvent", story: "chapter", chapter })) : [];
-      return [{ kind: "TimelineApplied" }, ...rejected, ...raids, ...milestones, ...chapters];
+      const loot = hadTimeline && msg.entries.some((entry) => !previous.has(`${entry.at_time}:${entry.severity}:${entry.text}`)
+        && / den eliminated$/.test(/^Charter milestone · (.+?) · /.exec(entry.text)?.[1] ?? ""))
+        ? [{ kind: "StoryEvent", story: "den_loot" } as CoreEvent] : [];
+      return [{ kind: "TimelineApplied" }, ...rejected, ...raids, ...milestones, ...loot];
     }
 
     case "Transactions":

@@ -509,10 +509,12 @@ pub struct FuelRescueRun {
     pub fuel: f64,
     pub cost: f64,
     pub leg: RescueLeg,
-    /// §fuel-overhaul: Uranium for a fleet flying Slow, else Deuterium.
-    #[serde(default)]
-    pub uranium: bool,
+    /// §shipbuilding-overhaul: the fuel delivered — the thirstiest tank's.
+    #[serde(default = "default_rescue_fuel")]
+    pub fuel_kind: crate::cargo::Commodity,
 }
+
+fn default_rescue_fuel() -> crate::cargo::Commodity { crate::cargo::Commodity::Deuterium }
 
 /// Why an AAA callout was not accepted. Typed so the owner receives an exact,
 /// local explanation instead of a button that appears to do nothing.

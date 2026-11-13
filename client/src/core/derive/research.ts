@@ -11,12 +11,12 @@ export function bindResearchNet(source: () => Net | null): void {
 }
 
 
-// The full ordered queue the player controls = [active, ...queue-ahead]. Sending
-// it back as SetResearchQueue re-promotes the front to active (the sim's rule).
+// The rows the player sees = [active, ...waiting], each id once. The active row
+// is a pinned readout: only the waiting rows go back on the wire (below).
 export function researchQueueIds(): string[] {
   const r = state.research;
   if (!r) return [];
-  return r.active ? [r.active.id, ...r.queue] : [...r.queue];
+  return [...new Set(r.active ? [r.active.id, ...r.queue] : r.queue)];
 }
 
 /** Has the player completed programme `id`? */
@@ -24,9 +24,71 @@ export function researched(id: string): boolean {
   return state.research?.programmes.some(p => p.id === id && p.state === "completed") ?? false;
 }
 
-export function sendResearchQueue(ids: string[]): void {
+/** SetResearchQueue's payload for a set of displayed rows: the waiting ids only.
+ * The sim (ResearchState::set_queue) keeps an active programme and replaces
+ * the queue behind it; with nothing active it promotes the first id. Echoing
+ * the active id would queue it a second time behind itself. */
+export function researchQueueCommand(rows: string[]): string[] {
+  const active = state.research?.active?.id;
+  return [...new Set(rows.filter(id => id !== active))];
+}
+
+export function sendResearchQueue(rows: string[]): void {
   const net = netSource();
-  if (net) net.send({ type: "SetResearchQueue", queue: ids });
+  if (net) net.send({ type: "SetResearchQueue", queue: researchQueueCommand(rows) });
+}
+
+/** Only a programme the last report calls available, not already a row, may be
+ * added. Sending never marks anything queued: the next report does. */
+export function canQueueResearch(id: string): boolean {
+  const programme = state.research?.programmes.find(p => p.id === id);
+  return programme?.state === "available" && !researchQueueIds().includes(id);
+}
+
+export type ResearchQueueEdit = { add: string } | { remove: number } | { move: number; by: -1 | 1 };
+
+/** The displayed rows after one edit, or null when it is refused: an
+ * unavailable or duplicate add, a stale index, or anything that would move or
+ * remove the pinned active row (row 0 while work is active). Both shells use
+ * this, so neither can send what the other forbids. */
+export function editResearchQueue(edit: ResearchQueueEdit): string[] | null {
+  const rows = researchQueueIds();
+  const firstMovable = state.research?.active ? 1 : 0;
+  if ("add" in edit) return canQueueResearch(edit.add) ? [...rows, edit.add] : null;
+  const index = "remove" in edit ? edit.remove : edit.move;
+  if (!Number.isInteger(index) || index < firstMovable || index >= rows.length) return null;
+  if ("remove" in edit) return rows.filter((_, i) => i !== index);
+  const to = index + edit.by;
+  if (to < firstMovable || to >= rows.length) return null;
+  [rows[index], rows[to]] = [rows[to], rows[index]];
+  return rows;
+}
+
+/** The sim's ladder rule (research.rs `is_predecessor`): Tiers II–III follow
+ * the field's shared (school-less) programmes, Tier IV and up the same school. */
+export function isPredecessor(q: Pick<ProgrammeView, "field" | "school" | "tier">, p: Pick<ProgrammeView, "field" | "school" | "tier">): boolean {
+  if (q.tier + 1 !== p.tier || q.field !== p.field) return false;
+  return p.tier <= 3 ? q.school === null : q.school === p.school;
+}
+
+/** A programme's state in words, readable without its colour. A programme
+ * sent to the queue reads Queued once it is a row. */
+export function researchStatus(programme: Pick<ProgrammeView, "id" | "state">, queue: string[]): string {
+  if (programme.state === "completed") return "Completed";
+  if (programme.state === "active") return "In progress";
+  if (programme.state === "queued" || queue.includes(programme.id)) return "Queued";
+  if (programme.state === "available") return "Available";
+  return "Locked";
+}
+
+const REACHED = new Set(["completed", "active", "queued", "available"]);
+
+/** §research-panel (Peter, Nov 1 2026: "hide what research is available past
+ * 1 level deep"): what the research panels render. Everything researched or
+ * researchable, plus the next step after each of those; nothing deeper. */
+export function visibleProgrammes(programmes: ProgrammeView[]): ProgrammeView[] {
+  const reached = programmes.filter(p => REACHED.has(p.state));
+  return programmes.filter(p => REACHED.has(p.state) || p.tier === 1 || reached.some(q => isPredecessor(q, p)));
 }
 
 
@@ -39,6 +101,9 @@ export function researchSuppliesPerHour(programme: Pick<ProgrammeView, "supplies
 }
 
 export const supplyAmount = (perHour: number): string => perHour >= 10 ? Math.round(perHour).toLocaleString() : perHour.toFixed(1);
+
+/** Research work in research-hours at rate 1 (one staffed Tier I Academy). */
+export const researchHours = (seconds: number): string => `${(seconds / 3600).toLocaleString("en-US", { maximumFractionDigits: 1 })} h`;
 
 
 // §node: one-line description of what a node's bonus does (by slug). Used in the

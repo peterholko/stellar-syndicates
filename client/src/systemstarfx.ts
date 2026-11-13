@@ -4,18 +4,18 @@
 //
 // Each type keeps its approved artwork and measured visible size (the galaxy
 // handoff depends on that size). Identity comes from MOTION and light layered
-// around it: a binary pair turning about its barycentre, a pulsar's lighthouse
-// sweep, a magnetar's flicker and flares, a red giant's swollen envelope, a
-// black hole's infall. Everything is a pure function of wall time, so pausing
-// or re-entering a system never accumulates state.
+// around it: a surface turning about its north–south axis (starroll.ts: a
+// binary's two stars each on their own, a pulsar's beams swinging round like a
+// lighthouse's), a magnetar's flicker and flares, a red giant's swollen
+// envelope, a black hole's infall. Everything is a pure function of wall time,
+// so pausing or re-entering a system never accumulates state.
 
 import { Container, Graphics, Sprite } from "pixi.js";
 import { glowSpriteTexture } from "./systembodyfx";
 import { ORBIT_TILT } from "./systemlayout";
+import { starPeriod, starRoll, type RollingStar } from "./starroll";
 
 interface StarMotion {
-  /** Seconds per full turn of the star artwork (0 = never turns). */
-  spin: number;
   /** Corona size relative to the visible disc, and its breathing depth. */
   corona: number;
   breathe: number;
@@ -25,16 +25,16 @@ interface StarMotion {
 }
 
 const MOTION: Record<string, StarMotion> = {
-  red_dwarf: { spin: 260, corona: 1.9, breathe: 0.08, envelope: 0, flicker: 0.04 },
-  yellow_star: { spin: 300, corona: 2.1, breathe: 0.06, envelope: 0, flicker: 0 },
-  white_star: { spin: 300, corona: 2.1, breathe: 0.05, envelope: 0, flicker: 0 },
-  blue_giant: { spin: 340, corona: 2.4, breathe: 0.07, envelope: 0, flicker: 0 },
-  red_giant: { spin: 520, corona: 2.0, breathe: 0.1, envelope: 3.2, flicker: 0 },
-  white_dwarf: { spin: 200, corona: 2.6, breathe: 0.04, envelope: 0, flicker: 0 },
-  neutron_star: { spin: 7, corona: 1.6, breathe: 0, envelope: 0, flicker: 0.35 },
-  binary_star: { spin: 140, corona: 1.7, breathe: 0.05, envelope: 0, flicker: 0 },
-  black_hole: { spin: 0, corona: 1.5, breathe: 0.12, envelope: 0, flicker: 0 },
-  magnetar: { spin: 46, corona: 1.9, breathe: 0.1, envelope: 0, flicker: 0.25 },
+  red_dwarf: { corona: 1.9, breathe: 0.08, envelope: 0, flicker: 0.04 },
+  yellow_star: { corona: 2.1, breathe: 0.06, envelope: 0, flicker: 0 },
+  white_star: { corona: 2.1, breathe: 0.05, envelope: 0, flicker: 0 },
+  blue_giant: { corona: 2.4, breathe: 0.07, envelope: 0, flicker: 0 },
+  red_giant: { corona: 2.0, breathe: 0.1, envelope: 3.2, flicker: 0 },
+  white_dwarf: { corona: 2.6, breathe: 0.04, envelope: 0, flicker: 0 },
+  neutron_star: { corona: 1.6, breathe: 0, envelope: 0, flicker: 0.35 },
+  binary_star: { corona: 1.7, breathe: 0.05, envelope: 0, flicker: 0 },
+  black_hole: { corona: 1.5, breathe: 0.12, envelope: 0, flicker: 0 },
+  magnetar: { corona: 1.9, breathe: 0.1, envelope: 0, flicker: 0.25 },
 };
 
 /** Shapes above the star are drawn this many times larger, then scaled back.
@@ -50,13 +50,6 @@ const TINT: Record<string, number> = {
   red_giant: 0xff6a3c, white_dwarf: 0xd8e6ff, neutron_star: 0x8fc8ff, binary_star: 0xffcf8a,
   black_hole: 0xff9a4a, magnetar: 0xb98cff,
 };
-
-/** The star artwork's turn at wall time `t` (s). The galaxy map's resolved
- * disc turns with the System View's, so the handoff never snaps. */
-export function starSpinAngle(slug: string, t: number): number {
-  const motion = MOTION[slug] ?? MOTION.yellow_star;
-  return motion.spin > 0 ? -(t / motion.spin) * Math.PI * 2 : 0;
-}
 
 export class StarFx {
   /** Behind the star sprite (corona/envelope), in normalized star units. */
@@ -109,14 +102,14 @@ export class StarFx {
     this.flash.visible = slug === "neutron_star";
   }
 
-  /** Animate at wall time `t` (s). `sprite` is the star artwork (may be null
-   * while art loads); its scale is never touched — only its rotation. */
-  update(t: number, sprite: Sprite | null): void {
+  /** Animate at wall time `t` (s). `star` is the star artwork (null while
+   * art loads); its scale is never touched, only its surface's turn. */
+  update(t: number, star: RollingStar | null): void {
     const motion = MOTION[this.slug] ?? MOTION.yellow_star;
-    if (sprite) sprite.rotation = starSpinAngle(this.slug, t);
+    star?.roll(t);
     const breath = 0.5 + 0.5 * Math.sin(t * 0.9);
     const flicker = motion.flicker > 0
-      ? motion.flicker * (0.5 + 0.5 * Math.sin(t * (Math.PI * 2) / Math.max(0.4, motion.spin / 2)))
+      ? motion.flicker * (0.5 + 0.5 * Math.sin(t * (Math.PI * 2) / Math.max(0.4, starPeriod(this.slug) / 2)))
       : 0;
     if (this.corona) {
       const base = this.corona.texture.width;
@@ -146,8 +139,9 @@ export class StarFx {
           .fill({ color: 0xffc27a, alpha: 0.75 * (1 - life * 0.7) });
       }
     } else if (this.slug === "neutron_star" && this.flash) {
-      // The lighthouse pulse: a bright flash each time a beam sweeps past.
-      const pulse = Math.pow(Math.abs(Math.cos((t / motion.spin) * Math.PI * 2)), 24);
+      // The lighthouse pulse: a bright flash each time a beam swings round
+      // to face the viewer (a quarter turn from its painted pose).
+      const pulse = Math.pow(Math.abs(Math.sin(starRoll(this.slug, t))), 24);
       this.flash.alpha = 0.6 * pulse;
     }
   }

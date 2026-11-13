@@ -21,7 +21,7 @@
     "name": "titan",
     "title": "A titan's last stand",
     "file": "titan.json",
-    "rounds": 206
+    "rounds": 232
   },
   {
     "name": "collision",
@@ -33,7 +33,7 @@
     "name": "formations",
     "title": "A battle line against an escort ring",
     "file": "formations.json",
-    "rounds": 89
+    "rounds": 87
   },
   {
     "name": "lockdown",
@@ -45,7 +45,7 @@
     "name": "escorts",
     "title": "Destroyer escorts against an interceptor swarm",
     "file": "escorts.json",
-    "rounds": 59
+    "rounds": 60
   },
   {
     "name": "home",

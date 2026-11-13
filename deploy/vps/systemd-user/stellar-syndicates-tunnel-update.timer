@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily check for a new cloudflared
+
+[Timer]
+OnCalendar=*-*-* 03:30 America/Vancouver
+Persistent=true
+
+[Install]
+WantedBy=timers.target

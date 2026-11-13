@@ -1,7 +1,7 @@
 import type { ClientMsg, GhostView } from "../protocol";
 import type { PendingIntent, ViewState } from "../state";
 import { label } from "../icons";
-import { dockedAtSystem, slowCapable, estimatedFuelForLeg, regimeStore, fleetBaseSpeed, fleetTradeCapacity, guardCapable, mineCapable, prospectCapable, PROSPECT_SECS, shipKindLabel, transitLabel, transitSpeedMultiplier, WARP_FACTOR } from "./derive/fleet";
+import { dockedAtSystem, slowCapable, estimatedFuelForLeg, regimeStore, fleetBaseSpeed, fleetTradeCapacity, guardCapable, mineCapable, prospectCapable, PROSPECT_SECS, shipKindLabel, transitLabel, transitSpeedMultiplier, WARP_FACTOR, REACTOR_ENERGY } from "./derive/fleet";
 import { ANCHOR_SECS, isStation } from "./derive/belts";
 
 /** §belts: mirror of the sim's DOCK_RADIUS: a freighter loads beside its station. */
@@ -145,9 +145,10 @@ export function destinationLabel(dest: { x: number; y: number }, st: ViewState):
 export function legEstimate(fleet: GhostView, dest: { x: number; y: number }): string {
   const distance = Math.hypot(dest.x - fleet.pos.x, dest.y - fleet.pos.y);
   const flight = distance / Math.max(1, fleetBaseSpeed(fleet) * WARP_FACTOR * transitSpeedMultiplier(fleet));
-  const fuel = estimatedFuelForLeg(fleet, dest);
-  // §fuel-overhaul: the store the fleet's throttle burns (Uranium on Slow).
-  const store = regimeStore(fleet), served = store.fuel === "uranium" ? fleet.uranium : fleet.fuel;
+  const fuelEnergy = estimatedFuelForLeg(fleet, dest);
+  // §shipbuilding-overhaul: the fleet's primary tank, in its own fuel.
+  const store = regimeStore(fleet), served = store.served;
+  const fuel = fuelEnergy / REACTOR_ENERGY[store.grade];
   const tank = served == null ? "" : ` / ${Math.round(served)} aboard`;
   const short = served != null && fuel > served + 1e-6 ? " · FUEL SHORT" : "";
   return `${Math.round(distance).toLocaleString()} su · ETA ~${fmtDur((fleet.age ?? 0) + flight)} · ${label(store.fuel)} ~${Math.ceil(fuel)}${tank}${short}`;

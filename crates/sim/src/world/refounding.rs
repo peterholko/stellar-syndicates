@@ -13,6 +13,9 @@ impl World {
         invited_by: Option<PlayerId>, events: &mut Vec<Event>)
     {
         let legacy_test_bootstrap = self.uses_legacy_test_bootstrap();
+        // Requisitions reach a corporation from its second day; one founded
+        // once they run starts with two of them in hand (§season).
+        let late_grant = if legacy_test_bootstrap { 0.0 } else { crate::season::late_charter_grant(self.season.grip) };
         // Seed the home system with the founding kit's fuel so fleets
         // move from turn one (§fuel-overhaul): Uranium for slow freight
         // until the home's mill runs, a little Deuterium for a fast trip.
@@ -37,12 +40,9 @@ impl World {
                 // §charter-v4: only the landed colony ship stands.
                 sys.bare_landing();
             }
-            for (fuel, units) in [
-                (crate::fuel::FISSION_FUEL, crate::fuel::URANIUM_HOME_SEED),
-                (crate::fuel::MOVEMENT_FUEL, crate::fuel::DEUTERIUM_HOME_SEED),
-            ] {
-                let seed = units.min(sys.storage_headroom());
-                *sys.stockpile.entry(fuel).or_insert(0.0) += seed;
+            {
+                let seed = crate::fuel::URANIUM_HOME_SEED.min(sys.storage_headroom());
+                *sys.stockpile.entry(crate::fuel::FISSION_FUEL).or_insert(0.0) += seed;
             }
             #[cfg(test)]
             if legacy_test_bootstrap {
@@ -57,9 +57,20 @@ impl World {
                     (crate::cargo::Commodity::Alloys, 100.0),
                     (crate::cargo::Commodity::Polymers, 30.0),
                     (crate::cargo::Commodity::Electronics, 150.0),
-                    (crate::cargo::Commodity::Deuterium, 180.0),
-                    // §fuel-overhaul: every warp hull takes a Warp Core.
-                    (crate::cargo::Commodity::WarpCore, 20.0),
+                    (crate::cargo::Commodity::Deuterium, 154.0),
+                    // §reactors-drives: every warp hull takes engines.
+                    (crate::cargo::Commodity::FissionReactor, 20.0),
+                    (crate::cargo::Commodity::ZephyrDrive, 20.0),
+                    // §hull-ladder: two Tiny Freighters' kits — frame, bay,
+                    // plating, precision parts — inside the same 600 units
+                    // (the sandbox home's storage is nearly full; 26 units of
+                    // Deuterium made room). No guns: a Raider stays
+                    // unaffordable here (`build_rejected_when_stockpile_short`).
+                    (crate::cargo::Commodity::NavComputer, 2.0),
+                    (crate::cargo::Commodity::HullSections, 6.0),
+                    (crate::cargo::Commodity::CargoBay, 2.0),
+                    (crate::cargo::Commodity::Composites, 12.0),
+                    (crate::cargo::Commodity::PrecisionComponents, 4.0),
                 ] {
                     sys.stockpile.insert(commodity, units);
                 }
@@ -157,7 +168,7 @@ impl World {
                 home,
                 command_center: home,
                 home_system: Some(home_system),
-                credits: if legacy_test_bootstrap { 10_000.0 } else { 2_000.0 },
+                credits: if legacy_test_bootstrap { 10_000.0 } else { 2_000.0 + late_grant },
                 wires: Vec::new(),
                 warehouse,
                 // §TCA Phase 2: a fresh corp is issued a clean charter.
@@ -202,6 +213,8 @@ impl World {
                 midgame_stage: crate::operation::MidgameStage::HomeDevelopment,
                 raid_losses: Default::default(),
                 hideouts: Default::default(),
+                licences: Default::default(),
+                claims: Default::default(),
             },
         );
         events.push(Event::new(
@@ -211,6 +224,15 @@ impl World {
                 name: name.to_string(),
             },
         ));
+        if late_grant > 0.0 {
+            events.push(Event::new(self.time, EventPayload::CharterStipend {
+                owner: id,
+                title: "Late charter grant".into(),
+                credits: late_grant,
+                standing: 0.0,
+                dossier: None,
+            }));
+        }
         let interceptor = self.spawn_starting_fleets(id, home, events);
         self.spawn_dev_start_ships(id, home, events);
         if let Some(corp) = self.players.get_mut(&id) {
@@ -416,7 +438,6 @@ fn wipe_system(sys: &mut crate::galaxy::StarSystem) {
     }
     sys.stockpile.clear();
     sys.industry = Default::default();
-    sys.modules.clear();
     sys.defense_pool = 0.0;
     sys.food_state = Default::default();
     sys.blockade = None;
@@ -424,6 +445,8 @@ fn wipe_system(sys: &mut crate::galaxy::StarSystem) {
     sys.mounts.clear();
     sys.garrison_fed = false;
     sys.garrison_suppression = 0.0;
+    sys.veil_up = false;
+    sys.veil_never = false;
     sys.specialists.clear();
     sys.landing_holds = 0.0;
 }
@@ -483,7 +506,7 @@ mod tests {
         w.step(&[restart]);
         let c = &w.players[&owner];
         assert_eq!((c.name.as_str(), c.home_system), ("Phoenix", Some(home)), "its name, on its home");
-        assert_eq!(c.founding.stage, S::BuildBioharvester, "the charter from its first step");
+        assert_eq!(c.founding.stage, S::BuildHabitat, "the charter from its first step");
         assert!(c.founding.vendetta.is_none() && !c.founding.fallen(w.time));
         assert_eq!(c.credits, 2_000.0);
         assert_eq!(w.home_slots.iter().filter(|h| h.owner == Some(owner)).count(), 1, "the same seat");

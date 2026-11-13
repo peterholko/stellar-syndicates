@@ -47,20 +47,6 @@ impl World {
                 }
             }
         }
-        // §charter-gates: the charter's mine, starting now, sets the raid moving
-        // and is built in the privateer's flight time.
-        let starting_mines: Vec<(u64, PlayerId, EntityId)> = self.build_queue.iter()
-            .filter(|job| heads.contains(&job.id)
-                && job.what == (BuildKind::Upgrade { upgrade: crate::StructureKind::MiningComplex })
-                && job.structure_work.as_ref().is_none_or(|work| work.rate == 0.0))
-            .map(|job| (job.id, job.owner, job.system))
-            .collect();
-        let mut flights: BTreeMap<u64, f64> = BTreeMap::new();
-        for (id, owner, system) in starting_mines {
-            if let Some(secs) = self.raid_on_mine_start(owner, system) {
-                flights.insert(id, secs);
-            }
-        }
         for job in &mut self.build_queue {
             if !lined(&job.what) { continue; }
             let active = heads.contains(&job.id);
@@ -79,9 +65,6 @@ impl World {
             });
             let activating = active && work.rate == 0.0;
             work.set_rate(self.tick, if active { 1.0 } else { 0.0 });
-            if let Some(secs) = flights.get(&job.id).filter(|_| activating) {
-                work.required = work.completed + (secs * crate::config::TICK_HZ as f64).ceil().max(1.0);
-            }
             if activating && job.started_tick.is_none() && job.queued_tick.is_some() {
                 job.started_tick = Some(self.tick);
             }
@@ -135,9 +118,12 @@ impl World {
         } else {
             1.0
         };
-        let refunded: Vec<(crate::cargo::Commodity, f64)> = crate::build::recipe_for_tier(BuildKind::Upgrade { upgrade }, built + ahead + 1)
+        let from_recipe: Vec<(crate::cargo::Commodity, f64)> = crate::build::recipe_for_tier(BuildKind::Upgrade { upgrade }, built + ahead + 1)
             .costs.iter().map(|(c, units)| (*c, units * premium)).collect();
         let job = self.build_queue.remove(index);
+        // Exactly what was charged (cost multipliers can move after the
+        // order); older jobs refund from the recipe.
+        let refunded = if job.charged.is_empty() { from_recipe } else { job.charged.clone() };
         let sys = self.systems.iter_mut().find(|s| s.id == system).unwrap();
         for (c, units) in &refunded {
             *sys.stockpile.entry(*c).or_insert(0.0) += units;
@@ -281,13 +267,22 @@ mod tests {
     fn tiers_past_two_cost_more_take_longer_and_refund_what_they_cost() {
         // §tier-curve (R1): I and II share the base recipe, III costs ×1.6 and
         // takes ×20, VI takes ×2,700; explicit ladders keep their own recipes.
-        use crate::build::{recipe_for, recipe_for_tier, COMMAND_CENTER_RECIPES, DEUTERIUM_FUSION_PLANT_RECIPE};
+        // §progression: an income structure climbs its own cost curve.
+        use crate::build::{recipe_for, recipe_for_tier, COMMAND_CENTER_RECIPES, DEUTERIUM_FUSION_PLANT_RECIPE,
+            PRODUCTION_TIER_COST_MULT};
+        let yard = BuildKind::Upgrade { upgrade: K::Shipyard };
+        let yard_base = recipe_for(yard);
+        assert_eq!(recipe_for_tier(yard, 1), recipe_for_tier(yard, 2), "the gentle curve's tiers I–II share a recipe");
+        let third = recipe_for_tier(yard, 3);
+        assert_eq!(third.costs, yard_base.costs.iter().map(|&(c, n)| (c, (n * 1.6).round())).collect::<Vec<_>>());
+        assert_eq!(third.build_ticks, yard_base.build_ticks * 20);
         let mine = BuildKind::Upgrade { upgrade: K::MiningComplex };
         let base = recipe_for(mine);
-        assert_eq!(recipe_for_tier(mine, 1), recipe_for_tier(mine, 2), "the charter's tiers are untouched");
-        let third = recipe_for_tier(mine, 3);
-        assert_eq!(third.costs, base.costs.iter().map(|&(c, n)| (c, (n * 1.6).round())).collect::<Vec<_>>());
-        assert_eq!(third.build_ticks, base.build_ticks * 20);
+        for (i, mult) in PRODUCTION_TIER_COST_MULT.iter().enumerate() {
+            assert_eq!(recipe_for_tier(mine, i as u32 + 1).costs,
+                base.costs.iter().map(|&(c, n)| (c, (n * mult).round())).collect::<Vec<_>>(), "income level {}", i + 1);
+        }
+        assert_eq!(recipe_for_tier(mine, 3).build_ticks, base.build_ticks * 20, "the one time curve");
         assert_eq!(recipe_for_tier(mine, 4).build_ticks, base.build_ticks * 180);
         assert_eq!(recipe_for_tier(mine, 6).build_ticks, base.build_ticks * 2_700);
         let cc = recipe_for_tier(BuildKind::Upgrade { upgrade: K::CommandCenter }, 3);
@@ -304,7 +299,7 @@ mod tests {
         let before = alloys(&w);
         let third_job = queue(&mut w, owner, home, body, K::MiningComplex);
         let base_alloys = base.costs.iter().find(|(c, _)| *c == Commodity::Alloys).unwrap().1;
-        assert_eq!(before - alloys(&w), (base_alloys * 1.6).round());
+        assert_eq!(before - alloys(&w), (base_alloys * PRODUCTION_TIER_COST_MULT[2]).round());
         let required = |id| job(&w, id).structure_work.as_ref().unwrap().required;
         assert!((required(third_job) / required(first) - 20.0).abs() < 1e-6, "{} vs {}", required(third_job), required(first));
         let events = cancel(&mut w, owner, home, third_job);
@@ -374,7 +369,7 @@ mod tests {
         planet.assignments.insert(K::Shipyard, Assignment::crew(1));
         let first = queue(&mut w, owner, home, body, K::MiningComplex);
         let second = queue(&mut w, owner, home, body, K::MiningComplex);
-        w.step(&[Command::BuildShip { player_id: owner, system_id: home,
+        w.step(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(), player_id: owner, system_id: home,
             ship_kind: ShipKind::TinyFreighter, join: None, loadout: Default::default() }]);
         let hull = w.build_queue.last().unwrap().id;
         assert!(job(&w, hull).ship_work.is_some());

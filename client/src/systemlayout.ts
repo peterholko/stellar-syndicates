@@ -125,12 +125,12 @@ export function bodyOffset(bodies: readonly BodyView[], id: number, time: number
 const AT_WORLD_SU = 30;
 
 /** The world (planet or moon) a fleet at `pos` is at, at `time`: the nearest
- * within reach, else null. */
-export function worldAt(bodies: readonly BodyView[], star: Vec2, pos: Vec2, time: number): number | null {
+ * within `reach` su, else null. */
+export function worldAt(bodies: readonly BodyView[], star: Vec2, pos: Vec2, time: number, reach = AT_WORLD_SU): number | null {
   const x = (pos.x - star.x) / SYSTEM_UNIT_SU;
   const y = (pos.y - star.y) / SYSTEM_UNIT_SU;
   let best: number | null = null;
-  let bestD = AT_WORLD_SU / SYSTEM_UNIT_SU;
+  let bestD = reach / SYSTEM_UNIT_SU;
   for (const b of bodies) {
     const o = bodyOffset(bodies, b.id, time);
     if (!o) continue;

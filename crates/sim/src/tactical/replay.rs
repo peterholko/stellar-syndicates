@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use super::v1::{RosterDelta, SideMods, TacticalState};
 use crate::combat::{KEYFRAME_DEATH_CAP, Keyframe};
 
-pub const RULES_VERSION: u32 = 16;
+pub const RULES_VERSION: u32 = 17;
 /// A cold seek does at most this many extra tactical steps before its slice.
 pub const CHECKPOINT_STEPS: usize = 64;
 
@@ -31,6 +31,8 @@ enum Input {
     Withdraw(u8),
     Escorts(std::collections::BTreeMap<crate::EntityId, crate::EntityId>),
     Missions(std::collections::BTreeMap<crate::EntityId, crate::doctrine::MissionProfile>),
+    /// v17: the fleets' magazines as the world reported them.
+    Magazines(std::collections::BTreeMap<crate::EntityId, crate::munitions::Magazine>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -145,16 +147,27 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
     // private maneuver seed: changing future steering must invalidate a checkpoint.
     if state.rules_version() > 1 { h.u(u64::from(state.rules_version())); }
     if let super::Rules::V3 { maneuver_seed } | super::Rules::V4 { maneuver_seed } | super::Rules::V5 { maneuver_seed }
-        | super::Rules::V6 { maneuver_seed } | super::Rules::V7 { maneuver_seed } | super::Rules::V8 { maneuver_seed } | super::Rules::V9 { maneuver_seed } | super::Rules::V10 { maneuver_seed } | super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } = state.rules { h.u(maneuver_seed); }
-    if matches!(state.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+        | super::Rules::V6 { maneuver_seed } | super::Rules::V7 { maneuver_seed } | super::Rules::V8 { maneuver_seed } | super::Rules::V9 { maneuver_seed } | super::Rules::V10 { maneuver_seed } | super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } | super::Rules::V17 { maneuver_seed } = state.rules { h.u(maneuver_seed); }
+    // v17: the magazines decide which rounds fly; a checkpoint covers them.
+    if matches!(state.rules, super::Rules::V17 { .. }) {
+        h.u(state.magazines.len() as u64);
+        for (fleet, m) in &state.magazines {
+            h.u(fleet.0);
+            h.f(m.torpedoes);
+            h.f(m.slugs);
+            h.f(m.crystals);
+            h.f(m.crystal_capacity);
+        }
+    }
+    if matches!(state.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) {
         h.u(state.escorts.len() as u64);
         for (escort, charge) in &state.escorts { h.u(escort.0); h.u(charge.0); }
     }
-    if matches!(state.rules, super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+    if matches!(state.rules, super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) {
         h.u(state.missions.len() as u64);
         for (id, m) in &state.missions {
             h.u(id.0); h.u(m.priority as u64); h.u(m.screening as u64); h.u(m.withdrawal as u64);
-            if matches!(state.rules, super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) { h.u(m.formation as u64); }
+            if matches!(state.rules, super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) { h.u(m.formation as u64); }
         }
         h.u(state.mission_retreats.len() as u64);
         for id in &state.mission_retreats { h.u(id.0); }
@@ -214,7 +227,7 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
     for withdrawing in state.withdrawing {
         h.u(u64::from(withdrawing));
     }
-    if matches!(state.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+    if matches!(state.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) {
         h.u(state.wrecks.len() as u64);
         for w in &state.wrecks {
             h.u(u64::from(w.hull));
@@ -228,7 +241,7 @@ pub fn state_checksum(state: &TacticalState) -> u64 {
             h.pos(w.sep);
         }
     }
-    if matches!(state.rules, super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+    if matches!(state.rules, super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) {
         h.u(state.formations.len() as u64);
         for (fleet, f) in &state.formations {
             h.u(fleet.0);
@@ -295,6 +308,9 @@ impl BattleReplay {
     pub(crate) fn missions(&mut self, tick: u64, missions: std::collections::BTreeMap<crate::EntityId, crate::doctrine::MissionProfile>) {
         self.input(tick, Input::Missions(missions));
     }
+    pub(crate) fn magazines(&mut self, tick: u64, magazines: std::collections::BTreeMap<crate::EntityId, crate::munitions::Magazine>) {
+        self.input(tick, Input::Magazines(magazines));
+    }
 
     pub(crate) fn stepped(&mut self, tick: u64, round: usize, state: &TacticalState) {
         self.steps.push(Step {
@@ -356,14 +372,18 @@ impl BattleReplay {
                 state.order_withdraw(*side);
             }
             Input::Escorts(guards) => {
-                if !matches!(state.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+                if !matches!(state.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) {
                     return Err(ReplayError::InvalidArchive);
                 }
                 state.set_escorts(guards.clone());
             }
             Input::Missions(missions) => {
-                if !matches!(state.rules, super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) { return Err(ReplayError::InvalidArchive); }
+                if !matches!(state.rules, super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) { return Err(ReplayError::InvalidArchive); }
                 state.set_missions(missions.clone());
+            }
+            Input::Magazines(magazines) => {
+                if !matches!(state.rules, super::Rules::V17 { .. }) { return Err(ReplayError::InvalidArchive); }
+                state.set_magazines(magazines.clone());
             }
         }
         Ok(())
@@ -782,12 +802,56 @@ mod tests {
                 record = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
             }
         }
-        assert_eq!(live.rules_version(), 16);
+        assert_eq!(live.rules_version(), 17);
         let replay = record.tactical_replay().unwrap();
         assert!(!replay.checkpoints.is_empty());
         let mut changed = replay.clone();
         changed.initial.missions.insert(EntityId(1), MissionProfile { priority: TargetPriority::Installations, ..Default::default() });
         assert!(changed.reconstruct().is_err(), "mission policies are checkpoint-integrity inputs");
+    }
+
+    /// §shipbuilding-overhaul Phase 5: the magazines are recorded inputs. A
+    /// sparse resupply replays exactly across a save, and an archive whose
+    /// opening magazines are tampered with no longer reconstructs.
+    #[test]
+    fn magazines_replay_sparse_reloads_across_checkpoints() {
+        use crate::munitions::Magazine;
+        let mut a = fleet(1, ShipKind::Destroyer, "torpedo_rack", 3);
+        let mut d = fleet(2, ShipKind::Corvette, "", 5);
+        let mut live = TacticalState::open_current(311, 79, &a, &d, 0, 0.0, Vec2::new(1.0, 0.0));
+        let mut record = BattleRecord::open(EntityId(79), Vec2::ZERO, None, false, 0, sides());
+        let mut magazines = BTreeMap::from([(EntityId(1),
+            Magazine { torpedoes: 4.0, slugs: 0.0, crystals: 6.0, crystal_capacity: 6.0 })]);
+        let mut launched = 0usize;
+        for i in 0..80 {
+            let tick = (i + 1) * 15;
+            record.sync_tactical(tick - 2, &mut live, [&a, &d], &BTreeMap::new());
+            // The world reports what the fleet holds: unchanged between steps
+            // unless something reloaded it, so no input is recorded then.
+            if i == 30 { magazines.get_mut(&EntityId(1)).unwrap().torpedoes += 6.0; }
+            let inputs = record.tactical_replay().unwrap().input_count();
+            record.sync_magazines(tick - 1, &mut live, magazines.clone());
+            assert_eq!(record.tactical_replay().unwrap().input_count(), inputs + usize::from(i == 0 || i == 30),
+                "a magazine input only when the fleet's report differs from the engine's (step {i})");
+            let out = record.step_tactical(tick, &mut live, false, [SideMods::default(); 2]);
+            launched += out.torp_ends.len();
+            record.accumulate(out.dealt[0], out.dealt[1], &out.losses[0], &out.losses[1]);
+            record.flush_step(tick, live.step_keyframe(out), Default::default());
+            writeback(&live, &mut a); writeback(&live, &mut d);
+            magazines = live.magazines().clone();
+            assert_eq!(record.tactical_replay().unwrap().reconstruct().unwrap(), live);
+            if i == 40 {
+                live = serde_json::from_slice(&serde_json::to_vec(&live).unwrap()).unwrap();
+                record = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+            }
+        }
+        assert!(launched >= 1 && launched <= 10, "ten torpedoes aboard in all, {launched} flew");
+        assert!(live.magazines()[&EntityId(1)].crystals < 6.0, "the kit beams wore the crystals");
+        let replay = record.tactical_replay().unwrap();
+        assert!(!replay.checkpoints.is_empty());
+        let mut changed = replay.clone();
+        changed.initial.magazines.insert(EntityId(1), Magazine { torpedoes: 400.0, slugs: 0.0, crystals: 6.0, crystal_capacity: 6.0 });
+        assert!(changed.reconstruct().is_err(), "magazines are checkpoint-integrity inputs");
     }
 
     #[test]
@@ -815,7 +879,7 @@ mod tests {
             }
         }
         assert!(saw_wreckage, "capitals died and left wreckage");
-        assert_eq!(live.rules_version(), 16);
+        assert_eq!(live.rules_version(), 17);
         let frames = record.tactical_replay().unwrap().frames_range(0, record.rounds.len()).unwrap();
         assert!(frames.iter().any(|(_, f)| f.wrecks.as_ref().is_some_and(|w| !w.is_empty())), "rebuilt frames carry the wreckage");
     }

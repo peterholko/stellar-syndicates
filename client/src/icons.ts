@@ -14,7 +14,9 @@ import type { Commodity } from "./protocol";
 export type IconKey =
   // resources
   | "fuel" | "ore" | "alloys" | "provisions" | "volatiles" | "credits" | "biomass"
-  | "deuterium" | "uranium" | "antimatter" | "warpCore" | "fusionCore"
+  | "deuterium" | "uranium" | "antimatter" | "fissionReactor" | "antimatterReactor" | "zephyrDrive" | "galeDrive" | "tempestDrive" | "maelstromDrive"
+  | "fusionReactor" | "advancedFusionReactor" | "navComputer" | "cargoBay" | "pulseLaser" | "beamBattery" | "weaponMounts"
+  | "torpedoes" | "slugs" | "beamCrystals"
   // economy / structures
   | "storage" | "slots" | "shipyard" | "sensor" | "defense" | "habitat" | "refinery" | "interdictor"
   | "extractor" | "orbital_warehouse" | "build" | "queue" | "warehouse" | "manifest" | "freightRoute" | "authorityFreighter"
@@ -26,7 +28,7 @@ export type IconKey =
   | "structureShipyard" | "structureNavalDrydock" | "structureCapitalSlipway" | "structureOrdnanceFoundry"
   | "structureHabitat" | "structureWarehouse" | "structureOrbitalWarehouse" | "structureSensorArray" | "structureDefensePlatform" | "structureOrbitalDefense" | "structureCommandCenter"
   | "structureAcademy" | "structureGarrison" | "structureLivingTerraces" | "structurePowerPlant" | "structureAsteroidQuarry"
-  | "structureUraniumMill" | "structureAntimatterPlant" | "structureVault" | "structureAssemblyHall"
+  | "structureUraniumMill" | "structureAntimatterPlant" | "structureVault" | "structureAssemblyHall" | "structureVeilProjector"
   // planetary profile / colony identity
   | "planetHabitable" | "planetHostile" | "planetUninhabitable"
   | "geologyPoor" | "geologyRich" | "geologyUltraRich"
@@ -50,8 +52,8 @@ export type IconKey =
   | "population" | "workforce" | "food" | "upkeep"
   // combat modules
   | "moduleMassDriver" | "moduleTorpedoRack" | "modulePointDefense" | "moduleReflectivePlating" | "moduleWhippleArmor" | "moduleExtendedTanks" | "moduleReconSuite" | "moduleCargoPods" | "moduleEscortDatalink" | "moduleFuelTransferRig"
-  | "moduleSurveyDrive" | "moduleNebulaSpectrometer" | "modulePrismaticLance"
-  | "moduleStasisWeb" | "moduleWarpStabilizer" | "moduleInterdictionField" | "moduleJumpDrive"
+  | "moduleSurveyDrive" | "moduleNebulaSpectrometer" | "modulePrismaticLance" | "moduleLanceArray"
+  | "moduleStasisWeb" | "moduleWarpStabilizer" | "moduleInterdictionField"
   // syndicates (§syndicates)
   | "syndicate" | "ally" | "garrison";
 
@@ -59,7 +61,7 @@ export type IconKey =
  * never feed the result back into commands; attributes that round-trip to
  * `net.send` (data-resource / data-hire / option values …) stay raw. */
 export function label(slug: string): string {
-  const camp: Record<string, string> = { camp_prospect: "Home-world survey", camp_workings: "Surface workings", camp_storehouse: "Storehouse expansion", camp_quarters: "Permanent quarters" };
+  const camp: Record<string, string> = { camp_prospect: "Home-world survey", camp_workings: "Surface workings", camp_storehouse: "Storehouse expansion" };
   if (camp[slug]) return camp[slug];
   if (slug === "metallic_ore" || slug === "ore") return "Ferrite Ore";
   if (slug === "rare_metal_ore") return "Rare-metal Ore";
@@ -68,7 +70,13 @@ export function label(slug: string): string {
   if (slug === "naval_drydock") return "Orbital Shipyard";
   // §charter-v4: Electronics read as Semiconductors; the slug stays.
   if (slug === "electronics") return "Semiconductors";
+  // §shipbuilding-overhaul: Armaments is the hardware good; it shows as
+  // Weapon Mounts. The Armaments Complex keeps its name.
+  if (slug === "armaments") return "Weapon Mounts";
   if (slug === "electronics_fabricator") return "Semiconductor Fab";
+  // §modules-as-goods: the module goods by their modules' names.
+  if (slug === "survey_drive") return "Survey Booster";
+  if (slug === "point_defense_screen") return "Point-Defense Screen";
   if (slug === "electronics_center") return "Semiconductor center";
   // §founding R2: a camp's harvest pauses at its food reserve, keeping storage free.
   if (slug === "food_reserve") return "Food reserve full · paused";
@@ -116,13 +124,30 @@ export const ICONS: Record<IconKey, IconDef> = {
   volatiles: R("volatiles", "Volatiles"),
   credits: R("credits", "Credits"),
   biomass: N("resource-biomass", "Biomass"),
-  // §fuel-overhaul: Deuterium keeps the old Fuel art and the Warp Core the Drive
-  // Assemblies art until their goods icons arrive (docs/resource-icon-prompts.md).
+  // §fuel-overhaul: Deuterium keeps the old Fuel art until its goods icon
+  // arrives (docs/resource-icon-prompts.md).
   deuterium: R("fuel", "Deuterium"),
   uranium: R("goods-v1/uranium-128", "Uranium"),
   antimatter: R("goods-v1/antimatter-128", "Antimatter"),
-  warpCore: R("drive_assemblies", "Warp Core"),
-  fusionCore: R("goods-v1/fusion_core-128", "Fusion Core"),
+  // §reactors-drives: the reactor family (the Nov 7 core masters, retinted by
+  // rung), the drive placeholders, kit parts and munitions
+  // (docs/shipbuilding-art-prompts.md).
+  fissionReactor: R("goods-v1/fission_reactor-128", "Fission Reactor"),
+  fusionReactor: R("goods-v1/fusion_reactor-128", "Fusion Reactor"),
+  advancedFusionReactor: R("goods-v1/advanced_fusion_reactor-128", "Advanced Fusion Reactor"),
+  antimatterReactor: R("goods-v1/antimatter_reactor-128", "Antimatter Reactor"),
+  zephyrDrive: R("goods-v1/zephyr_drive-128", "Zephyr Drive"),
+  galeDrive: R("goods-v1/gale_drive-128", "Gale Drive"),
+  tempestDrive: R("goods-v1/tempest_drive-128", "Tempest Drive"),
+  maelstromDrive: R("goods-v1/maelstrom_drive-128", "Maelstrom Drive"),
+  navComputer: R("goods-v1/nav_computer-128", "Nav Computer"),
+  cargoBay: R("goods-v1/cargo_bay-128", "Cargo Bay"),
+  pulseLaser: R("goods-v1/pulse_laser-128", "Pulse Laser"),
+  beamBattery: R("goods-v1/beam_battery-128", "Beam Battery"),
+  weaponMounts: R("goods-v1/armaments-128", "Weapon Mounts"),
+  torpedoes: R("goods-v1/torpedoes-128", "Torpedoes"),
+  slugs: R("goods-v1/slugs-128", "Slugs"),
+  beamCrystals: R("goods-v1/beam_crystals-128", "Beam Crystals"),
   // economy / structures
   storage: N("concept-stockpile", "Storage / stockpile capacity"),
   slots: N("status-development-slots", "Development slots (used / total)"),
@@ -166,6 +191,7 @@ export const ICONS: Record<IconKey, IconDef> = {
   structureWarehouse: S("warehouse", "Warehouse"),
   structureCommandCenter: S("command_center", "Command Center"),
   structureSensorArray: S("sensor_array", "Sensor Array"),
+  structureVeilProjector: S("veil_projector", "Veil Projector"),
   structureDefensePlatform: S("defense_platform", "Defense Platform"),
   structureOrbitalDefense: S("orbital_defense", "Orbital defense station"),
   structureAcademy: S("academy", "Academy"),
@@ -276,24 +302,25 @@ export const ICONS: Record<IconKey, IconDef> = {
   workforce: N("status-workforce", "Workforce"),
   food: N("status-food-supply", "Food supply"),
   upkeep: N("status-upkeep", "Upkeep"),
-  // combat modules
-  moduleMassDriver: N("module-mass-driver", "Mass Driver"),
-  moduleTorpedoRack: N("module-torpedo-rack", "Torpedo Rack"),
-  modulePointDefense: N("module-point-defense", "Point-Defense Screen"),
-  moduleReflectivePlating: N("module-reflective-plating", "Reflective Plating"),
-  moduleWhippleArmor: N("module-whipple-armor", "Whipple Armor"),
-  moduleExtendedTanks: R("fuel", "Extended Tanks"),
-  moduleReconSuite: N("concept-sensor-range", "Recon Suite"),
-  moduleCargoPods: N("concept-manifest", "Cargo Pods"),
-  moduleEscortDatalink: N("action-escort", "Escort Datalink"),
-  moduleFuelTransferRig: N("role-fuel-production", "Fuel Transfer Rig"),
-  moduleSurveyDrive: N("action-jump", "Survey Drive"),
-  moduleNebulaSpectrometer: N("concept-sensor-range", "Nebula Spectrometer"),
-  modulePrismaticLance: A("action-attack-raid", "Prismatic Lance"),
-  moduleStasisWeb: P("🕸", "Stasis Web"),
-  moduleWarpStabilizer: N("action-jump", "Warp Stabilizer"),
-  moduleInterdictionField: P("⛓", "Interdiction Field"),
-  moduleJumpDrive: N("action-jump", "Jump Drive"),
+  // modules. §modules-as-goods (Nov 8 2026): each wears its own goods-v1
+  // master, one style with the parts (docs/shipbuilding-art-prompts.md).
+  moduleMassDriver: R("goods-v1/mass_driver-128", "Mass Driver"),
+  moduleTorpedoRack: R("goods-v1/torpedo_rack-128", "Torpedo Rack"),
+  modulePointDefense: R("goods-v1/point_defense_screen-128", "Point-Defense Screen"),
+  moduleReflectivePlating: R("goods-v1/reflective_plating-128", "Reflective Plating"),
+  moduleWhippleArmor: R("goods-v1/whipple_armor-128", "Whipple Armor"),
+  moduleExtendedTanks: R("goods-v1/extended_tanks-128", "Extended Tanks"),
+  moduleReconSuite: R("goods-v1/recon_suite-128", "Recon Suite"),
+  moduleCargoPods: R("goods-v1/cargo_pods-128", "Cargo Pods"),
+  moduleEscortDatalink: R("goods-v1/escort_datalink-128", "Escort Datalink"),
+  moduleFuelTransferRig: R("goods-v1/fuel_transfer_rig-128", "Fuel Transfer Rig"),
+  moduleSurveyDrive: R("goods-v1/survey_drive-128", "Survey Booster"),
+  moduleNebulaSpectrometer: R("goods-v1/nebula_spectrometer-128", "Nebula Spectrometer"),
+  modulePrismaticLance: R("goods-v1/prismatic_lance-128", "Prismatic Lance"),
+  moduleLanceArray: R("goods-v1/lance_array-128", "Lance Array"),
+  moduleStasisWeb: R("goods-v1/stasis_web-128", "Stasis Web"),
+  moduleWarpStabilizer: R("goods-v1/warp_stabilizer-128", "Warp Stabilizer"),
+  moduleInterdictionField: R("goods-v1/interdiction_field-128", "Interdiction Field"),
   // syndicates
   syndicate: P("🤝", "Syndicate (alliance)"),
   ally: P("🟢", "Syndicate ally"),
@@ -322,7 +349,9 @@ export type IconSize = "sm" | "md" | "lg";
 // context. They get their own `--icon-resource` token (see index.html), applied
 // here regardless of the caller's size, so it stays consistent everywhere.
 const RESOURCE_KEYS = new Set<IconKey>(["fuel", "ore", "alloys", "provisions", "volatiles", "credits", "biomass",
-  "deuterium", "uranium", "antimatter", "warpCore", "fusionCore"]);
+  "deuterium", "uranium", "antimatter", "fissionReactor", "antimatterReactor", "zephyrDrive", "galeDrive", "tempestDrive", "maelstromDrive", "fusionReactor",
+  "advancedFusionReactor", "navComputer", "cargoBay", "pulseLaser", "beamBattery", "weaponMounts",
+  "torpedoes", "slugs", "beamCrystals"]);
 
 /** Render one icon at a SIZE TOKEN (never a pixel size). `tip` overrides the
  *  registry default; `cls` adds classes. Art → crisp <img>; placeholder → an
@@ -353,10 +382,12 @@ export function icon(key: IconKey, size: IconSize = "sm", tip?: string, cls = ""
     const station = def.structure === "orbital_defense";
     // §gaia: Living Terraces have no separate menu set; menus show their scene sprites.
     // These families have no separate menu icon set: menus use the scene sprites.
-    const sceneOnly = def.structure === "living_terraces" || def.structure === "power_plant";
-    const tier = Number.isFinite(structureTier) ? Math.max(1, Math.min(command ? 3 : 6, Math.floor(structureTier))) : 1;
+    const sceneOnly = def.structure === "living_terraces" || def.structure === "power_plant" || def.structure === "veil_projector";
+    const maxTier = command || def.structure === "veil_projector" ? 3 : 6;
+    const tier = Number.isFinite(structureTier) ? Math.max(1, Math.min(maxTier, Math.floor(structureTier))) : 1;
+    // §laser-battery: the station's level 1 is a ground turret.
     const base = command ? `/art/derived/command-center/v1/tier-${tier}`
-      : station ? `/art/derived/stations/v2/level-${tier}`
+      : station ? tier === 1 ? "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-1" : `/art/derived/stations/v2/level-${tier}`
       // §asteroid-quarry: its rock and machinery, framed square for menus.
       : def.structure === "asteroid_quarry" ? `/art/derived/asteroid-quarry/v2/icon-tier-${tier}`
       : sceneOnly ? `/art/derived/planet-surface-structures/v2/buildings/${def.structure}/tier-${tier}` : `${STRUCTURE_BASE}${def.structure}/tier-${tier}`;
@@ -378,9 +409,21 @@ export function structureImage(key: string, tier: number, size: IconSize = "sm",
  * master trimmed to one fill (docs/resource-icon-prompts.md). The ore-economy
  * test keeps this in step with the masters in art-src. */
 export const GOODS_ICONS: ReadonlySet<string> = new Set([
-  "antimatter", "bornite_ore", "conductive_metals", "crystalline_ore", "cuprite_ore", "exotic_matter", "ferrite_ore",
-  "fusion_core", "helium3", "helium3_ice", "ilmenite_ore", "iridium", "iridium_ore", "olivine_ore", "rare_metal_ore",
-  "titanium", "titanium_ore", "uranium", "void_crystal",
+  "advanced_fusion_reactor", "antimatter", "armaments", "beam_battery", "beam_crystals", "bornite_ore",
+  "antimatter_reactor", "cargo_bay", "conductive_metals", "crystalline_ore", "cuprite_ore", "exotic_matter", "ferrite_ore",
+  "fission_reactor", "fusion_reactor", "gale_drive", "helium3", "helium3_ice",
+  "ilmenite_ore", "iridium", "iridium_ore", "maelstrom_drive", "nav_computer", "olivine_ore", "pulse_laser", "rare_metal_ore",
+  "slugs", "tempest_drive", "titanium", "titanium_ore", "torpedoes", "uranium", "void_crystal", "zephyr_drive",
+  "hull_sections",
+  // §modules-as-goods: the seventeen modules (goods-2026-11-08).
+  "cargo_pods", "escort_datalink", "extended_tanks", "fuel_transfer_rig", "interdiction_field", "lance_array", "mass_driver",
+  "nebula_spectrometer", "point_defense_screen", "prismatic_lance", "recon_suite", "reflective_plating", "stasis_web",
+  "survey_drive", "torpedo_rack", "warp_stabilizer", "whipple_armor",
+  // §hull-ladder: every heavy (a cradle) and capital (a gantry) part, an edit
+  // of its light master (goods-2026-11-08).
+  ...["fission_reactor", "fusion_reactor", "advanced_fusion_reactor", "antimatter_reactor",
+    "zephyr_drive", "gale_drive", "tempest_drive", "maelstrom_drive", "hull_sections"]
+    .flatMap((part) => [`heavy_${part}`, `capital_${part}`]),
 ]);
 
 /** Commodity wire slugs are not always asset filenames: metallic_ore uses ore,
@@ -388,7 +431,10 @@ export const GOODS_ICONS: ReadonlySet<string> = new Set([
  * §goods-icons: a good with a goods-v1 icon (one style, one fill) uses it; the
  * rest keep their older art until their masters arrive. */
 export function commodityIcon(commodity: Commodity): string {
-  const slug = commodity === "metallic_ore" ? "ferrite_ore" : commodity;
+  // §hull-ladder: a heavy or capital part wears its own master (Nov 8 2026);
+  // a size without one falls back to its light part's icon.
+  const base = commodity.replace(/^(heavy|capital)_/, "") as Commodity;
+  const slug = commodity === "metallic_ore" ? "ferrite_ore" : GOODS_ICONS.has(commodity) ? commodity : base;
   if (GOODS_ICONS.has(slug)) {
     const src = `${PNG_BASE}goods-v1/${slug}`;
     return `<img class="icon icon--resource" src="${src}-64.png" srcset="${src}-128.png 2x" alt="${escAttr(label(commodity))}" title="${escAttr(label(commodity))}">`;
@@ -396,10 +442,23 @@ export function commodityIcon(commodity: Commodity): string {
   const keys: Partial<Record<Commodity, IconKey>> = {
     metallic_ore: "ore", alloys: "alloys", deuterium: "deuterium", provisions: "provisions",
     volatiles: "volatiles", biomass: "biomass", uranium: "uranium", antimatter: "antimatter",
-    warp_core: "warpCore", fusion_core: "fusionCore",
+    // §reactors-drives: the reactor and drive ladders and the kit parts.
+    fission_reactor: "fissionReactor", fusion_reactor: "fusionReactor", advanced_fusion_reactor: "advancedFusionReactor",
+    antimatter_reactor: "antimatterReactor",
+    zephyr_drive: "zephyrDrive", gale_drive: "galeDrive", tempest_drive: "tempestDrive", maelstrom_drive: "maelstromDrive",
+    nav_computer: "navComputer", cargo_bay: "cargoBay", pulse_laser: "pulseLaser", beam_battery: "beamBattery",
+    armaments: "weaponMounts",
+    torpedoes: "torpedoes", slugs: "slugs", beam_crystals: "beamCrystals",
+    // §modules-as-goods: a module good wears its module's icon.
+    mass_driver: "moduleMassDriver", torpedo_rack: "moduleTorpedoRack", point_defense_screen: "modulePointDefense",
+    reflective_plating: "moduleReflectivePlating", whipple_armor: "moduleWhippleArmor", extended_tanks: "moduleExtendedTanks",
+    recon_suite: "moduleReconSuite", cargo_pods: "moduleCargoPods", escort_datalink: "moduleEscortDatalink",
+    fuel_transfer_rig: "moduleFuelTransferRig", survey_drive: "moduleSurveyDrive", nebula_spectrometer: "moduleNebulaSpectrometer",
+    prismatic_lance: "modulePrismaticLance", lance_array: "moduleLanceArray", stasis_web: "moduleStasisWeb",
+    warp_stabilizer: "moduleWarpStabilizer", interdiction_field: "moduleInterdictionField",
   };
-  if (keys[commodity]) return icon(keys[commodity]!, "sm", label(commodity));
-  return `<img class="icon icon--resource" src="${PNG_BASE}${commodity}.png" alt="${escAttr(label(commodity))}">`;
+  if (keys[base]) return icon(keys[base]!, "sm", label(commodity));
+  return `<img class="icon icon--resource" src="${PNG_BASE}${base}.png" alt="${escAttr(label(commodity))}">`;
 }
 
 /** An icon-VALUE chip: `⛽ 120`. The whole chip carries the tooltip, so the
@@ -462,6 +521,7 @@ export function structureIcon(key: string): IconKey {
     antimatter_plant: "structureAntimatterPlant",
     vault: "structureVault",
     assembly_hall: "structureAssemblyHall",
+    veil_projector: "structureVeilProjector",
   };
   return icons[key] ?? "build";
 }

@@ -1,0 +1,16 @@
+# One cloudflared connector for the stellar-syndicates tunnel; the instance
+# name is its metrics port. Two run (@18081 and @18083) so either can restart
+# or die while the other keeps the tunnel up. stellar-syndicates-tunnel-update.timer
+# updates them one at a time, so cloudflared's own updater stays off.
+[Unit]
+Description=stellar-syndicates tunnel connector (metrics on 127.0.0.1:%i)
+
+[Service]
+# cloudflared reports ready once its first edge connection is up.
+Type=notify
+ExecStart=%h/.local/bin/cloudflared tunnel --no-autoupdate --loglevel info --metrics 127.0.0.1:%i run --token-file %h/stellar-syndicates/secrets/tunnel-token
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

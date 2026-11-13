@@ -3,11 +3,11 @@ import type { ViewState } from "./state";
 import { starTypeFor } from "./stars";
 import { beltKind, buildVisualSystem, type BeltKindName, type VisualSystem } from "./systemview";
 import type { PlanetArtKind } from "./planetart";
-import { ORBIT_TILT, PLATFORM_COVER_SU, defendedWorld, orbitalAngle, planetPeriod, siegeTarget, type AnchorBody } from "./systemlayout";
+import { ORBIT_TILT, PLATFORM_COVER_SU, defendedWorld, orbitalAngle, planetPeriod, siegeTarget, worldAt, type AnchorBody } from "./systemlayout";
 import { hasRings } from "./systembodyfx";
 import { hashId } from "./prng";
 
-export type BattleScenerySource = Pick<ViewState, "galaxy" | "systems">;
+export type BattleScenerySource = Pick<ViewState, "galaxy" | "systems"> & { founding?: ViewState["founding"] };
 
 /** Snapshot astronomy from the player's served picture when the theater opens.
  * Never retain infrastructure, resource pips, population or ownership in a replay
@@ -58,16 +58,19 @@ export function backdropDrift(center: { x: number; y: number }, width: number, h
 }
 
 /** The place a system battle is fought, frozen from the served picture at open.
- * A fight inside the defense platforms' reach stands in a world's orbit (the
- * same world the System View draws it beside): the backdrop is that world up
- * close, lit from its star. Further out, only the star's direction is known. */
+ * A fight inside the defense platforms' reach stands in a world's orbit: the
+ * world nearest the fight when it began, as the System View draws it (Peter,
+ * Nov 4 2026: a strike on the second world was drawn at home), else the
+ * defended or sieged world. The backdrop is that world up close, lit from its
+ * star. Further out, only the star's direction is known. */
 export interface BattleBackdropPlan {
   systemId: string;
   starSlug: string;
   /** Screen direction (rad) from the fight toward its star. */
   starBearing: number;
-  /** The world beneath the fight — public art only, no administration. */
-  world: { kind: PlanetArtKind; seed: number; ringed: boolean } | null;
+  /** The world beneath the fight — public art only, no administration.
+   * `battery`: a level-1 Laser Battery there stands on its ground. */
+  world: { kind: PlanetArtKind; seed: number; ringed: boolean; battery: boolean } | null;
   /** §den (Oct 29 2026): a fight in a system with belts and no world (a
    * pirate den's) stands in its asteroid field: no world, the belt's rocks,
    * its star far off. The sim places no world there either. */
@@ -88,6 +91,16 @@ export function battleBackdropPlan(
   const dx = (rec.pos?.x ?? system.pos.x) - system.pos.x;
   const dy = (rec.pos?.y ?? system.pos.y) - system.pos.y;
   const distance = Math.hypot(dx, dy);
+  // §den (Peter, Nov 5 2026: "I want the actual battle to occur at the Pirate
+  // Den in the asteroid belt not what looks like the Star"): a system of belts
+  // alone fights in its asteroid field wherever the fight is. The den stands
+  // on its belt's ring, well past the defenses' reach that frames a world.
+  // The founder's own den fights there even before its system is charted.
+  const belt = bodies.find((b) => b.kind === "asteroid_belt");
+  if ((belt && !bodies.some((b) => b.kind !== "asteroid_belt")) || (!bodies.length && source?.founding?.den === rec.system)) {
+    return { systemId: rec.system, starSlug, starBearing: distance > 1 ? Math.atan2(-dy, -dx) : fallbackBearing, world: null,
+      belt: { kind: beltKind(belt?.belt?.kind), seed: hashId(`${rec.id}:belt`) } };
+  }
   if (distance > PLATFORM_COVER_SU || !bodies.length) {
     // Beyond the defenses' reach: the star lies back along the fight's bearing.
     return { systemId: rec.system, starSlug, starBearing: distance > 1 ? Math.atan2(-dy, -dx) : fallbackBearing, world: null };
@@ -96,13 +109,10 @@ export function battleBackdropPlan(
     id: b.id, parent: b.parent, habitable: b.habitable, size: b.size, kind: b.kind,
     population: b.population ?? 0, structures: b.structures ?? {},
   }));
-  const worldId = report?.blockade ? siegeTarget(anchors) : defendedWorld(anchors);
+  const fallback = report?.blockade ? siegeTarget(anchors) : defendedWorld(anchors);
+  const near = rec.pos ? worldAt(bodies, system.pos, rec.pos, rec.started_at ?? 0, PLATFORM_COVER_SU) : null;
+  const worldId = near ?? fallback;
   const body = bodies.find((b) => b.id === worldId);
-  const belt = bodies.find((b) => b.kind === "asteroid_belt");
-  if (belt && !bodies.some((b) => b.kind !== "asteroid_belt")) {
-    return { systemId: rec.system, starSlug, starBearing: distance > 1 ? Math.atan2(-dy, -dx) : fallbackBearing, world: null,
-      belt: { kind: beltKind(belt.belt?.kind), seed: hashId(`${rec.id}:belt`) } };
-  }
   if (!body) return { systemId: rec.system, starSlug, starBearing: fallbackBearing, world: null };
   // Pose the world as the System View posed it when the fight began; its star
   // then lies back along that orbital radius (in the tilted view).
@@ -120,6 +130,7 @@ export function battleBackdropPlan(
     systemId: rec.system,
     starSlug,
     starBearing,
-    world: { kind, seed, ringed: !moon && planet ? hasRings(planet.kind, seed) : false },
+    world: { kind, seed, ringed: !moon && planet ? hasRings(planet.kind, seed) : false,
+      battery: worldId === fallback || (body.structures?.orbital_defense ?? 0) > 0 },
   };
 }

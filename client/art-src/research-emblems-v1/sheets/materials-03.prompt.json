@@ -1,0 +1,68 @@
+{
+  "name": "materials-03",
+  "mode": "built-in image_gen",
+  "source_brief": "docs/research-emblem-sheets.md",
+  "prompt": "Use case: stylized-concept. Asset type: a sheet of six transparent research emblems for Stellar Syndicates, a premium dark sci-fi strategy game. They join an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw SIX new emblems. Do not copy any of Image 1's six motifs, and ignore Image 1's grey backdrop.\nField: Materials. Colour, all six badges: charcoal gunmetal with a molten orange-amber glow. Everything else stays in the family's navy, charcoal and silver.\nLayout: landscape 1536 x 1024 canvas, three columns and two rows, exactly Image 1's arrangement. Six identical hexagon badges, each about 450 px tall, centred in its own 512 x 512 cell, with clear empty space between badges and around the sheet. Badges never touch or overlap.\nBadge (every one the same): a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. Each motif sits inside its rim, centred, about 70% of the face's width. Nothing crosses a rim.\nMotifs, reading left to right, top row then bottom row:\n1. Top left: A chunk of grey ore split open with a few small brilliant crystals glittering inside, fine tongs lifting one glowing orange-gold crystal out.\n2. Top centre: A scanner beam fanning down from above onto a rough asteroid, revealing a glowing orange ore pocket hidden inside it.\n3. Top right: A tall spindly orbital yard tower rising from a planet's curved horizon into space, a ship docked at its top, orange weld lights along it.\n4. Bottom left: A tall stepped arcology tower of exposed steel girders, its finished lower floors lit with warm orange windows, its upper frame still open.\n5. Bottom centre: A squat armoured reactor dome with a round viewport showing a brilliant orange-white plasma core, heavy magnetic coils ringing its base.\n6. Bottom right: A cut-away slice of a planet's crust with a long drill pipe reaching down through dark rock layers into a glowing molten orange mantle.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. Each motif is one clear subject that still reads at 48 px: a few large forms, restrained small detail. The six must look clearly different from each other at a glance: vary silhouette, scale and composition, never the same object twice.\nBackground: genuinely transparent PNG with real alpha everywhere outside the hexagons. No drop shadow, outer glow, grey backdrop, panel, vignette, cell borders or grid lines.\nConstraints: exactly six badges. No text, letters, numbers, Roman numerals, captions, labels, logos, watermark, frames or UI.",
+  "keys": [
+    "mat_deepcrust_iv_trace_refining",
+    "mat_deepcrust_iv_prospecting_charters",
+    "mat_foundry_iv_orbital_yards",
+    "mat_foundry_iv_arcology_frames",
+    "mat_foundry_iv_fusion_reactors",
+    "mat_deepcrust_v_mantle_taps"
+  ],
+  "references": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png",
+      "sha256": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+    }
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-2348f1d4-a4df-47f0-a4c9-2f92922890e8.png",
+  "edits": [],
+  "verification": {
+    "width": 1536,
+    "height": 1024,
+    "hasAlpha": true,
+    "badges": [
+      {
+        "left": 141,
+        "top": 76,
+        "width": 363,
+        "height": 411
+      },
+      {
+        "left": 586,
+        "top": 76,
+        "width": 363,
+        "height": 411
+      },
+      {
+        "left": 1033,
+        "top": 76,
+        "width": 363,
+        "height": 411
+      },
+      {
+        "left": 141,
+        "top": 535,
+        "width": 363,
+        "height": 412
+      },
+      {
+        "left": 586,
+        "top": 535,
+        "width": 363,
+        "height": 412
+      },
+      {
+        "left": 1033,
+        "top": 535,
+        "width": 363,
+        "height": 412
+      }
+    ],
+    "sha256": "74475777db715a399c23cd8c610c76db8d8715e8a8d2d08f76cd81d762b2c22d",
+    "nativeBytesPreserved": true
+  }
+}

@@ -97,6 +97,11 @@ open from the charter's step 22, "Secure your stores" (§charter-crates, Oct 31
   battleship-class hull of the besieger is on station. Once it ripens, marines
   landed by a separate, idle troop-transport fleet at the star can take the
   system. A home can be blockaded but never captured.
+- **The Veil** (Nov 1 2026, docs/veil.md). A world with a Veil Projector on a
+  Fusion Plant raises an ionised sky the moment a war blockade is held (raids
+  never): guns pin nothing, nothing is stripped, and only Troop Transports
+  land, losing 10/15/20% in the descent. It burns the plant's fuel while up
+  and drops when the stock runs out; the owner can forbid it per world.
 - The besieger is whoever holds the blockade. If all its ships leave, the
   blockade passes to the lowest-id fleet still on station, and the capture
   clock starts over.

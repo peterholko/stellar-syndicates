@@ -85,12 +85,6 @@ pub struct StarSystem {
     pub stockpile: BTreeMap<Commodity, f64>,
     #[serde(default)]
     pub industry: crate::industry::SiteIndustry,
-    /// §modules Part B3: the MODULE ledger — manufactured modules pooled at this
-    /// system (crates in the yard's warehouse, not per-body). Fitted onto ships
-    /// at build/refit, shipped by convoy, traded at Sol. `#[serde(default)]` so
-    /// pre-module snapshots load with an empty ledger.
-    #[serde(default)]
-    pub modules: BTreeMap<crate::module::ModuleKind, u32>,
     /// Number of Extractor upgrades built here (§step1 structure sink). Scales
     /// every deposit's richness by `EXTRACTOR_RICHNESS_MULT^tier` in accrual.
     #[serde(default, rename = "extractor_tier")]
@@ -186,6 +180,17 @@ pub struct StarSystem {
     /// no tier is destroyed and no population is touched. `default` 0.
     #[serde(default)]
     pub garrison_suppression: f64,
+    /// §veil: the Veil is RAISED over this system's world — an ionised sky under
+    /// a held war blockade. While up, bombardment pins nothing, plunder loads
+    /// nothing, and only Troop Transports land. Decided every tick by
+    /// `World::resolve_veil` from the blockade, the owner's policy and the
+    /// Fusion Plant's fuel. Both siege parties see it (an aurora is not subtle).
+    #[serde(default)]
+    pub veil_up: bool,
+    /// §veil: the owner's standing order NOT to raise the Veil here (its
+    /// batteries keep firing instead). Default: raise.
+    #[serde(default)]
+    pub veil_never: bool,
     /// §explore Part 3: the Precursor Cache has PAID (latched — exactly once,
     /// ever; deliberately NOT reset on capture, so a flip can't re-mint it).
     #[serde(default)]
@@ -221,6 +226,13 @@ pub struct StarSystem {
     /// refreshed each tick.
     #[serde(default)]
     pub twin_campuses: bool,
+    /// §stores-flows: what the economy here makes and uses, per good, per
+    /// second, smoothed ([`crate::production::Flow`]).
+    #[serde(default)]
+    pub flows: BTreeMap<Commodity, crate::production::Flow>,
+    /// This tick's tally, folded into `flows` at the tick's end.
+    #[serde(skip)]
+    pub flow_tick: BTreeMap<Commodity, crate::production::Flow>,
 }
 
 /// The live BLOCKADE at a system (§contestable-territory). Recomputed each tick
@@ -261,6 +273,40 @@ pub struct Blockade {
 }
 
 impl StarSystem {
+    /// §stores-flows: tally what this tick's economy made of `c` here.
+    pub fn tally_made(&mut self, c: Commodity, units: f64) {
+        if units > 0.0 {
+            self.flow_tick.entry(c).or_default().made += units;
+        }
+    }
+
+    /// §stores-flows: tally what this tick's economy used of `c` here.
+    pub fn tally_used(&mut self, c: Commodity, units: f64) {
+        if units > 0.0 {
+            self.flow_tick.entry(c).or_default().used += units;
+        }
+    }
+
+    /// §stores-flows: fold this tick's tally into the smoothed rates. A good
+    /// leaves the map once it has faded below the reported grain.
+    pub fn fold_flows(&mut self, dt: f64) {
+        if self.flows.is_empty() && self.flow_tick.is_empty() {
+            return;
+        }
+        let a = (dt / crate::production::FLOW_SMOOTHING_S).min(1.0);
+        let tick = std::mem::take(&mut self.flow_tick);
+        for c in tick.keys() {
+            self.flows.entry(*c).or_default();
+        }
+        for (c, f) in self.flows.iter_mut() {
+            let t = tick.get(c).copied().unwrap_or_default();
+            f.made += a * (t.made / dt - f.made);
+            f.used += a * (t.used / dt - f.used);
+        }
+        let floor = crate::production::FLOW_QUANTUM / 2.0;
+        self.flows.retain(|c, f| tick.contains_key(c) || f.made >= floor || f.used >= floor);
+    }
+
     /// Physical goods remain in storage. Earmarks protect them from exports,
     /// factory inputs and competing projects. Population life support and
     /// hostile plunder still access physical stock, rather than this budget.
@@ -457,6 +503,11 @@ impl StarSystem {
             K::LivingTerraces => self.bodies.iter()
                 .filter(|b| b.profile.environment == crate::body::Environment::Gaia)
                 .max_by_key(|b| b.tier(K::LivingTerraces)).map(|b| b.id),
+            // §veil: the world with a sky and the people under it.
+            K::VeilProjector => self.bodies.iter()
+                .filter(|b| b.has_atmosphere())
+                .max_by_key(|b| (b.tier(K::VeilProjector), b.tier(K::Habitat), b.tier(K::CommandCenter), std::cmp::Reverse(b.id)))
+                .map(|b| b.id),
             // §vault: under the world's Command Center.
             K::Vault => self.bodies.iter()
                 .filter(|b| b.tier(K::CommandCenter) > 0)
@@ -1025,6 +1076,19 @@ impl StarSystem {
         self.blockade.is_some_and(|b| b.held_since.is_some())
     }
 
+    /// §veil: the body whose Veil Projector covers this system (the highest
+    /// level standing on a world with a sky), if any.
+    pub fn veil_body(&self) -> Option<&crate::body::Body> {
+        self.bodies.iter()
+            .filter(|b| b.has_atmosphere() && b.tier(crate::build::StructureKind::VeilProjector) > 0)
+            .max_by_key(|b| (b.tier(crate::build::StructureKind::VeilProjector), std::cmp::Reverse(b.id)))
+    }
+
+    /// §veil: the Veil Projector's level here (0 = none that could raise).
+    pub fn veil_level(&self) -> u32 {
+        self.veil_body().map_or(0, |b| b.tier(crate::build::StructureKind::VeilProjector).min(crate::ground::VEIL_MAX_LEVEL))
+    }
+
     /// §orbital-defense: the station's level (0 = no station).
     pub fn station_level(&self) -> u32 {
         self.tier_sum(crate::build::StructureKind::OrbitalDefense).min(crate::station::MAX_LEVEL)
@@ -1147,6 +1211,26 @@ impl StarSystem {
 
     /// Total units currently stored (summed across commodities) — what the cap
     /// measures against.
+    /// §modules-as-goods (Nov 8 2026): whole modules of `kind` free in this
+    /// system's stockpile (what a fit may take; project reserves excluded).
+    pub fn module_stock(&self, kind: crate::module::ModuleKind) -> u32 {
+        self.free_stock(kind.good()).floor() as u32
+    }
+    /// Take `n` modules of `kind` out of the stockpile (the caller checked
+    /// `module_stock`).
+    pub fn take_modules(&mut self, kind: crate::module::ModuleKind, n: u32) {
+        let good = kind.good();
+        let left = self.stockpile.get(&good).copied().unwrap_or(0.0) - f64::from(n);
+        if left <= 1e-9 { self.stockpile.remove(&good); } else { self.stockpile.insert(good, left); }
+    }
+    /// Put `n` modules of `kind` into the stockpile: a stripped or made
+    /// module lands whole, past the storage cap if it must.
+    pub fn put_modules(&mut self, kind: crate::module::ModuleKind, n: u32) {
+        if n > 0 {
+            *self.stockpile.entry(kind.good()).or_insert(0.0) += f64::from(n);
+        }
+    }
+
     pub fn storage_used(&self) -> f64 {
         self.stockpile.values().sum()
     }
@@ -1332,8 +1416,11 @@ pub fn reserves_for(resource: Commodity, vein: f64) -> Option<f64> {
 pub const DEPOSIT_BASE_RICHNESS: f64 = 0.45;
 /// Claim cost = `CLAIM_BASE` + `CLAIM_VALUE_K` × the system's value-rate
 /// (Σ richness·base_price), so richer frontier systems cost more to claim.
-const CLAIM_BASE: f64 = 600.0;
-const CLAIM_VALUE_K: f64 = 45.0;
+/// §progression (Peter, Nov 11 2026): a claim costs what the colony returns,
+/// about a day and a half of its level-I output (`production::OUTPUT_SCALE`);
+/// the Authority's ×1.6 a colony held (`claims::price`) climbs on top. Tunable.
+const CLAIM_BASE: f64 = 1_000.0;
+const CLAIM_VALUE_K: f64 = 36.0 * 3_600.0 * crate::production::OUTPUT_SCALE;
 
 /// Generate `count` star systems uniformly over the galaxy disk (area-uniform
 /// via the √u radius trick), keeping a clear margin around the hub. Each system
@@ -1404,7 +1491,6 @@ pub(crate) fn unowned_system(
         claimed_at: None,
         stockpile: BTreeMap::new(),
         industry: Default::default(),
-        modules: BTreeMap::new(),
         legacy_extractor_tier: 0,
         legacy_depot_tier: 0,
         legacy_shipyard_tier: 0, // frontier systems must EARN their shipyards
@@ -1417,6 +1503,8 @@ pub(crate) fn unowned_system(
         blockade: None,
         garrison_fed: true,
         garrison_suppression: 0.0,
+        veil_up: false,
+        veil_never: false,
         blockade_prev: None,
         mounts: Vec::new(),
         trait_: None,
@@ -1428,6 +1516,8 @@ pub(crate) fn unowned_system(
         landing_holds: 0.0,
         storage_mult: 1.0,
         twin_campuses: false,
+        flows: BTreeMap::new(),
+        flow_tick: BTreeMap::new(),
     }
 }
 
@@ -1611,7 +1701,14 @@ pub(crate) fn home_starting_stockpile() -> BTreeMap<Commodity, f64> {
         (Commodity::Provisions, crate::colony::HOME_PROVISIONS_SEED),
         (Commodity::Machinery, 27.0),
         (Commodity::Alloys, 70.0),
-        (Commodity::WarpCore, 1.0),
+        // §shipbuilding-overhaul: the kit parts a test sandbox's first hulls
+        // draw on (a Medium Freighter's worth); yard tests stock their own.
+        (Commodity::FissionReactor, 10.0),
+        (Commodity::ZephyrDrive, 10.0),
+        (Commodity::NavComputer, 3.0),
+        (Commodity::HullSections, 8.0),
+        (Commodity::CargoBay, 8.0),
+        (Commodity::PulseLaser, 6.0),
     ].into_iter().collect()
 }
 
@@ -1686,7 +1783,6 @@ pub fn generate_home_system(
         // their construction materials are not prepaid in the founding stockpile.
         stockpile: home_starting_stockpile(),
         industry: Default::default(),
-        modules: BTreeMap::new(),
         legacy_extractor_tier: 0,
         legacy_depot_tier: 0,
         legacy_shipyard_tier: 0,
@@ -1699,6 +1795,8 @@ pub fn generate_home_system(
         blockade: None,
         garrison_fed: true,
         garrison_suppression: 0.0,
+        veil_up: false,
+        veil_never: false,
         blockade_prev: None,
         mounts: Vec::new(),
         trait_: None,
@@ -1710,6 +1808,8 @@ pub fn generate_home_system(
         landing_holds: 0.0,
         storage_mult: 1.0,
         twin_campuses: false,
+        flows: BTreeMap::new(),
+        flow_tick: BTreeMap::new(),
     };
     // §rare-gardens: the garden is the home's ONLY habitable world. More people
     // need another system; a system with two such worlds should feel special.

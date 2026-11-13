@@ -202,7 +202,8 @@ impl Bot {
                 let efficiency = if ours {
                     1.0
                 } else {
-                    let rate = sim::industry::BARGE_ORE_PER_S * sim::production::ore_bulk_ratio(ore);
+                    let rate = sim::industry::BARGE_ORE_PER_S * sim::production::ore_bulk_ratio(ore)
+                        * sim::production::OUTPUT_SCALE;
                     let fill = capacity(barge) as f64 / rate.max(1e-6);
                     fill / (fill + 2.0 * distance / BARGE_SU_PER_S)
                 };
@@ -268,7 +269,7 @@ impl Bot {
         self.wait(key, p, fleet.pos);
         self.belt_haulers.insert(fleet.id, station.id);
         self.status = "belts: running a freighter between the station and home".into();
-        Some(Command::SetFreightRoute { player_id: p.owner, fleet_id: fleet.id, route: Some(FreightRoute {
+        Some(Command::SetFreightRoute { player_id: p.owner, fleet_id: fleet.id, revise: false, route: Some(FreightRoute {
             name: "Belt station run".into(), repeat: true, shopping_budget: None,
             transit: p.freight_transit(), fuel_reserve: p.arrival_reserve(&fleet), escort: None,
             stops: vec![

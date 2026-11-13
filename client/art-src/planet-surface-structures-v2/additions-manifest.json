@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "scope": "Additions and replacements after the original v2 review set (Oct 2026), approved by Peter in conversation. Same entry shape as source-manifest.json. A replacement takes the place of the original entry for the same family and tier; the original master stays on disk and in source-manifest.json as provenance. §power (Oct 14 2026): the Power Plant family, Solar Array I–II and Fusion Plant III–VI, plus `orbitals`: the floating plant drawn on belts and gas giants, one look per tier range.",
+  "scope": "Additions and replacements after the original v2 review set (Oct 2026), approved by Peter in conversation. Same entry shape as source-manifest.json. A replacement takes the place of the original entry for the same family and tier; the original master stays on disk and in source-manifest.json as provenance. §power (Oct 14 2026): the Power Plant family, Solar Array I–II and Fusion Plant III–VI, plus `orbitals`: the floating plant drawn on belts and gas giants, one look per tier range. §veil (Nov 2 2026): three dormant Veil Projector tiers; shared masters for menus, structure rows and detail panels only, with no planet-stage footprint.",
   "buildings": [
     {
       "id": "living_terraces/tier-1",
@@ -360,6 +360,96 @@
         },
         "bytes": 2149470,
         "sha256": "0a956096ca165ef8972a9f45432d15623a6bb49093681ad0924172895e4d49ab"
+      }
+    },
+    {
+      "id": "veil_projector/tier-1",
+      "family": "veil_projector",
+      "tier": 1,
+      "name": "Veil Projector",
+      "identity": "Dormant ring of graphite lattice emitter masts with flat disc heads around a shielded capacitor hall, pale radiator fins and braided conduits leading toward the Fusion Plant.",
+      "description": "four short emitter masts at the corners of a small flat-roofed capacitor hall, braided conduits to each foot, one conduit trunk leaving to the right.",
+      "file": "buildings/veil_projector/tier-1.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-1381ed1e-93eb-4a02-85cd-97a79bfd95f1.png",
+      "promptFile": "buildings/veil_projector/tier-1.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1254,
+        "height": 1254,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.5028374910016814,
+        "edgeMax": 9,
+        "boundsAlpha16": {
+          "left": 14,
+          "top": 48,
+          "right": 1246,
+          "bottom": 1075
+        },
+        "bytes": 1724007,
+        "sha256": "f880c9a0b8615140e15d51df761c1e4865520ae20c47a337876c58172ad6812e"
+      }
+    },
+    {
+      "id": "veil_projector/tier-2",
+      "family": "veil_projector",
+      "tier": 2,
+      "name": "Veil Projector",
+      "identity": "Dormant ring of graphite lattice emitter masts with flat disc heads around a shielded capacitor hall, pale radiator fins and braided conduits leading toward the Fusion Plant.",
+      "description": "six taller emitter masts in a ring around a larger domed capacitor hall with a bank of pale radiator fins; thicker conduits; the same single trunk.",
+      "file": "buildings/veil_projector/tier-2.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-85df76bc-fdce-4d9a-bd6e-61f5cf478a92.png",
+      "promptFile": "buildings/veil_projector/tier-2.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1254,
+        "height": 1254,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.5028934522764792,
+        "edgeMax": 6,
+        "boundsAlpha16": {
+          "left": 12,
+          "top": 48,
+          "right": 1246,
+          "bottom": 1074
+        },
+        "bytes": 1806284,
+        "sha256": "fecae8ce618f857886cc217ecc2921f775eeaedcf4a65f2aa4dcb7938473fdd0"
+      }
+    },
+    {
+      "id": "veil_projector/tier-3",
+      "family": "veil_projector",
+      "tier": 3,
+      "name": "Veil Projector",
+      "identity": "Dormant ring of graphite lattice emitter masts with flat disc heads around a shielded capacitor hall, pale radiator fins and braided conduits leading toward the Fusion Plant.",
+      "description": "eight emitter masts in the ring and one taller central mast rising over the hall; the hall has grown a second capacitor block and a small fenced transformer yard; two conduit trunks leave to the right. Same compact site.",
+      "file": "buildings/veil_projector/tier-3.png",
+      "status": "alpha_verified",
+      "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-19b3275e-008a-41f4-9f19-8f8d9950c65c.png",
+      "promptFile": "buildings/veil_projector/tier-3.prompt.json",
+      "validation": {
+        "format": "png",
+        "width": 1254,
+        "height": 1254,
+        "hasAlpha": true,
+        "alphaMin": 0,
+        "alphaMax": 255,
+        "transparentFraction": 0.4768333040808488,
+        "edgeMax": 31,
+        "boundsAlpha16": {
+          "left": 10,
+          "top": 55,
+          "right": 1253,
+          "bottom": 1058
+        },
+        "bytes": 1832195,
+        "sha256": "329a27e13a7672f009e2cdfe7b3c5d59dc379b091d9d8900346570522feedfb3"
       }
     }
   ],

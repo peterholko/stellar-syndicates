@@ -14,7 +14,7 @@ impl TacticalState {
     }
 
     pub(crate) fn set_missions(&mut self, missions: BTreeMap<EntityId, MissionProfile>) -> bool {
-        if !matches!(self.rules, Rules::V6 { .. } | Rules::V7 { .. } | Rules::V8 { .. } | Rules::V9 { .. } | Rules::V10 { .. } | Rules::V11 { .. } | Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. }) || self.missions == missions { return false; }
+        if !matches!(self.rules, Rules::V6 { .. } | Rules::V7 { .. } | Rules::V8 { .. } | Rules::V9 { .. } | Rules::V10 { .. } | Rules::V11 { .. } | Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. } | Rules::V17 { .. }) || self.missions == missions { return false; }
         self.missions = missions;
         true
     }
@@ -35,7 +35,7 @@ impl TacticalState {
 }
 
 pub(super) fn update_retreats(state: &mut TacticalState) {
-    if !matches!(state.rules, Rules::V6 { .. } | Rules::V7 { .. } | Rules::V8 { .. } | Rules::V9 { .. } | Rules::V10 { .. } | Rules::V11 { .. } | Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. }) { return; }
+    if !matches!(state.rules, Rules::V6 { .. } | Rules::V7 { .. } | Rules::V8 { .. } | Rules::V9 { .. } | Rules::V10 { .. } | Rules::V11 { .. } | Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. } | Rules::V17 { .. }) { return; }
     for c in &state.combatants {
         if c.hp <= 0.0 || c.platform { continue; }
         if let Some((fleet, _)) = c.origin

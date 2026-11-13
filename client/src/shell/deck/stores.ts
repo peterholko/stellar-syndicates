@@ -5,14 +5,16 @@
 // (core/derive/stores.ts). The workbench opens over the map like the
 // Construction workbench: the workspace and the camera stay as they are
 // (Peter, Oct 28 2026).
+import { goodKnown } from "../../core/derive/fleet";
 import { fmt, fmtBuildDur } from "../../core/derive/format";
 import { foundingHomeSystemId } from "../../core/derive/geo";
-import { shippableStock } from "../../core/derive/market";
 import {
   rateText, stockText, storageState, storeGroups, storeLine, storePins, storesFocus, togglePin, vaultCapacity,
   type StorageState, type StoreLine,
 } from "../../core/derive/stores";
 import { commodityIcon, label } from "../../icons";
+import { GOODS_TABS, isGoodsTab, pickGoodsTab, type GoodsTab } from "../../core/derive/goods";
+import { goodsTabsHtml } from "./goods-tabs";
 import type { Commodity, EntityId, SystemStateView } from "../../protocol";
 import { liveSimTime } from "../../state";
 import { renderDeferred, setHtml } from "../dom";
@@ -32,6 +34,8 @@ const SYSTEM_ROUTES = new Set<DeckRoute["name"]>(["system", "world", "build", "s
 export class DeckStores {
   /** A system picked in a switcher; it holds until you navigate or select. */
   private picked: EntityId | null = null;
+  /** §goods-tabs: the pop-out's Resources · Parts · Modules. */
+  private tab: GoodsTab = "resources";
   private pickedFor = "";
   private shown = false;
   /** The route of the last render; the bar's own controls act on it. */
@@ -80,7 +84,7 @@ export class DeckStores {
     }
     if (!system) return;
     const pins = storePins();
-    const signature = sheetFingerprint([system.id, system.stockpile, system.storage_used, system.storage_cap,
+    const signature = sheetFingerprint([system.id, system.stockpile, system.flows, system.storage_used, system.storage_cap,
       system.industry?.reservations, pins, this.owned(), Math.floor(liveSimTime() / 5)]);
     if (!force && signature === this.barSignature) return;
     this.barSignature = signature;
@@ -96,8 +100,8 @@ export class DeckStores {
     }
     const system = this.focus(route);
     const pins = storePins();
-    const signature = sheetFingerprint([system?.id, system?.stockpile, system?.storage_used, system?.storage_cap,
-      system?.industry?.reservations, system?.blockade?.held_since ?? null, pins, this.owned(), Math.floor(liveSimTime() / 5)]);
+    const signature = sheetFingerprint([system?.id, system?.stockpile, system?.flows, system?.storage_used, system?.storage_cap,
+      system?.industry?.reservations, system?.blockade?.held_since ?? null, pins, this.owned(), this.tab, Math.floor(liveSimTime() / 5)]);
     if (!force && signature === this.signature && !this.shell.hidden) return;
     if (renderDeferred(this.body.id, () => this.render(route, true))) return;
     this.signature = signature;
@@ -144,13 +148,9 @@ export class DeckStores {
       this.refresh(route);
       return true;
     }
-    if (act === "stores-ship") {
-      const system = this.focus(route);
-      if (!system || system.owner !== this.ctx.state.playerId || system.blockade) return true;
-      const manifest = shippableStock(system);
-      if (!manifest.length) return true;
-      this.ctx.send({ type: "ShipProduction", system_id: system.id });
-      this.hooks.notice(`<b>Authority pickup requested</b> · ${manifest.map((slot) => `${fmt(slot.units)} ${esc(label(slot.commodity))}`).join(" · ")} → Market Hub.`);
+    if (act === "stores-tab" && isGoodsTab(button.dataset.goodsTab)) {
+      this.tab = button.dataset.goodsTab;
+      this.refresh(route);
       return true;
     }
     return false;
@@ -207,7 +207,8 @@ export class DeckStores {
   }
 
   private barHtml(system: SystemStateView, pins: readonly Commodity[]): string {
-    const goods = pins.map((commodity) => {
+    // §reactors-drives: a pinned good research has not opened stays off the bar.
+    const goods = pins.filter(goodKnown).map((commodity) => {
       const line = storeLine(system, commodity);
       const rate = rateText(line.rate);
       return `<button type="button" class="deck-stores__good${line.low ? " is-low" : ""}" data-deck-act="stores-open" data-system="${esc(system.id)}" title="${esc(lineTip(line))}">`
@@ -219,11 +220,12 @@ export class DeckStores {
 
   private popHtml(system: SystemStateView, pins: readonly Commodity[]): string {
     const storage = storageState(system);
-    const rows = storeGroups(system, pins).map((group) => `<section class="deck-stores-group"><h3>${esc(group.title)}</h3>`
+    // §goods-tabs: Resources · Parts · Modules, the tabs that hold something.
+    const groups = storeGroups(system, pins);
+    const tabs = GOODS_TABS.filter((tab) => groups.some((group) => group.tab === tab));
+    const tab = pickGoodsTab(this.tab, tabs);
+    const rows = groups.filter((group) => group.tab === tab).map((group) => `<section class="deck-stores-group"><h3>${esc(group.title)}</h3>`
       + group.lines.map((line) => rowHtml(line, pins.includes(line.commodity))).join("") + `</section>`).join("");
-    const manifest = shippableStock(system);
-    const units = manifest.reduce((sum, slot) => sum + slot.units, 0);
-    const blocked = (system.blockade?.held_since ?? null) !== null;
     const vault = vaultCapacity(system);
     // §player-styles: shown once raids have taken something today.
     const raided = this.ctx.state.raidLosses;
@@ -232,19 +234,30 @@ export class DeckStores {
       + (raided && raided.taken > 0 ? `<span class="deck-stores-pop__raided" title="Raids take at most a quarter of your storage a day."><small>Raided today</small><b>${fmt(raided.taken)}${raided.cap !== null ? ` / ${fmt(raided.cap)}` : ""}</b></span>` : "")
       + `<span class="deck-stores-pop__storage${storage.full ? " is-full" : storage.warn ? " is-warn" : ""}"><small>Storage</small>${meter(storage)}`
       + `<b>${fmt(storage.used)} / ${fmt(storage.cap)}</b>${storage.full ? "<small>Full</small>" : storage.fullIn !== null ? `<small>full in ${fmtBuildDur(storage.fullIn)}</small>` : ""}</span></header>`
-      + (rows || `<p class="deck-muted">Empty.</p>`)
-      + `<div class="deck-section__action"><button type="button" class="is-primary" data-deck-act="stores-ship" ${blocked || !manifest.length ? "disabled" : ""}>Ship ${units ? fmt(units) : "no"} goods to Market</button>`
-      + `<span>Fuels stay in reserve.</span></div></section>`;
+      + goodsTabsHtml("stores-tab", tab, tabs, "Goods")
+      + (rows ? STORES_HEAD + rows : `<p class="deck-muted">Empty.</p>`) + `</section>`;
   }
 }
 
+/** §stores-flows (Peter, Nov 5 2026: "clearly 'input/output' ... and then
+ * 'net' for each resource"): the columns over the rows; what counts, on hover. */
+const STORES_HEAD = `<div class="deck-stores-row is-head" aria-hidden="true"><span></span><span></span><small>Stock</small><small></small>`
+  + `<small title="Made a minute: mines, harvesters, factories">Made</small>`
+  + `<small title="Used a minute: factories, food, power, upkeep, repairs, research">Used</small>`
+  + `<small title="Made less used. Freight, trades and builds aren't counted.">Net /min</small><small></small><span></span></div>`;
+
+/** A per-minute flow cell: "+12", "−8", or a dash when nothing moves. */
+function flowCell(perSecond: number | null, sign: 1 | -1, kind: string): string {
+  const text = perSecond !== null ? rateText(perSecond * sign) : "";
+  return `<span class="deck-stores-row__rate is-${kind}${text ? (perSecond! * sign > 0 ? " is-up" : " is-down") : ""}">${text || "–"}</span>`;
+}
+
 function rowHtml(line: StoreLine, pinned: boolean): string {
-  const rate = rateText(line.rate);
   return `<div class="deck-stores-row${line.low ? " is-low" : ""}">${goodIcon(line.commodity)}`
     + `<span class="deck-stores-row__name">${esc(label(line.commodity))}</span>`
     + `<b>${fmt(line.units)}</b>`
     + `<small class="deck-stores-row__held"${line.safe > 0 ? ` title="Out of raiders' reach"` : ""}>${[line.held > 0 ? `${fmt(line.held)} held` : "", line.safe > 0 ? `${fmt(line.safe)} safe` : ""].filter(Boolean).join(" · ")}</small>`
-    + `<span class="deck-stores-row__rate${rate ? (line.rate! > 0 ? " is-up" : " is-down") : ""}">${rate ? `${rate}/min` : ""}</span>`
+    + flowCell(line.made, 1, "made") + flowCell(line.used, -1, "used") + flowCell(line.rate, 1, "net")
     + `<span class="deck-stores-row__eta">${line.emptyIn !== null ? `empty ${fmtBuildDur(line.emptyIn)}` : ""}</span>`
     + `<button type="button" class="deck-stores-row__pin" data-deck-act="stores-pin" data-good="${line.commodity}" aria-pressed="${pinned}" title="${pinned ? "Unpin from bar" : "Pin to bar"}">${pinned ? "★" : "☆"}</button></div>`;
 }
@@ -252,7 +265,7 @@ function rowHtml(line: StoreLine, pinned: boolean): string {
 function storageMeter(storage: StorageState, systemId: EntityId): string {
   const tip = `Storage ${fmt(storage.used)} / ${fmt(storage.cap)}${storage.full ? " · full, production stops" : storage.fullIn !== null ? ` · full in ${fmtBuildDur(storage.fullIn)}` : ""}`;
   return `<button type="button" class="deck-stores__storage${storage.full ? " is-full" : storage.warn ? " is-warn" : ""}" data-deck-act="stores-open" data-system="${esc(systemId)}" title="${esc(tip)}">`
-    + `<small>Storage</small>${meter(storage)}<b>${stockText(storage.used)}/${stockText(storage.cap)}</b></button>`;
+    + `<small>${storage.full ? "Storage full" : "Storage"}</small>${meter(storage)}<b>${stockText(storage.used)}/${stockText(storage.cap)}</b></button>`;
 }
 
 function meter(storage: StorageState): string {
@@ -261,8 +274,9 @@ function meter(storage: StorageState): string {
 
 function lineTip(line: StoreLine): string {
   const rate = rateText(line.rate);
-  return [`${label(line.commodity)} ${fmt(line.units)}`, line.held > 0 ? `${fmt(line.held)} held` : "", rate ? `${rate}/min` : "",
-    line.emptyIn !== null ? `empty in ${fmtBuildDur(line.emptyIn)}` : ""].filter(Boolean).join(" · ");
+  const made = line.made ? `made ${rateText(line.made)}/min` : "", used = line.used ? `used ${rateText(-line.used)}/min` : "";
+  return [`${label(line.commodity)} ${fmt(line.units)}`, line.held > 0 ? `${fmt(line.held)} held` : "", made, used,
+    rate ? `net ${rate}/min` : "", line.emptyIn !== null ? `empty in ${fmtBuildDur(line.emptyIn)}` : ""].filter(Boolean).join(" · ");
 }
 
 /** The good's icon without its own tooltip, so the button's shows. */

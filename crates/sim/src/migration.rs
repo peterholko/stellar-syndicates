@@ -9,6 +9,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::body::Body;
+use crate::galaxy::StarSystem;
 use crate::{EntityId, PlayerId};
 
 /// One liner carries one complete workforce cohort: 1,000 people.
@@ -63,6 +65,95 @@ impl MigrationPolicy {
             _ => 1.0,
         }
     }
+}
+
+/// §migration-status (Nov 1 2026): why a world takes no new liner, the
+/// allocation pass's gates in the order [`candidate`] checks them. The
+/// Population tab names the first that holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MigrationHold {
+    Closed,
+    /// Nobody lives here: a colony ship founds it first.
+    Unsettled,
+    Blockaded,
+    /// The system is below Well Supplied.
+    Food,
+    /// No room for another cohort once the liners bound here land.
+    Housing,
+    /// Managed: a crew in the system is not posted.
+    CrewFree,
+    /// Managed: the crews on hand and on their way fill every post.
+    Staffed,
+}
+
+/// The owner's multipliers an allocation reads (research and syndicate).
+#[derive(Debug, Clone, Copy)]
+pub struct MigrationMods {
+    /// Med Bays × the syndicate Migration bonus: a shorter interval.
+    pub speed: f64,
+    /// Dense Housing.
+    pub housing: f64,
+    /// Boom Charters, while a world is under half full.
+    pub young: f64,
+}
+
+/// A world the allocation pass may send the next liner to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MigrantCandidate {
+    pub system: EntityId,
+    pub body: u32,
+    pub score: f64,
+    pub interval_s: f64,
+}
+
+/// One world's standing with the allocation pass: the interval and score it
+/// would be picked with, or the first gate holding it.
+pub fn candidate(sys: &StarSystem, body: &Body, mods: MigrationMods) -> Result<MigrantCandidate, MigrationHold> {
+    let policy = body.migration_policy;
+    if policy == MigrationPolicy::Closed {
+        return Err(MigrationHold::Closed);
+    }
+    if body.population <= 0.0 {
+        return Err(MigrationHold::Unsettled);
+    }
+    if sys.blockade_held() {
+        return Err(MigrationHold::Blockaded);
+    }
+    if sys.food_state != crate::colony::FoodState::WellSupplied {
+        return Err(MigrationHold::Food);
+    }
+    let cap = body.population_capacity() * mods.housing;
+    let reserved = body.population + body.inbound_migrants as f64 / 1_000_000.0;
+    if cap - reserved + 1e-12 < MIGRANT_COHORT_POP {
+        return Err(MigrationHold::Housing);
+    }
+    if policy == MigrationPolicy::Managed {
+        // §workforce cap: posts can't exceed the workforce, so a shortage is
+        // no free crew while posts still want one (built posts stand empty, or
+        // a population drop left the posted lines short). Crews already
+        // aboard liners bound for the system count as filling them, so one
+        // empty post calls one liner.
+        let workforce = crate::colony::workforce_units(sys.population());
+        let posted = sys.workforce_posted();
+        let inbound = sys.bodies.iter().map(|b| b.inbound_migrants).sum::<u32>() / MIGRANT_COHORT_PEOPLE;
+        if posted < workforce {
+            return Err(MigrationHold::CrewFree);
+        }
+        if posted.max(sys.workforce_posts()) <= workforce + inbound {
+            return Err(MigrationHold::Staffed);
+        }
+    }
+    let appeal = body.population_growth_mult().max(0.25);
+    let young = if reserved < cap * 0.5 { mods.young } else { 1.0 };
+    let interval_s = MIGRATION_BASE_INTERVAL_S * policy.interval_mult()
+        / (appeal * mods.speed * young).max(0.05);
+    // Policy is the player's explicit direction. Within a policy, worlds with
+    // better living conditions and more free housing win; lower population
+    // breaks near-ties toward frontier sites.
+    let free_frac = ((cap - reserved) / cap.max(MIGRANT_COHORT_POP)).clamp(0.0, 1.0);
+    let score = policy.selection_weight() * 100.0 + appeal * 10.0 + free_frac - reserved;
+    Ok(MigrantCandidate { system: sys.id, body: body.id, score, interval_s })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

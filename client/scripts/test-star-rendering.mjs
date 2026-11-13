@@ -93,15 +93,22 @@ for (const name of ["moveTo", "lineTo", "closePath", "fill", "stroke", "circle",
 }
 class Sprite extends Container { constructor(texture) { super(); this.texture = texture; this.anchor = point(); } }
 class Text extends Container { constructor({ text, style }) { super(); this.text = text; this.style = style; this.anchor = point(); } }
+// The rolling star's mesh pieces (src/starroll.ts): recorded, never drawn.
+class MeshGeometry { constructor(options) { Object.assign(this, options); } destroy() {} }
+class Mesh extends Container { constructor(options) { super(); Object.assign(this, options); } }
+class Shader { constructor(options) { this.resources = { ...options.resources }; } destroy() {} }
+class UniformGroup { constructor(structure) { this.uniforms = Object.fromEntries(Object.entries(structure).map(([k, v]) => [k, v.value])); } }
 const pixi = { Container, Graphics, Sprite, Text, Texture: { EMPTY: {} },
-  TextStyle: class { constructor(style) { Object.assign(this, style); } }, Assets: { load: () => new Promise(() => {}) } };
+  TextStyle: class { constructor(style) { Object.assign(this, style); } }, Assets: { load: () => new Promise(() => {}) },
+  Mesh, MeshGeometry, Shader, UniformGroup, GlProgram: { from: (options) => options } };
 const planetArt = compile(source("planetart.ts"), { "./planet-art.generated": compile(source("planet-art.generated.ts")) });
 const layout = compile(source("systemlayout.ts"));
 const bodyFx = compile(source("systembodyfx.ts"), { "pixi.js": pixi, "./systemlayout": layout });
-const starFx = compile(source("systemstarfx.ts"), { "pixi.js": pixi, "./systembodyfx": bodyFx, "./systemlayout": layout });
+const starRoll = compile(source("starroll.ts"), { "pixi.js": pixi });
+const starFx = compile(source("systemstarfx.ts"), { "pixi.js": pixi, "./systembodyfx": bodyFx, "./systemlayout": layout, "./starroll": starRoll });
 const systems = compile(source("systemview.ts"), { "./stars": stars, "./prng": prng, "./planetart": planetArt, "pixi.js": pixi,
   "./systemlayout": layout, "./systembodyfx": bodyFx,
-  "./systemstarfx": starFx,
+  "./systemstarfx": starFx, "./starroll": starRoll,
   "./systemtrafficlayer": compile(source("systemtrafficlayer.ts"), { "pixi.js": pixi, "./protocol": compile(source("protocol.ts")),
     "./systemlayout": layout, "./systembodyfx": bodyFx }),
   "./planet-structure-art": { hasOrbitalShipConstruction: () => false }, "./icons": { label: (s) => s } });
@@ -111,7 +118,7 @@ const ast = ts.createSourceFile("render.ts", renderSource, ts.ScriptTarget.Lates
 const owner = ast.statements.find(n => ts.isClassDeclaration(n) && n.name?.text === "Renderer");
 const method = name => owner.members.find(n => n.name?.getText(ast) === name);
 const constantNames = ["BAND_SIZE", "BODY_ZOOM_START", "ZOOM_MAX_FACTOR", "SYSTEM_ZOOM_FACTOR", "SHIP_NATIVE_ZOOM_START", "MACHINE_ZOOM_END", "BODY_HIT_CAP_PX",
-  "APPROACH_HINT_START", "DISC_RESOLVE_FROM", "DISC_OPAQUE_AT"];
+  "APPROACH_HINT_START", "DISC_RESOLVE_FROM", "DISC_OPAQUE_AT", "rosterOf"];
 const constants = ast.statements.filter(ts.isVariableStatement).flatMap(n => [...n.declarationList.declarations])
   .filter(n => constantNames.includes(n.name.getText(ast)));
 assert.equal(constants.length, constantNames.length);
@@ -124,7 +131,7 @@ const { Renderer } = compile(`${constants.map(n => `const ${n.getText(ast)};`).j
  export class Renderer {
  ${["bodyFor", "placeStarBody", "spinStarDiscs", "starDiameters", "deepZoomPx", "systemHitRadius", "prepareSystemScene", "refreshSystemStar", "warmStarTextures"].map(n => method(n).getText(ast)).join("\n")}
  fitScale() { return 1; }
- }`, {}, { Sprite, starTypeFor: stars.starTypeFor, STAR_TYPES: stars.STAR_TYPES, starSpinAngle: starFx.starSpinAngle,
+ }`, {}, { Sprite, RollingStar: starRoll.RollingStar, starTypeFor: stars.starTypeFor, STAR_TYPES: stars.STAR_TYPES,
   performance: { now: () => now * 1000 }, starArtwork: art.starArtwork, buildVisualSystem: systems.buildVisualSystem });
 const resolveAt = zoom => { const t = Math.min(Math.max((zoom - 40) / (96 - 40), 0), 1); return t * t * (3 - 2 * t); };
 const ids = new Map();
@@ -188,7 +195,9 @@ for (const [width, height, resolution] of [[390, 844, 2], [1366, 768, 1], [1920,
         close(disc.alpha, Math.min(1, resolve / .4), "opaque early in the band");
         assert.deepEqual(plain(disc.anchor), { x: discArt.anchor[0], y: discArt.anchor[1] });
         assert.equal(disc.position.x, 310); assert.equal(disc.position.y, 270);
-        close(disc.rotation, starFx.starSpinAngle(st.slug, now), "turns with the System View's star");
+        // §star-roll: it turns about its north–south axis, never in the screen's plane.
+        close(disc.turn, starRoll.starRoll(st.slug, now), "turns with the System View's star");
+        assert.equal(disc.rotation ?? 0, 0, "no clock spin");
       }
       if (zoom >= 96) {
         close(disc.texture.width * disc.scale.x * art.starArtwork("system", st.slug).visualRatio, scene.starVisibleDiameterPx(),
@@ -196,7 +205,10 @@ for (const [width, height, resolution] of [[390, 844, 2], [1366, 768, 1], [1920,
         assert.equal(disc.alpha, 1); assert.equal(sprite.visible, false);
         // Idle chart frames still turn it in step (drawSystems skips them).
         now += 37.25; renderer.spinStarDiscs();
-        close(disc.rotation, starFx.starSpinAngle(st.slug, now), "an idle frame keeps the turn in step");
+        close(disc.turn, starRoll.starRoll(st.slug, now), "an idle frame keeps the turn in step");
+        // The System View's star, at the same wall time, is the same picture.
+        scene.update(null, null, now * 1000);
+        close(scene.starSprite.turn, disc.turn, "the doorway meets the System View's star at the same turn");
       }
       cases++;
     }

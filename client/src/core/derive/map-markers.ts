@@ -6,7 +6,7 @@
 import type { ExplorationSiteView, OperationIssuer, OperationView, SystemInfo } from "../../protocol";
 import type { MapGlyph } from "../../map-glyphs.generated";
 import { siteStatus, siteTitle } from "./exploration";
-import { fmt, fmtDur, operationTitle } from "./format";
+import { fmt, fmtDur, operationLeft, operationTitle } from "./format";
 
 export const CONTACT_COLOR = 0x8fd3ff;
 const CONTACT_PALE = 0xdcefff;
@@ -124,7 +124,8 @@ export function contractBrief(op: OperationView, now: number): string {
   const parts = [operationTitle(op), ISSUER_LABEL[op.issuer] ?? "Contract"];
   if (op.reward.credits > 0) parts.push(`${fmt(op.reward.credits)} cr`);
   if (op.state === "active" && op.goal > 0) parts.push(`${Math.round(clamp01(op.progress / op.goal) * 100)}% done`);
-  if (op.expires_at > now) parts.push(`${fmtDur(op.expires_at - now)} left`);
+  const left = operationLeft(op, now);
+  if (left) parts.push(`${fmtDur(left)} left`);
   parts.push(op.joined ? "click to open your contract" : "click to review the offer");
   return parts.join(" · ");
 }

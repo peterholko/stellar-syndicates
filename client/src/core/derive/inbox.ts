@@ -302,9 +302,10 @@ export function computeInbox(st: ViewState = state): InboxItem[] {
         facts: "no new orders", hint: "It keeps its course and guns, but takes no new movement or attack order until supplied.",
         age: fleet.age, actions: [fleetGo(fleet.id)] });
     } else {
-      const store = regimeStore(fleet), have = (store.fuel === "uranium" ? fleet.uranium : fleet.fuel) ?? null;
+      const store = regimeStore(fleet), have = store.served;
       if (have !== null && store.capacity > 0 && have / store.capacity < 0.2) {
-        out.push({ key: `fuel:${fleet.id}`, group: "fleets", weight: 66, tone: "warn", icon: store.fuel === "uranium" ? "uranium" : "deuterium",
+        out.push({ key: `fuel:${fleet.id}`, group: "fleets", weight: 66, tone: "warn",
+          icon: store.fuel === "uranium" ? "uranium" : store.fuel === "antimatter" ? "antimatter" : "deuterium",
           title: `${name} low on ${label(store.fuel)}`, facts: `${Math.round(have)} / ${Math.round(store.capacity)}`,
           hint: "From the fleet's last served report.", age: fleet.age, actions: [fleetGo(fleet.id)] });
       }
@@ -407,7 +408,7 @@ export function computeInbox(st: ViewState = state): InboxItem[] {
     const summary = dynamic.deposits.slice(0, 3).map((deposit) => `${label(deposit.resource)} ×${deposit.richness.toFixed(2)}`).join(" · ");
     out.push({ key: `surveyrep:${systemId}`, group: "opportunities", weight: 45, tone: "info", icon: "intel",
       title: `Survey report · ${systemName(systemId)}`, facts: roles.join(" · ") || summary || "barren",
-      hint: [summary, dynamic.trait ? traitLine(dynamic.trait).title : "", dynamic.owner === null ? "Unclaimed: send a colony ship if it's worth holding." : ""].filter(Boolean).join(". "),
+      hint: [summary, dynamic.trait ? traitLine(dynamic.trait).title : "", dynamic.owner === null ? "Unowned: claim it and send a Colony Ship if it's worth holding." : ""].filter(Boolean).join(". "),
       age: at, actions: [show(systemId)] });
   }
   const nearSu = 3000;

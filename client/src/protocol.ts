@@ -13,6 +13,21 @@ export interface Vec2 {
 
 /// §ground G4: what a landing with the marines currently in orbit would cost.
 /// Present only for the besieger who has them — the person making the decision.
+/** §veil (docs/veil.md): the ionised sky a besieged world can raise. While
+ * `up`, guns pin nothing, plunder loads nothing and only Transports land,
+ * less `descent_loss` of their marines. */
+export interface VeilStateView {
+  level: number;
+  up: boolean;
+  descent_loss: number;
+  /** Units of the plant's fuel burned a second while raised. */
+  burn_per_s: number;
+  /** The fuel it burns; absent on a Solar Array, which can't carry it. */
+  fuel?: Commodity | null;
+  /** Owner's standing order: raise under siege. */
+  raise: boolean;
+}
+
 export interface LandingOddsView {
   marines: number;
   /// 0..1 chance of taking the ground at the CURRENT suppression.
@@ -63,6 +78,8 @@ export interface GroundRecordHeader {
   defenders_initial: number | null;
   garrison_tiers: number;
   suppression_at_drop: number;
+  /** §veil: marines lost in the descent — participants only. */
+  descent_losses?: number | null;
 }
 
 export interface GroundRecordUpdate {
@@ -140,9 +157,11 @@ export interface SystemInfo {
   name: string;
   /// §explore: the public richness band (Poor / Fair / Rich).
   band: RichnessBand;
-  /// DEPRECATED (§ships part 3): claiming is physical (colony ships) — no
-  /// longer charged or displayed; kept for wire compatibility.
+  /// §claims (v90): the base price of the Authority's claim on it; the asking
+  /// price is this × `ClaimsView.mult`.
   claim_cost: number;
+  /// §claims: a home site held for a new charter. No claim is sold on it.
+  reserved?: boolean;
   /// §node: the star is exotic. The server decides (a home never is); the
   /// star art follows it (`chartStars` in stars.ts).
   exotic: boolean;
@@ -228,8 +247,28 @@ export interface BodyView {
   /// Owner-only immigration state. Rivals receive `closed` and zero inbound.
   migration_policy: MigrationPolicy;
   inbound_migrants: number;
+  /// §migration-status: owner-only housing and liner status (absent for rivals).
+  migration?: MigrationView | null;
   /// §power: owner-only, this planet's grid as reported.
   power?: PowerView | null;
+}
+
+/// §migration-status: why a world takes no new liner, in the allocation
+/// pass's order.
+export type MigrationHold = "closed" | "unsettled" | "blockaded" | "food" | "housing" | "crew_free" | "staffed";
+
+/// §migration-status (v82): one own world's immigration, from the Hub's
+/// allocation pass over the arrived report of its system.
+export interface MigrationView {
+  /// Housing with research (millions), as the allocation reads it.
+  housing: number;
+  /// Liners bound here, and the sim time the first lands.
+  liners: number;
+  lands_at?: number | null;
+  /// Why no new liner comes here; absent when it can take one.
+  hold?: MigrationHold | null;
+  /// The corporation's next liner comes here, allocated at this sim time.
+  next_at?: number | null;
 }
 
 /// §power: one planet's grid — MW drawn against MW available, the factor on
@@ -346,6 +385,11 @@ export interface IndustryCatalog {
   outpost_costs: [Commodity, number][]; outpost_build_secs: number; skim_helium3_per_s: number; max_stops: number;
 }
 
+/** §stores-flows: what a system's economy makes and uses of one good, per
+ * minute (production, food, power, upkeep, repairs, research; never
+ * transfers). Owner-only, from the same report as the stockpile. */
+export interface FlowView { commodity: Commodity; made: number; used: number }
+
 export interface SystemStateView {
   id: EntityId;
   industry?: SiteIndustry | null;
@@ -354,6 +398,8 @@ export interface SystemStateView {
   /** §vault (v73): owner-only — units of each good raiders can't reach (the
    * settlers' rations and what the Vaults hold). Absent for rivals. */
   vault?: StockSlot[];
+  /** §stores-flows: per good, made and used a minute; absent when nothing moves. */
+  flows?: FlowView[];
   /** §scouting (v74): what the viewer's own Scouts last saw of this RIVAL
    * system's stores — goods in raiders' reach (dearest first) and the Vault's
    * room — once that light reached command. Absent on your own systems. */
@@ -407,6 +453,9 @@ export interface SystemStateView {
     /// between `win` and `win_if_guns_leave` is the warning that a landing
     /// belongs to the bombardment rather than to the men.
     landing?: LandingOddsView | null;
+    /// §veil: the system's Veil Projector, for the same two viewers; absent
+    /// without one.
+    veil?: VeilStateView | null;
   } | null;
   /** §orbital-defense: owner-only; absent without a station. */
   station?: StationView | null;
@@ -439,9 +488,6 @@ export interface SystemStateView {
   population_upkeep: number;
   /// Resident specialist pool (slug -> headcount) — owner-only; rivals see {}.
   specialists: Record<string, number>;
-  /// §modules Part B3: the module LEDGER (slug -> crates on hand) — owner-only;
-  /// rivals see {} (your armory is private intel).
-  modules?: Record<string, number>;
   /// §bodies: the roster — public geography; per-body owner data owner-only.
   bodies: BodyView[];
   /** Survey-gated colony roles, scored by the same natural multipliers as production. */
@@ -549,6 +595,9 @@ export interface BuildOption {
   refining_recipes?: ConversionRecipe[];
   /** §asteroid-quarry: what one tier eats a second, all or nothing. */
   upkeep?: [Commodity, number][];
+  /** §progression: an income structure; its levels follow
+   * `PRODUCTION_TIER_CURVE` (sim `build::PRODUCTION_TIER_COST_MULT`). */
+  earns?: boolean;
 }
 
 export interface StructureTierOption {
@@ -662,8 +711,25 @@ export type Commodity =
   | "metallic_ore" | "rare_elements" | "silicates" | "volatiles" | "biomass" // historical slugs; metallic_ore displays as Ferrite Ore
   | "alloys" | "electronics" | "polymers" | "deuterium" | "provisions"            // processed
   | "machinery" | "armaments" | "composites" | "hull_sections"
-  | "precision_components" | "warp_core"                                        // advanced
-  | "uranium" | "antimatter" | "fusion_core";                                   // §fuel-overhaul
+  | "precision_components" | "fission_reactor"                                  // advanced (§reactors-drives: rung 1's reactor, once the Fission Core / Warp Core)
+  | "uranium" | "antimatter" | "fusion_reactor"                                 // §fuel-overhaul (rung 2's reactor, ships and plants)
+  | "advanced_fusion_reactor" | "antimatter_reactor"                            // §reactors-drives: rungs 3 and 4
+  | "nav_computer" | "cargo_bay" | "pulse_laser" | "beam_battery"               // §shipbuilding-overhaul: the kit parts
+  | "torpedoes" | "slugs" | "beam_crystals"                                     // §shipbuilding-overhaul Phase 5: the munitions
+  | "zephyr_drive" | "gale_drive" | "tempest_drive" | "maelstrom_drive"         // §reactors-drives: the four warp drives, by rung
+  // §hull-ladder: heavy (×25) and capital (×625) engines and frames, known
+  // with the Cruiser's and the Dreadnought's lines.
+  | "heavy_fission_reactor" | "heavy_fusion_reactor" | "heavy_advanced_fusion_reactor" | "heavy_antimatter_reactor" | "heavy_zephyr_drive" | "heavy_gale_drive" | "heavy_tempest_drive" | "heavy_maelstrom_drive" | "heavy_hull_sections"
+  | "capital_fission_reactor" | "capital_fusion_reactor" | "capital_advanced_fusion_reactor" | "capital_antimatter_reactor" | "capital_zephyr_drive" | "capital_gale_drive" | "capital_tempest_drive" | "capital_maelstrom_drive" | "capital_hull_sections"
+  // §modules-as-goods (Nov 8 2026): every module is a good of its own slug (sim ModuleKind::good).
+  | ModuleKind;
+
+/** §reactors-drives: a hull's REACTOR, which names the fuel it burns (sim fuel::ReactorGrade). */
+export type ReactorGrade = "fission" | "fusion" | "helium" | "antimatter";
+export const REACTOR_GRADES: readonly ReactorGrade[] = ["fission", "fusion", "helium", "antimatter"];
+/** Its WARP DRIVE: speed, Stealth, the jump (sim fuel::Drive). A drive needs a reactor of at least its rung. */
+export type Drive = "zephyr" | "gale" | "tempest" | "maelstrom";
+export const DRIVES: readonly Drive[] = ["zephyr", "gale", "tempest", "maelstrom"];
 
 export interface CargoView {
   commodity: Commodity;
@@ -770,6 +836,35 @@ export interface CharterView {
    * `market_penalty_frac`, and the squeeze it has heard of. */
   levy_frac?: number;
   squeeze?: SqueezeView;
+  /** §licences (v86): every hull that needs the Authority's licence, as
+   * heard: held once its receipt has come home; otherwise its price at the
+   * standing heard (a capital's at Commissioned) and why it isn't for sale. */
+  licences?: LicenceView[];
+  /** §claims (v90): the Authority's claims on new colonies, as heard. */
+  claims?: ClaimsView;
+}
+
+/** §licences (v86): why the Authority won't sell a licence (sim `LicenceRefusal`). */
+export type LicenceRefusal =
+  | { reason: "not_required" } | { reason: "already_held" } | { reason: "needs_research" }
+  | { reason: "needs_commissioned" } | { reason: "charter_closed" } | { reason: "at_war" }
+  | { reason: "cant_afford"; cost: number };
+
+/** §claims (v90): claims held as heard, and the next one's price: a system's
+ * `claim_cost` × `mult`. `at_war`: none needed; `closed`: none for sale. */
+export interface ClaimsView {
+  held: { system: EntityId; lapses_at: number }[];
+  mult: number;
+  at_war: boolean;
+  closed: boolean;
+}
+
+/** §licences (v86): one hull's licence, as heard (docs/blueprint-licences.md). */
+export interface LicenceView {
+  hull: ShipKind;
+  held: boolean;
+  price: number;
+  refusal?: LicenceRefusal;
 }
 
 /** §season (v75): the Authority's demands on one corporation, as heard. */
@@ -1056,6 +1151,13 @@ export interface CompCount {
   count: number;
 }
 
+/** §shipbuilding-overhaul: `count` engine-bearing hulls on cores of `grade`. */
+export interface DriveView {
+  reactor: ReactorGrade;
+  drive: Drive;
+  count: number;
+}
+
 // §modules Part B: one canonical MODULE kind slug.
 export type ModuleKind =
   | "mass_driver"
@@ -1074,7 +1176,6 @@ export type ModuleKind =
   | "stasis_web"
   | "warp_stabilizer"
   | "interdiction_field"
-  | "jump_drive"
   | "lance_array";
 
 // §modules Part B: one FITTED stack of a fleet — `n` ships of `kind` all carrying
@@ -1258,9 +1359,21 @@ export interface GhostView {
   /** The fission store: Uranium, burned by Slow warp. */
   uranium?: number | null;
   uranium_capacity?: number | null;
+  /** §reactors-drives: the Helium-3 tank, and the hulls aboard by reactor and drive. */
+  helium3_capacity?: number | null;
+  drives?: DriveView[] | null;
   /** The antimatter bottle on jump-capable hulls. */
   antimatter?: number | null;
   antimatter_capacity?: number | null;
+  /** §shipbuilding-overhaul Phase 5: owner-only magazines — Torpedoes for the
+   *  racks, Slugs for the drivers, Beam Crystals in the beam guns — with what
+   *  the guns aboard hold; absent when nothing aboard takes one. */
+  torpedoes?: number | null;
+  torpedoes_capacity?: number | null;
+  slugs?: number | null;
+  slugs_capacity?: number | null;
+  crystals?: number | null;
+  crystals_capacity?: number | null;
   /** §syndicate-projects (R6): owner-only Freight bonus on player freighter holds. */
   cargo_mult?: number | null;
   /** §holds: owner-only Prize Holds bonus on Combat Freighter holds. */
@@ -1304,7 +1417,7 @@ export interface GhostView {
    * finer or coarser than `count_class` ([low, high]; high null: open-ended). */
   count_range?: [number, number | null] | null;
   /** §research-wiring Traffic Analysis: an unrevealed freighter's cargo kind. */
-  manifest_class?: "goods" | "personnel" | "modules" | "empty" | null;
+  manifest_class?: "goods" | "personnel" | "empty" | null;
   /** §research-wiring Wake Analysis: tank in quarters, and the bearing (radians) it came from. */
   wake?: { fuel: number; from: number | null } | null;
   /** §research-wiring Standing Watch: a lost contact's dead-reckoned track — seconds since its last fix. */
@@ -1325,9 +1438,6 @@ export interface GhostView {
   // (seeing the makeup reveals the fits). Only fitted stacks; the unfitted
   // remainder = composition − Σ these. null when composition is null.
   loadouts?: LoadoutStack[] | null;
-  // §modules Part B3: module CRATES aboard a transport convoy — fogged like
-  // passengers ({} = none visible / none aboard).
-  modules?: Record<string, number>;
   // §Part 4 detection signature (how LOUD a dark fleet is; 1.0 = a lone raider at
   // full speed). Present only for dark fleets — drives the flare treatment.
   signature: number | null;
@@ -1417,7 +1527,7 @@ export function formatId(id: PlayerId): string {
 
 // Client → server.
 export type FoundingProfile = "mineral_highlands" | "verdant_lowlands" | "coastal_plains";
-export type SettlementProject = "prospect" | "surface_workings" | "storehouse" | "quarters";
+export type SettlementProject = "prospect" | "surface_workings" | "storehouse";
 export type ClientMsg =
   /** §founding: land on the home world the server dealt. */
   | { type: "FoundColony" }
@@ -1426,7 +1536,8 @@ export type ClientMsg =
   /** §charter-crates: collect a released charter crate into the home stockpile. */
   | { type: "CollectCharterCrate"; charter_crate: CharterCrateId }
   | { type: "DevelopSettlement"; system_id: EntityId; body_id: number; project: SettlementProject }
-  | { type: "SetFreightRoute"; fleet_id: EntityId; route: FreightRoute | null }
+  /** §route-edit: `revise` keeps a run under way in its place (sim `FreightRun::revised`). */
+  | { type: "SetFreightRoute"; fleet_id: EntityId; route: FreightRoute | null; revise?: boolean }
   | { type: "SetRefiningReserve"; system_id: EntityId; ore: number; fuel: number }
   | { type: "DeployOutpost"; fleet_id: EntityId; system_id: EntityId; body_id: number; outpost: OutpostKind; commodity: Commodity }
   | { type: "SkimFuel"; fleet_id: EntityId; system_id: EntityId }
@@ -1474,6 +1585,9 @@ export type ClientMsg =
   | { type: "SetRunBlockades"; fleet_id: EntityId; on: boolean }
   | { type: "FitStation"; system_id: EntityId; mount: number; fit: ModuleKind[] }
   | { type: "PayReinstatement"; points: number }
+  /** §licences (v86): buy the Authority's licence for a hull. */
+  | { type: "BuyLicence"; hull: ShipKind }
+  | { type: "BuyClaim"; system: EntityId }
   /** §season (v75): answer a levy rise, pay arrears, answer a requisition. */
   | { type: "AnswerLevy"; accept: boolean }
   | { type: "PayArrears"; commodity: Commodity }
@@ -1492,23 +1606,20 @@ export type ClientMsg =
   | { type: "SetFleetDoctrine"; doctrine: FleetDoctrine }
   // `join` (optional): a fleet docked at that system for the finished ship to
   // JOIN; omit / null forms a new fleet-of-one (§FLEETS management v1).
-  | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null; loadout?: ModuleKind[] }
-  // §modules Part B3: manufacture one module into the system ledger (Armaments ≥ 1).
+  | { type: "BuildShip"; system_id: EntityId; ship_kind: ShipKind; join?: EntityId | null; loadout?: ModuleKind[]; reactor?: ReactorGrade; drive?: Drive }
+  | { type: "RefitEngines"; fleet_id: EntityId; ship: ShipKind; reactor?: ReactorGrade | null; drive?: Drive | null; n: number }
+  // §modules Part B3: manufacture one module into the system's stockpile (§modules-as-goods).
   | { type: "BuildModule"; system_id: EntityId; module: ModuleKind }
   // §modules Part B4: refit `n` ships of `ship`/`from` in a docked fleet to `to`.
   | { type: "RefitShips"; fleet_id: EntityId; ship: ShipKind; from: ModuleKind[]; to: ModuleKind[]; n: number }
-  // §modules Part B3: ship modules between owned/allied systems on a crate convoy.
-  | { type: "TransferModules"; from: EntityId; to: EntityId; manifest: Record<string, number> }
-  // §modules Part B3: buy `n` modules from Sol (delivered to dest_system).
-  | { type: "BuyModule"; module: ModuleKind; n: number; dest_system: EntityId }
-  // §modules Part B3: sell `n` modules from from_system to Sol.
-  | { type: "SellModule"; module: ModuleKind; n: number; from_system: EntityId }
   // §economy: the 16 structure slugs (the server accepts legacy slugs via alias).
   | { type: "DevelopSystem"; system_id: EntityId; upgrade: string; body_id?: number }
   // §construction: cancel a structure still waiting for its world's work slot.
   | { type: "CancelBuild"; system_id: EntityId; job_id: number }
   | { type: "SetAssignment"; system_id: EntityId; structure: string; workers: number; specialists?: Record<string, number>; body_id?: number; refining_ore?: Commodity }
   | { type: "SetMigrationPolicy"; system_id: EntityId; body_id: number; policy: MigrationPolicy }
+  // §veil: raise this system's Veil under a held blockade, or keep it down.
+  | { type: "SetVeilPolicy"; system_id: EntityId; raise: boolean }
   | { type: "RelocateMigrants"; from_system: EntityId; from_body: number; to_system: EntityId; to_body: number }
   | { type: "HireSpecialist"; specialist: string; dest_system: EntityId }
   | { type: "TrainSpecialist"; system_id: EntityId; specialist: string }
@@ -1679,7 +1790,7 @@ export interface OperationView {
   expires_at: number;
   target_pos: Vec2;
   reward: OperationRewardView;
-  briefing?: { follow_up: "escort" | "salvage" | "production" | "patrol" | "dangerous_freight" | "guarded_salvage" | "depot" | "stronghold" | "counter_raid_trace" | "counter_raid_assault" | "counter_raid_recovery" | "site_recovery" | "combat_preparation"; title: string;
+  briefing?: { follow_up: "escort" | "salvage" | "production" | "patrol" | "dangerous_freight" | "guarded_salvage" | "depot" | "stronghold" | "counter_raid_trace" | "counter_raid_assault" | "counter_raid_recovery" | "site_recovery" | "combat_preparation" | "founder_den" | "founder_privateer"; title: string;
     difficulty: string; suitable_fleets: string; summary: string; variant?: number };
   joined: boolean;
   assigned_fleet?: EntityId | null;
@@ -2279,8 +2390,19 @@ export type FoundingStage =
   | "prospect_belt"
   /** §gun-platform (v78): step 6, a Gun Platform after the raid. */
   | "build_gun_platform"
-  /** §charter-crates (v79): step 22, a Warehouse and a Vault before the uncle. */
-  | "secure_stores";
+  /** §charter-crates (v79): step 25, a Warehouse and a Vault before the uncle. */
+  | "secure_stores"
+  /** §stash (v83): the den's aftermath: the Interceptor repaired (13), the
+   * first Tiny Freighter (14), the den's loot hauled back (15). */
+  | "repair_interceptor"
+  | "build_tiny_freighter"
+  | "haul_loot"
+  /** §full-speed + §signals (v84): the freighter to Full speed (15), and a
+   * signal answered while Enrichment runs (19). */
+  | "full_speed"
+  | "answer_signal"
+  /** §freight-frames (Nov 6 2026): the hull the charter's research unlocks. */
+  | "build_small_freighter";
 
 /** §player-styles (v80): what raids and blockades took from you over the last
  * day; `cap` is the day's limit, null while none applies (three days without
@@ -2292,7 +2414,7 @@ export interface RaidLossView {
 
 /** §charter-crates (v79): the charter's supplies, sealed by the Authority and
  * released a chapter at a time (sim `founding::CharterCrate`). */
-export type CharterCrateId = "landfall" | "raid" | "pirates" | "expansion" | "reach" | "vendetta";
+export type CharterCrateId = "landfall" | "reach" | "vendetta" | "expansion";
 
 /** A crate still sealed: `released` ones wait to be collected; the rest are
  * what the builds ahead can count on. */
@@ -2323,6 +2445,8 @@ export interface FoundingView {
   recovery_site?: EntityId | null;
   recovered?: boolean;
   export_dispatched?: boolean;
+  /** §export-follow: sim time the first shipment left its dock; the follow clock. */
+  export_departed_at?: number | null;
   protected: boolean;
   protection_min_until: number;
   protection_max_until: number;
@@ -2347,14 +2471,21 @@ export interface FoundingView {
   raid_seen?: boolean;
   /** §charter-v5: the report of what the raid took has reached command. */
   raided?: boolean;
+  /** §raid-course (v86): the privateer's arrival over the colony's world has
+   * reached command: it is stripping the stockpile. */
+  raid_over?: boolean;
+  /** §watch-the-pirate (v88): after its raid, the privateer has dropped off
+   * the colony's sensors; the guide's "Watch the pirate" ends. */
+  raid_lost?: boolean;
   /** §charter-v4: "Expand mining operations" has opened the home's other
    * worlds; until then only the landing world. */
   land_grant_open?: boolean;
   /** §charter-gates: structures the charter has yet to open, by the step that
    * opens each (sim `founding::charter_step`). Absent once all are open. */
   charter_gates?: Record<string, number>;
-  /** §charter-v4: the privateer den's system, named by the privateer's log
-   * once its kill report reached command. */
+  /** §charter-v4: the privateer den's system. §den-retreat (Nov 12 2026):
+   * known from the hunt's start, where he went home to; without a den on the
+   * hunt, named by his log once the kill's report reached command. */
   den?: EntityId | null;
   /** §charter-v4: the report that the den fell has reached command. */
   den_cleared?: boolean;
@@ -2366,9 +2497,30 @@ export interface FoundingView {
   crates?: CharterCrateView[];
   /** §traders: who flies this founder's free trader. */
   trader?: TraderSlug;
+  /** §charter-advisor (v87): the Authority officer dealt to guide this
+   * charter, 0–2 (`ADVISORS` in core/derive/advisor.ts). */
+  advisor?: number;
   /** §privateer-hunt: where the privateer went to ground, from the raid's
-   * report until its kill's report. */
+   * report until its kill's report. §den-retreat: his den, when he has one. */
   privateer_last_seen?: Vec2 | null;
+  /** §stash (v83): what the raid took, in the den until the first freighter
+   * loads it, then on its way home. Absent until the raid's report. */
+  stash?: StashView | null;
+  /** §stash: own fleets the den's blast hurt, until each is repaired. */
+  den_wounded?: EntityId[];
+}
+
+/** §stash: the den's stash. §den-stores (Nov 5 2026): the raid's take and the
+ * den's stores, two Tiny Freighter loads. */
+export interface StashView {
+  /** All of it not home yet: at the den or aboard. */
+  goods: Partial<Record<Commodity, number>>;
+  /** What still waits at the den for a freighter. */
+  left?: Partial<Record<Commodity, number>>;
+  /** The freighter bringing a load home, once it has loaded. */
+  fleet?: EntityId | null;
+  /** It reached home, or its freighter was lost on the way. */
+  home: boolean;
 }
 
 /** §traders: the four free traders (`core/derive/trader.ts`). */
@@ -2436,7 +2588,7 @@ export type LedgerMetric = "syndicate" | "limit_orders" | "population" | "storag
 /** §merchant: the traveling merchant's stall at your home. Prices are fixed
  * for the visit: the Hub mids when it set out, plus its markup. */
 export type MerchantPhase = "arriving" | "docked" | "leaving";
-export interface MerchantGoodView { commodity: Commodity; stock: number; price: number; hub_mid: number }
+export interface MerchantGoodView { commodity: Commodity; stock: number; price: number; hub_mid: number; featured_price?: number | null }
 export interface MerchantView {
   fleet: EntityId;
   system: EntityId;
@@ -2444,9 +2596,11 @@ export interface MerchantView {
   leave_by: number;
   markup: number;
   goods: MerchantGoodView[];
-  /** What it pays for Ferrite Ore, and how much more it will take. */
-  ore_price: number;
-  ore_room: number;
+  /** The one good it buys (§sell-alloys, Nov 11 2026: Alloys), what it pays
+   * a unit and how many more it will take. */
+  buys: Commodity;
+  buy_price: number;
+  buy_room: number;
 }
 
 export interface CharterLedgerView {

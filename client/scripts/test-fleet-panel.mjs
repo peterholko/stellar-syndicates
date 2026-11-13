@@ -91,13 +91,15 @@ for (const absent of ["Hold position", "Recall raid", "Lift blockade", "Withdraw
   assert.ok(!html.includes(absent), `the panel leaves ${absent} to the details`);
 }
 assert.equal(shell.hidden, true, "the details stay closed until asked for");
-// §fuel-overhaul: the fusion tank reads as space, never energy over space: a
-// full tank of Helium-3 (52.5 units, 315 of energy) is 52.5 / 52.5.
-Object.assign(freighter, { fuel: 315, fuel_capacity: 52.5, helium3: 52.5, uranium: 10, uranium_capacity: 52.5 });
+// §reactors-drives: one gauge per tank aboard and an engines line; an
+// Advanced Fusion hull's tank is small and dense, so it reads to a decimal.
+Object.assign(freighter, { fuel: undefined, fuel_capacity: undefined, helium3: 2.2, helium3_capacity: 2.2, uranium: 10, uranium_capacity: 52.5,
+  drives: [{ reactor: "helium", drive: "tempest", count: 1 }, { reactor: "fission", drive: "zephyr", count: 1 }] });
 panel.render(route("102"), true);
-assert.ok(root.innerHTML.includes("0 + 53 He-3 / 53"), "Helium-3 counts its units of tank space");
-assert.ok(!root.innerHTML.includes("315 / 53"), "never energy over physical capacity");
-Object.assign(freighter, { fuel: 120, fuel_capacity: undefined, helium3: undefined, uranium: undefined, uranium_capacity: undefined });
+assert.ok(root.innerHTML.includes("Adv. Fusion · Tempest ×1 · Fission · Zephyr ×1"), "the engines line names the reactors and drives aboard");
+assert.ok(root.innerHTML.includes("2.2 / 2.2"), "a Helium tank reads in its own units");
+assert.ok(root.innerHTML.includes("10 / 53"), "and the Uranium tank in its");
+Object.assign(freighter, { fuel: 120, fuel_capacity: undefined, helium3: undefined, helium3_capacity: undefined, uranium: undefined, uranium_capacity: undefined, drives: undefined });
 
 // Urgent verbs appear only while they apply.
 st.orders["101"] = { x: 9000, y: 0 };
@@ -143,12 +145,12 @@ assert.match(details.innerHTML, /kind="corvette"/, "a hull the fleet lacks is ig
 // Leaving the fleet closes its details; the guide can open them directly.
 panel.render(route("101"), true);
 assert.equal(shell.hidden, true, "another fleet's panel closes the details");
-panel.render({ name: "command" }, true);
+panel.render({ name: "log" }, true);
 panel.openDetails("101");
 assert.equal(shell.hidden, true, "opening waits for that fleet's panel");
 panel.render(route("101"), true);
 assert.equal(shell.hidden, false, "then shows on its panel (the Recon fit step)");
-assert.match(source("shell/deck/command.ts"), /openFleetDetails\?\.\(fleet\.id\)/, "the guide opens the details for the Recon fit");
+assert.match(source("shell/deck/founding-guide.ts"), /openFleetDetails\?\.\(fleet\.id\)/, "the guide opens the details for the Recon fit");
 assert.match(source("shell/deck/index.ts"), /else if \(this\.fleet\?\.closeDetails\(\)\)/, "Esc closes the fleet details");
 assert.match(source("ship-model-preview.ts"), /height:var\(--ship-preview-height,250px\)/, "the stage can grow for the hero view");
 
@@ -197,7 +199,7 @@ if (process.argv.includes("--serve")) {
           ghost("101", [{ kind: "raider", count: 1 }], { captain, speed: 520, vel: { x: 380, y: -160 },
             path: [{ pos: { x: 42000, y: -18000 }, t: 160 }], loadouts: [{ kind: "raider", n: 1, modules: ["mass_driver", "extended_tanks"] }] }),
           ghost("102", [{ kind: "small_freighter", count: 2 }], { docked: "E7", pos: { x: 0, y: 0 }, posture: "passive",
-            cargo_manifest: [{ commodity: "metallic_ore", units: 60 }, { commodity: "provisions", units: 24 }] }),
+            cargo_manifest: [{ commodity: "metallic_ore", units: 60 }, { commodity: "provisions", units: 24 }, { commodity: "electronics", units: 10 }] }),
           ghost("103", [{ kind: "destroyer", count: 1 }, { kind: "corvette", count: 3 }], { pos: { x: 26000, y: 9000 }, fuel: 90, fuel_capacity: 260,
             loadouts: [{ kind: "destroyer", n: 1, modules: ["interdiction_field", "mass_driver"] }, { kind: "corvette", n: 3, modules: ["point_defense_screen"] }] }),
           ghost("104", [{ kind: "mining_barge", count: 1 }], { posture: "passive", speed: 30,

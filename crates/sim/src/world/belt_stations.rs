@@ -8,14 +8,14 @@ use crate::industry::{Anchor, AnchorPhase, ANCHOR_SECS};
 
 impl World {
     /// The owner's station anchored at a belt, and the room left in its hold.
-    pub(super) fn anchored_station_at(&self, owner: PlayerId, system: EntityId, body: u32) -> Option<(EntityId, u32)> {
+    pub(super) fn anchored_station_at(&self, owner: PlayerId, system: EntityId, body: u32) -> Option<(EntityId, crate::ship::HoldRoom)> {
         self.fleets
             .iter()
             .find(|(_, f)| {
                 f.owner == owner
                     && f.anchor.is_some_and(|a| a.phase == AnchorPhase::Anchored && a.system == system && a.body == body)
             })
-            .map(|(id, f)| (*id, f.cargo_capacity().saturating_sub(f.cargo_units())))
+            .map(|(id, f)| (*id, f.cargo_room()))
     }
 
     /// Is `other` the owner or one of its syndicate allies?
@@ -231,7 +231,7 @@ impl World {
             return;
         }
         let f = &self.fleets[&fleet];
-        let room = f.trade_capacity().saturating_sub(f.cargo_units());
+        let room = f.trade_room().fits(commodity);
         let n = units.min(room).min(self.fleets[&station].cargo_amount(commodity));
         if n == 0 {
             self.industry_reject(owner, fleet, events);
@@ -311,7 +311,8 @@ mod tests {
         assert!(events.iter().any(|e| matches!(e.payload, EventPayload::StationAnchored { fleet, .. } if fleet == station)));
 
         w.start_belt_mining(owner, barge, system, body, (ore, false), &mut vec![]);
-        pump(&mut w, 60.0, &mut vec![]);
+        // §progression: a barge cuts at the output scale.
+        pump(&mut w, 60.0 / crate::production::OUTPUT_SCALE, &mut vec![]);
         let held = w.fleets[&station].cargo_amount(ore);
         assert!(held > 0, "the barge unloads into the station");
         assert_eq!(w.fleets[&barge].cargo_units(), 0, "and keeps its own hold empty");
@@ -322,7 +323,7 @@ mod tests {
         w.fleets.get_mut(&station).unwrap().add_cargo(ore, room);
         let free = w.fleets[&barge].cargo_capacity();
         w.fleets.get_mut(&barge).unwrap().add_cargo(ore, free - 1);
-        pump(&mut w, 120.0, &mut vec![]);
+        pump(&mut w, 120.0 / crate::production::OUTPUT_SCALE, &mut vec![]);
         assert_eq!(w.fleets[&barge].cargo_units(), w.fleets[&barge].cargo_capacity());
         assert!(matches!(&w.fleets[&barge].industry, Some(FleetIndustry::Mine { status, .. }) if status == "station full"));
     }

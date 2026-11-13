@@ -69,12 +69,22 @@ mod tests {
             let has = c.stock();
             for (good, n) in need {
                 if matches!(good, C::Electronics | C::Armaments) { continue; }
+                // §reactors-drives: the barge's reactors are the den's
+                // recovered six and its drives landed with the colony, not the
+                // Reach crate's.
+                if good.is_engine_part() && c == Crate::Reach { continue; }
                 assert!(has.get(&good).copied().unwrap_or(0.0) >= n, "{c:?} crate: {good:?} {n} for its builds");
             }
         }
         let all = crate::founding::charter_supplies();
-        assert_eq!(all[&C::WarpCore], 5.0, "the Tiny Freighter, three Interceptors and the barge");
-        assert_eq!(all[&C::Electronics], crate::founding::KIT_SEMICONDUCTORS, "only the raid's");
+        // §shipbuilding-overhaul: the Interceptor's one, the Tiny Freighter's
+        // two and the barge's three, all at landing — the raid's prize.
+        assert_eq!(all[&C::FissionReactor], 6.0, "the charter's six engines");
+        assert_eq!(all[&C::PulseLaser], 6.0, "the Interceptor's guns land with the colony");
+        // §charter-v6: the raid's and step 4's Solar Array's.
+        assert_eq!(all[&C::Electronics], crate::founding::KIT_SEMICONDUCTORS + crate::founding::PLANT_SEMICONDUCTORS);
+        assert_eq!(crate::build::POWER_PLANT_RECIPE.costs.iter().find(|(c, _)| *c == C::Electronics).map(|(_, n)| *n),
+            Some(crate::founding::PLANT_SEMICONDUCTORS), "the kit carries the Solar Array's semiconductors");
     }
 
     #[test]
@@ -82,28 +92,36 @@ mod tests {
         let (w, owner, home) = founded();
         let f = &w.players[&owner].founding;
         assert!(f.crates_collected.contains(&Crate::Landfall), "open at landing");
-        assert!(Crate::ALL[1..].iter().all(|c| !f.crate_waiting(*c)), "nothing else released before step 6");
+        assert!(Crate::ALL[1..].iter().all(|c| !f.crate_waiting(*c)), "nothing else released before step 24");
         let s = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert!(s.storage_used() <= 0.4 * s.storage_cap(), "room for the mine: {:.0} of {:.0}", s.storage_used(), s.storage_cap());
-        assert_eq!(stock(&w, home, C::Alloys), 110.0);
-        assert_eq!(stock(&w, home, C::WarpCore), 0.0, "the first hull's core comes with its chapter");
+        // §smelt-from-landing (Nov 6 2026): the Smelter's 45 units ride in
+        // the holds too, a little over half; §sell-alloys (Nov 11 2026): and
+        // the trader's ten.
+        assert!(s.storage_used() <= 0.56 * s.storage_cap(), "room for the mine: {:.0} of {:.0}", s.storage_used(), s.storage_cap());
+        // Peter (Nov 4 2026): the Laser Battery's, Solar Array's and
+        // Shipyard's goods too; no crate after the raid. Nov 6: the Smelter's.
+        // §sell-alloys (Nov 11 2026): and the trader's sample at step 9.
+        assert_eq!(stock(&w, home, C::Alloys), 235.0 + crate::merchant::BUY_CAP as f64);
+        // Peter (Nov 5 2026): no Pirates or Expansion crate; the first
+        // Interceptor's and the Tiny Freighter's cores land with the colony.
+        assert_eq!(stock(&w, home, C::FissionReactor), 6.0, "the charter's six Fission Cores");
     }
 
     #[test]
     fn a_crate_is_collected_once_its_step_releases_it_even_into_full_stores() {
         let (mut w, owner, home) = founded();
-        w.step(&[Command::CollectCharterCrate { player_id: owner, charter_crate: Crate::Raid }]);
-        assert_eq!(stock(&w, home, C::Alloys), 110.0, "sealed until step 6");
-        w.players.get_mut(&owner).unwrap().founding.set_stage(S::BuildGunPlatform, w.time);
-        assert!(w.players[&owner].founding.crate_waiting(Crate::Raid));
+        w.step(&[Command::CollectCharterCrate { player_id: owner, charter_crate: Crate::Reach }]);
+        assert_eq!(stock(&w, home, C::Alloys), 245.0, "sealed until step 24");
+        w.players.get_mut(&owner).unwrap().founding.set_stage(S::BuildBarge, w.time);
+        assert!(w.players[&owner].founding.crate_waiting(Crate::Reach));
         let cap = w.systems.iter().find(|s| s.id == home).unwrap().storage_cap();
         w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.insert(C::MetallicOre, cap);
-        let events = w.step(&[Command::CollectCharterCrate { player_id: owner, charter_crate: Crate::Raid }]);
+        let events = w.step(&[Command::CollectCharterCrate { player_id: owner, charter_crate: Crate::Reach }]);
         assert!(events.iter().any(|e| matches!(e.payload,
-            EventPayload::CharterCrateCollected { owner: o, charter_crate: Crate::Raid } if o == owner)));
-        assert_eq!(stock(&w, home, C::Alloys), 205.0, "past the cap: a crate always opens");
-        w.step(&[Command::CollectCharterCrate { player_id: owner, charter_crate: Crate::Raid }]);
-        assert_eq!(stock(&w, home, C::Alloys), 205.0, "once");
+            EventPayload::CharterCrateCollected { owner: o, charter_crate: Crate::Reach } if o == owner)));
+        assert_eq!(stock(&w, home, C::Alloys), 285.0, "past the cap: a crate always opens");
+        w.step(&[Command::CollectCharterCrate { player_id: owner, charter_crate: Crate::Reach }]);
+        assert_eq!(stock(&w, home, C::Alloys), 285.0, "once");
     }
 
     #[test]
@@ -113,14 +131,14 @@ mod tests {
         w.step(&[]);
         assert_eq!(w.players[&owner].founding.crates_collected.len(), Crate::ALL.len());
         let supplies = crate::founding::charter_supplies();
-        assert!(stock(&w, home, C::WarpCore) >= supplies[&C::WarpCore], "every crate's goods");
+        assert!(stock(&w, home, C::FissionReactor) >= supplies[&C::FissionReactor], "every crate's goods");
         let bot = PlayerId(PlayerId::BOT_BASE | 3);
         w.step(&[Command::AddPlayer { id: bot, name: "Bot".into() }]);
-        w.players.get_mut(&bot).unwrap().founding.set_stage(S::PrepareExport, w.time);
+        w.players.get_mut(&bot).unwrap().founding.set_stage(S::BuildBarge, w.time);
         w.step(&[]);
         let collected = &w.players[&bot].founding.crates_collected;
-        assert!([Crate::Raid, Crate::Pirates, Crate::Expansion].iter().all(|c| collected.contains(c)));
-        assert!(!collected.contains(&Crate::Reach), "not before its step");
+        assert!(collected.contains(&Crate::Reach));
+        assert!(!collected.contains(&Crate::Vendetta), "not before its step");
     }
 
     /// "Secure your stores": a Warehouse and a Vault at home, and the Vault

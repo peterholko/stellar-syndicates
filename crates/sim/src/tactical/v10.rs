@@ -238,7 +238,7 @@ pub(super) fn update_formations(state: &mut TacticalState, seed: u64) -> Vec<Opt
         };
         // v12: a battle line holds no wider than its guns reach; the rest
         // fight on their own.
-        if shape == Shape::Line && matches!(state.rules, Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. }) {
+        if shape == Shape::Line && matches!(state.rules, Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. } | Rules::V17 { .. }) {
             members = super::v12::line_members(state, &members);
             if members.len() < 2 { state.formations.remove(&fleet); continue; }
         }

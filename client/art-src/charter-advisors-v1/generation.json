@@ -1,0 +1,218 @@
+{
+  "date": "2026-11-09",
+  "generator": "Built-in image_gen.imagegen",
+  "prompt_source": "docs/charter-advisor-portraits.md",
+  "export": {
+    "format": "png",
+    "width": 1024,
+    "height": 1024,
+    "opaque": true,
+    "operation": "Square generated outputs resized to 1024 × 1024 with Sharp; original built-in outputs retained."
+  },
+  "preview_crop": {
+    "left": 0.143,
+    "top": 0.113,
+    "size": 0.75,
+    "display_sizes": [
+      48,
+      72,
+      112
+    ]
+  },
+  "portraits": [
+    {
+      "slug": "veteran",
+      "name": "Commander Imara Okafor",
+      "file": "veteran.png",
+      "references": [
+        {
+          "path": "client/public/art/captains/astrid_nystrom_senior.png",
+          "role": "Painting style",
+          "sha256": "6561324181937e1379c32efbfa8b3f0263d0ca8e7f4e97777b3f256c50b69727"
+        },
+        {
+          "path": "client/art-src/authority-aesthetic-study-v1/wormhole-market-crackdown.png",
+          "role": "Authority materials, colors and room",
+          "sha256": "9f380817ac15b94c2975ebd3fbf0370d24237475f030fe2ac615c191740bd4f7"
+        },
+        {
+          "path": "client/art-src/authority-v2/terran-charter-authority-seal.png",
+          "role": "Collar insignia",
+          "sha256": "e2adfe9e580585ec0873841550711257e24fc45da2101ac0bd38f6ce27388d74"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "generate",
+          "prompt": "Use case: character-portrait\nAsset type: one square character portrait for Stellar Syndicates, a persistent science-fiction colony and trading game. She is a new player's Charter Advisor: the Terran Charter Authority officer assigned to guide a newly landed colony through its charter, shown small (48 to 112 pixels) on the tutorial card and beside her transmissions.\nInput image 1: STYLE reference only, one of the game's approved captain portraits. Match its realistic painterly digital portrait style, head-and-shoulders framing, soft directional light and restrained detail. Do not copy that person, that uniform or the bridge.\nInput image 2: AUTHORITY reference, the game's painting of Terran Charter Authority personnel and architecture: fitted ivory ceramic over dark navy uniforms, antique-gold insignia, brass details, tactile ivory mineral walls and narrow amber light slots. Take only these materials, colors and light for an officer's service uniform and her surroundings; do not copy any person, pose, weapon or the scene.\nInput image 3: INSIGNIA reference, the Authority emblem: a thin orbital ring crossed by three slender vertical spires of staggered heights. Show it only as a small antique-gold pin at her collar, simplified.\nComposition/framing: one opaque square portrait, exactly 1024 x 1024 pixels. Head and shoulders; the face a little above center, turned three-quarters toward the viewer, the eyes about 38% from the top. Keep the whole head inside the central 80% so the portrait survives a rounded-square crop. It must read at 48 pixels: a strong silhouette and clear light-dark separation between the face and an uncluttered background.\nUniform: a high-collared dark navy Authority service tunic; a fitted ivory ceramic mantle over both shoulders with a thin brass edge; the small antique-gold ring-and-three-spire pin at the collar; two thin antique-gold bars on the mantle's edge for her seniority.\nSubject: a senior Authority officer in her late fifties who has seen a dozen colonies founded and several fail: calm, dry and unhurried. Deep brown skin, close-cropped silver hair, fine lines at the eyes, a small old scar through her left eyebrow, small gold stud earrings. Expression: a steady, measuring gaze with the faint hint of an approving smile, as if this colony might just be one that stands.\nBackground: an Authority liaison alcove in the colony's new Command Center, softly out of focus: tactile ivory mineral wall panels with brass trim, one narrow amber light slot, the edge of a navy banner.\nStyle/medium: high-end realistic digital painting matching the captain portraits; grounded materials (pressed wool, polished ceramic, brass, skin texture), believable anatomy. Not a cartoon, not a photograph, not a poster.\nLighting/mood: warm amber key light from the light slot, a cool pale rim on the far side; reassuring, quietly formidable.\nConstraints: absolutely no text, letters, numbers, labels, logos with writing, watermark, borders, frames or interface. No helmet, no weapons. Exactly one person. Deliver exactly one finished portrait.",
+          "reference_paths": [
+            "client/public/art/captains/astrid_nystrom_senior.png",
+            "client/art-src/authority-aesthetic-study-v1/wormhole-market-crackdown.png",
+            "client/art-src/authority-v2/terran-charter-authority-seal.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-40407c6a-c1d6-4393-9895-24f5d9f19d57.png",
+          "output_sha256": "58f1d7a622fc54d15a54d0ad2e1f8f5e4bfd87fdae1f0d76560298a06c5bfef2",
+          "reference_sha256": [
+            "6561324181937e1379c32efbfa8b3f0263d0ca8e7f4e97777b3f256c50b69727",
+            "9f380817ac15b94c2975ebd3fbf0370d24237475f030fe2ac615c191740bd4f7",
+            "e2adfe9e580585ec0873841550711257e24fc45da2101ac0bd38f6ce27388d74"
+          ]
+        },
+        {
+          "kind": "framing_edit",
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET: Commander Imara Okafor's finished Charter Advisor portrait.\nChange only the camera framing to satisfy the original portrait specification and shared game crop. Pull the camera back slightly and lower the head in the square frame. Place the crown of her hair at about 14% from the top, the eyes about 38% from the top, and keep her complete head including hair inside the central 80% of the image. Her head including hair should occupy about 42% of the image width. Show the same head and shoulders with more breathing room above her hair; keep the face clearly readable at 48 pixels.\nPreserve exactly the same person, age, expression, deep brown skin, short silver hair, eyebrow scar, stud earrings, navy tunic, ivory ceramic shoulder mantle, brass edging, two gold rank bars, ring-and-three-spire collar pin, ivory alcove, amber light slot and navy banner. Keep the same painterly finish and warm/cool lighting. Do not redesign, add accessories or change the pose. Extend the existing background and lower uniform naturally as needed.\nDeliver one opaque square 1024 x 1024 portrait. No text, letters, numbers, watermark, border, frame or interface.",
+          "reference_paths": [
+            "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-40407c6a-c1d6-4393-9895-24f5d9f19d57.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-a8631b2b-f79d-4a59-9216-c833f78de2af.png",
+          "output_sha256": "4e0526bcdbad92c85015110620f62b7ca0f58e1e5fa41e88fc1cc507aa92bd42",
+          "reference_sha256": [
+            "58f1d7a622fc54d15a54d0ad2e1f8f5e4bfd87fdae1f0d76560298a06c5bfef2"
+          ]
+        }
+      ],
+      "selected_source": "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-a8631b2b-f79d-4a59-9216-c833f78de2af.png",
+      "sha256": "57d1e423e76475878bdeaab73a2c2839f089c56c8ebcfc9b15ddde0da5610d64"
+    },
+    {
+      "slug": "lieutenant",
+      "name": "Lieutenant Daniel Seo",
+      "file": "lieutenant.png",
+      "references": [
+        {
+          "path": "client/public/art/captains/astrid_nystrom_senior.png",
+          "role": "Painting style",
+          "sha256": "6561324181937e1379c32efbfa8b3f0263d0ca8e7f4e97777b3f256c50b69727"
+        },
+        {
+          "path": "client/art-src/authority-aesthetic-study-v1/wormhole-market-crackdown.png",
+          "role": "Authority materials, colors and room",
+          "sha256": "9f380817ac15b94c2975ebd3fbf0370d24237475f030fe2ac615c191740bd4f7"
+        },
+        {
+          "path": "client/art-src/authority-v2/terran-charter-authority-seal.png",
+          "role": "Collar insignia",
+          "sha256": "e2adfe9e580585ec0873841550711257e24fc45da2101ac0bd38f6ce27388d74"
+        },
+        {
+          "path": "client/art-src/charter-advisors-v1/veteran.png",
+          "role": "Uniform, room and framing",
+          "sha256": "57d1e423e76475878bdeaab73a2c2839f089c56c8ebcfc9b15ddde0da5610d64"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "generate",
+          "prompt": "Use case: character-portrait\nAsset type: one square character portrait for Stellar Syndicates, a persistent science-fiction colony and trading game. He is a new player's Charter Advisor: the Terran Charter Authority officer assigned to guide a newly landed colony through its charter, shown small (48 to 112 pixels) on the tutorial card and beside his transmissions.\nInput image 1: STYLE reference only, one of the game's approved captain portraits. Match its realistic painterly digital portrait style, head-and-shoulders framing, soft directional light and restrained detail. Do not copy that person, that uniform or the bridge.\nInput image 2: AUTHORITY reference, the game's painting of Terran Charter Authority personnel and architecture: fitted ivory ceramic over dark navy uniforms, antique-gold insignia, brass details, tactile ivory mineral walls and narrow amber light slots. Take only these materials, colors and light; do not copy any person, pose, weapon or the scene.\nInput image 3: INSIGNIA reference, the Authority emblem: a thin orbital ring crossed by three slender vertical spires of staggered heights. Show it only as a small antique-gold pin at his collar, simplified.\nInput image 4: UNIFORM MATCH reference, the first Charter Advisor's finished portrait. Match its uniform, mantle, collar pin, background alcove, framing and rendering exactly; paint a different person.\nComposition/framing: one opaque square portrait, exactly 1024 x 1024 pixels. Head and shoulders plus one hand; the face a little above center, turned three-quarters toward the viewer, the eyes about 38% from the top. Keep the whole head and the hand inside the central 80% so the portrait survives a rounded-square crop. It must read at 48 pixels: a strong silhouette and clear light-dark separation between the face and an uncluttered background.\nUniform: identical to input image 4: a high-collared dark navy Authority service tunic, the fitted ivory ceramic mantle with its thin brass edge, the antique-gold ring-and-three-spire collar pin; one thin bar on the mantle's edge for his junior rank. Immaculate and freshly pressed.\nSubject: a young Authority officer in his late twenties on his first founding assignment: earnest, precise and quietly excited. East Asian features, neat side-parted black hair, clean-shaven, bright attentive eyes. One hand holds a slim brass-framed data slate at chest height, its face turned away from the viewer. Expression: an eager, open half-smile, leaning very slightly forward, ready to walk you through the procedure.\nBackground: the same Authority liaison alcove as input image 4, softly out of focus, with a faint pale-blue glow from a holographic system map below the frame.\nStyle/medium: high-end realistic digital painting matching the captain portraits; grounded materials (pressed wool, polished ceramic, brass, skin texture), believable anatomy. Not a cartoon, not a photograph, not a poster.\nLighting/mood: soft pale-blue fill from the map below, warm amber key from the light slot; bright, helpful and by the book.\nConstraints: absolutely no text, letters, numbers, labels, logos with writing, watermark, borders, frames or interface; nothing readable on the slate. No helmet, no weapons. Exactly one person. Deliver exactly one finished portrait.",
+          "reference_paths": [
+            "client/public/art/captains/astrid_nystrom_senior.png",
+            "client/art-src/authority-aesthetic-study-v1/wormhole-market-crackdown.png",
+            "client/art-src/authority-v2/terran-charter-authority-seal.png",
+            "client/art-src/charter-advisors-v1/veteran.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-b96f2b32-41ac-499f-93bd-6e16f8aa5a48.png",
+          "output_sha256": "0d36e2793f1aff070de7d07ef5190f760675e1568bbc9cfdbc7850a21e9ab36f",
+          "reference_sha256": [
+            "6561324181937e1379c32efbfa8b3f0263d0ca8e7f4e97777b3f256c50b69727",
+            "9f380817ac15b94c2975ebd3fbf0370d24237475f030fe2ac615c191740bd4f7",
+            "e2adfe9e580585ec0873841550711257e24fc45da2101ac0bd38f6ce27388d74",
+            "57d1e423e76475878bdeaab73a2c2839f089c56c8ebcfc9b15ddde0da5610d64"
+          ]
+        },
+        {
+          "kind": "framing_edit",
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET: Lieutenant Daniel Seo's Charter Advisor portrait. Input image 2 is a FRAMING reference only: the completed Commander Okafor portrait.\nCorrect only the portrait composition to match input image 2's head size and eye height. Pull back slightly, place the crown of Seo's hair around 14% from the top and his eyes about 38% from the top. Keep his full head including hair and his entire visible hand inside the central 80% of the square. Show his hand holding the slim brass-framed data slate higher at chest level so the whole hand fits between 10% and 90% of the frame height. The slate's blank back faces the viewer. Preserve natural anatomy with one hand and five fingers.\nPreserve Seo's exact identity, youthful late-twenties face, attentive eyes, black side-parted hair, clean-shaven face and open half-smile. Preserve the existing navy tunic, fitted ivory ceramic mantle with thin brass edge, single gold rank bar, ring-and-three-spire collar pin, same ivory alcove, amber light slot, navy banner, blue fill and warm light. Keep the painterly finish. Do not change the uniform, person, expression, room or props.\nOne opaque square 1024 x 1024 portrait, no text, numbers, letters, readable marks, watermark, borders or interface.",
+          "reference_paths": [
+            "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-b96f2b32-41ac-499f-93bd-6e16f8aa5a48.png",
+            "client/art-src/charter-advisors-v1/veteran.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-c22fa81b-26cd-4b1e-965b-dbf13e161db6.png",
+          "output_sha256": "bcb6313b97cf62527dde35d669ac7ead1f7a910c9e2a4e42859e3d45ec09015c",
+          "reference_sha256": [
+            "0d36e2793f1aff070de7d07ef5190f760675e1568bbc9cfdbc7850a21e9ab36f",
+            "57d1e423e76475878bdeaab73a2c2839f089c56c8ebcfc9b15ddde0da5610d64"
+          ]
+        },
+        {
+          "kind": "placement_edit",
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET, Daniel Seo. Input image 2 is the final Imara Okafor portrait, a reference for face placement.\nMake one targeted composition correction: LOWER SEO'S FACE IN THE FRAME. His eyes are currently too high, around 29% from the top. Reposition his head and upper body so the eyes are at 38% of the image height, matching Okafor. Keep the same head size. The crown of his hair should consequently be around 19% from the top, leaving a clear band of background above his hair. Do not simply shrink him in place. His entire hair must be safely below the shared crop's top edge at 11.3%.\nPreserve his exact face, age, expression, hair, clothes, single rank bar, insignia, light and background. Keep the hand and blank brass-framed slate fully visible within the central 80%, at chest height; adjust the arm naturally as needed while keeping the face unobstructed. The lower uniform may extend beyond the bottom frame.\nNo new elements, no text, no interface. One opaque square portrait, 1024 x 1024.",
+          "reference_paths": [
+            "client/art-src/charter-advisors-v1/revisions/lieutenant-framing-v1.png",
+            "client/art-src/charter-advisors-v1/veteran.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-6bc420ea-9692-4657-8682-c3683acb0267.png",
+          "output_sha256": "1119223a8ba5ffb13def3edbe6b16c3288bd5452db02dc74856f4efb43664a8f",
+          "reference_sha256": [
+            "c315a3b50d1548a58d680ab15873adc6905cfc1e0438207bc5f7ffad847bb6b7",
+            "57d1e423e76475878bdeaab73a2c2839f089c56c8ebcfc9b15ddde0da5610d64"
+          ]
+        }
+      ],
+      "selected_source": "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-6bc420ea-9692-4657-8682-c3683acb0267.png",
+      "sha256": "bde7cd98b16efde9dd756edcabef507d9890305221dae9151066496becf538d9"
+    },
+    {
+      "slug": "frontier",
+      "name": "Major Rurik Halvorsen",
+      "file": "frontier.png",
+      "references": [
+        {
+          "path": "client/public/art/captains/astrid_nystrom_senior.png",
+          "role": "Painting style",
+          "sha256": "6561324181937e1379c32efbfa8b3f0263d0ca8e7f4e97777b3f256c50b69727"
+        },
+        {
+          "path": "client/art-src/authority-aesthetic-study-v1/wormhole-market-crackdown.png",
+          "role": "Authority materials, colors and room",
+          "sha256": "9f380817ac15b94c2975ebd3fbf0370d24237475f030fe2ac615c191740bd4f7"
+        },
+        {
+          "path": "client/art-src/authority-v2/terran-charter-authority-seal.png",
+          "role": "Collar insignia",
+          "sha256": "e2adfe9e580585ec0873841550711257e24fc45da2101ac0bd38f6ce27388d74"
+        },
+        {
+          "path": "client/art-src/charter-advisors-v1/veteran.png",
+          "role": "Uniform, room and framing",
+          "sha256": "57d1e423e76475878bdeaab73a2c2839f089c56c8ebcfc9b15ddde0da5610d64"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "generate",
+          "prompt": "Use case: character-portrait\nAsset type: one square character portrait for Stellar Syndicates, a persistent science-fiction colony and trading game. He is a new player's Charter Advisor: the Terran Charter Authority officer assigned to guide a newly landed colony through its charter, shown small (48 to 112 pixels) on the tutorial card and beside his transmissions.\nInput image 1: STYLE reference only, one of the game's approved captain portraits. Match its realistic painterly digital portrait style, head-and-shoulders framing, soft directional light and restrained detail. Do not copy that person, that uniform or the bridge.\nInput image 2: AUTHORITY reference, the game's painting of Terran Charter Authority personnel and architecture: fitted ivory ceramic over dark navy uniforms, antique-gold insignia, brass details, tactile ivory mineral walls and narrow amber light slots. Take only these materials, colors and light; do not copy any person, pose, weapon or the scene.\nInput image 3: INSIGNIA reference, the Authority emblem: a thin orbital ring crossed by three slender vertical spires of staggered heights. Show it only as a small antique-gold pin at his collar, simplified.\nInput image 4: UNIFORM MATCH reference, the first Charter Advisor's finished portrait. Match its uniform, mantle, collar pin, background alcove, framing and rendering; paint a different person, and wear the uniform as described below.\nComposition/framing: one opaque square portrait, exactly 1024 x 1024 pixels. Head and shoulders; the face a little above center, turned three-quarters toward the viewer, the eyes about 38% from the top. Keep the whole head inside the central 80% so the portrait survives a rounded-square crop. It must read at 48 pixels: a strong silhouette and clear light-dark separation between the face and an uncluttered background.\nUniform: the same Authority service uniform as input image 4, worn hard: the high collar unhooked at the throat, the ivory ceramic mantle scuffed and chipped along its brass edge, the antique-gold collar pin dulled; two thin bars on the mantle's edge.\nSubject: a weathered Authority officer in his mid-forties who has spent his career founding colonies on the frontier: blunt, practical and wry. Fair skin reddened by sun and wind, a close-cropped ginger beard going grey, short hair, deep crow's feet, a faded scar along his jaw. Expression: a lopsided, knowing smirk with one eyebrow slightly raised, as if about to tell you the shortcut the manual leaves out.\nBackground: the same Authority liaison alcove as input image 4, softly out of focus, a little more lived-in: a scuffed console edge and a dented brass fitting.\nStyle/medium: high-end realistic digital painting matching the captain portraits; grounded materials (worn wool, chipped ceramic, tarnished brass, weathered skin), believable anatomy. Not a cartoon, not a photograph, not a poster.\nLighting/mood: low warm amber console light from below-left, a cool dusk rim from behind; trustworthy and a little irreverent.\nConstraints: absolutely no text, letters, numbers, labels, logos with writing, watermark, borders, frames or interface. No helmet, no weapons. Exactly one person. Deliver exactly one finished portrait.\nProduction framing clarification: Match the finished veteran reference's pulled-back camera, head size and placement. Generous headroom with the crown around 14% from the top and eyes around 38% from the top. Do not zoom in on the face.",
+          "reference_paths": [
+            "client/public/art/captains/astrid_nystrom_senior.png",
+            "client/art-src/authority-aesthetic-study-v1/wormhole-market-crackdown.png",
+            "client/art-src/authority-v2/terran-charter-authority-seal.png",
+            "client/art-src/charter-advisors-v1/veteran.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-5708f210-6b00-4861-971b-8cc8c62aa23a.png",
+          "output_sha256": "44818be114a11379486187474b7cb560e0304dc9a4601a515c6c5f92775d0a30",
+          "reference_sha256": [
+            "6561324181937e1379c32efbfa8b3f0263d0ca8e7f4e97777b3f256c50b69727",
+            "9f380817ac15b94c2975ebd3fbf0370d24237475f030fe2ac615c191740bd4f7",
+            "e2adfe9e580585ec0873841550711257e24fc45da2101ac0bd38f6ce27388d74",
+            "57d1e423e76475878bdeaab73a2c2839f089c56c8ebcfc9b15ddde0da5610d64"
+          ]
+        },
+        {
+          "kind": "placement_edit",
+          "prompt": "Use case: precise-object-edit\nInput image 1 is the EDIT TARGET, Major Rurik Halvorsen. Input image 2 is Commander Okafor, the reference for face placement.\nMake one targeted composition correction: lower Halvorsen's head and shoulders about 6% of the square's height, keeping the same head size. Place his eyes around 38% from the top and his hair crown around 17% from the top. Give his hair clear breathing room above the shared portrait crop's top edge at 11.3%. Preserve the head angle and the lopsided wry smirk.\nKeep exactly the same man, weathered sun-reddened skin, ginger-grey beard, jaw scar, short hair, raised eyebrow, open navy collar, worn ivory ceramic mantle, chipped brass edge, dulled ring-and-three-spire pin and two rank bars. Preserve the entire room, navy banner, amber light, scuffed console, dented brass fitting, dusk rim and painterly finish. Only the subject placement changes; extend the existing background where needed. His lower uniform can extend out of frame.\nOne opaque 1024 x 1024 square portrait. No text, lettering, numbers, watermark, borders or interface.",
+          "reference_paths": [
+            "client/art-src/charter-advisors-v1/revisions/frontier-framing-v1.png",
+            "client/art-src/charter-advisors-v1/veteran.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-36f69cea-a337-4b31-8d7a-68b6bb651f59.png",
+          "output_sha256": "5a501528c8c2f853c4984f1ddc24bbff729743506070971c8a3cbade54937566",
+          "reference_sha256": [
+            "2c75e75aa7d3b92448183ec1f19d41707cb325ddfdf490d0ec99a48fdf7211e4",
+            "57d1e423e76475878bdeaab73a2c2839f089c56c8ebcfc9b15ddde0da5610d64"
+          ]
+        }
+      ],
+      "selected_source": "/Users/peter/.codex/generated_images/01a1bf39-61f7-7840-9f66-1da6c9e636fe/exec-36f69cea-a337-4b31-8d7a-68b6bb651f59.png",
+      "sha256": "2f4c3bb329d7f936bfb56f586e06ca3d6be8a2e2f85184608498238c32b43c67"
+    }
+  ]
+}

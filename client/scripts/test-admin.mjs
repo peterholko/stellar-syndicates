@@ -77,7 +77,7 @@ const keyOf = Object.fromEntries([...keyArms.matchAll(/Step::(\w+) => "(\w+)"/g)
 assert.deepEqual([...STAGE_KEYS], ["signed_up", "entered", ...variants.map(v => keyOf[v])]);
 assert.equal(tutorialRank(null), -1);
 assert.equal(tutorialRank({ next: "signed_up" }), 0);
-assert.equal(tutorialRank({ next: "privateer" }), 13);
+assert.equal(tutorialRank({ next: "privateer" }), 14, "§smelt-from-landing: the Smelter before the Interceptor");
 assert.equal(tutorialRank({ next: null }), STAGE_KEYS.length, "a fulfilled charter sorts past every step");
 
 // Every player-supplied string reaches the page as text, never as markup.
@@ -117,7 +117,7 @@ if (process.argv.includes("--serve")) {
     signed_up: ["Sign up", "Arrival"], entered: ["Enter the game", "Arrival"], founded: ["Found a colony", "Founding"],
     bioharvester: ["Harvest biomass", "Landfall"], habitat: ["House the settlers", "Landfall"],
     agroplex: ["Make provisions", "Landfall"], mine: ["Bring the mine online", "Landfall"],
-    power: ["Power the Shipyard", "Counterfeit"], semiconductors: ["Buy semiconductors", "Counterfeit"],
+    power: ["Power the Smelter", "Counterfeit"], semiconductors: ["Buy semiconductors", "Counterfeit"],
     shipyard: ["Build a Shipyard", "Counterfeit"], freighter: ["Build a Freighter", "Pirates"],
     shipment: ["Export your ore", "Pirates"], interceptor: ["Build an Interceptor", "Pirates"],
     privateer: ["Destroy the privateer", "Pirates"], den: ["Eliminate the privateer den", "Pirates"],

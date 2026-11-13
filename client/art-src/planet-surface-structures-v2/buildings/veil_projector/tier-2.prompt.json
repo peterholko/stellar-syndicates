@@ -1,0 +1,53 @@
+{
+  "id": "veil_projector/tier-2",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: ONE standalone planetary building-layer sprite, square transparent PNG, approximately 1024 x 1024.\nPurpose: reusable architecture above a SEPARATE biome ground layer. Produce BUILDING ONLY, not a diorama. Genuine zero-alpha transparency around the building; preserve translucent soft shadow. No baked soil, gravel apron, grass, rocks around the site, concrete base tile, raised platform, roads, path, border or landscape. Small integral ramps, steps, cable trays, insulator stands and support feet belonging to the structure are allowed.\nStyle: the approved new Boreal/Temperate structures, grounded near-future frontier engineering. Soft semi-realistic environmental 3D rendering, matte weathered steel, dark graphite lattice, pale-stone and slate panels with dark grey trim, restrained amber service lights and tiny cyan standby indicators. Large readable forms, no ink outlines, no cel shading, plastic gloss, extreme contrast, excessive greebles or neon. No text, logos, Authority branding, numerals, UI, people, vehicles or spacecraft. No beam, no aurora, no glowing sky, no lightning and no energy effects: the structure is DORMANT; the game draws its effect.\nCamera and lighting: elevated front-left three-quarter view about 55 degrees above the ground plane; more roof than wall, mild perspective; front and right walls visible. Soft upper-left daylight, neutral/cool fill and semi-transparent soft lower-right cast/contact shadow attached to the feet.\nFraming/alignment: complete compact structure centered in a square. Building width about 94% of the canvas (x ≈ 4–98%), never cropped; mast tips may rise to y ≈ 4%. Keep the ground footprint centred at approximately x=50%; its near/front foot reaches y≈88%, and its far/rear foot y≈45%. This is a reusable stable site anchor, not a floating base. Keep a similar physical site footprint through upgrades; add mast height, mast count and capacitor mass, not a sprawling campus.\nOutput exactly one structure, no tier lineup/contact sheet.\nInput image 1 is the house style for INFRASTRUCTURE (equipment houses, masts, instrument heads, scale). Input image 2 is the house style for the fusion power station this projector runs off (field-coil housings, radiator fins, insulated tanks). Create a NEW building family in that shared style; do not copy the dish or the reactor dome.\nSubject: VEIL PROJECTOR — LEVEL 2 of 3.\nFamily identity: the colony's ionospheric Veil projector, an array of tall slender emitter masts standing in a ring around a squat shielded capacitor hall. Each mast is a dark graphite lattice tower with insulator stacks and a flat disc emitter head, like an ionospheric heater antenna: no dish, no turret, no barrel. Heavy braided power conduits run from the hall to the foot of every mast, and one thick conduit trunk leaves the site at the right edge toward the off-image Fusion Plant. The hall carries a short bank of pale radiator fins. A recognizable antenna-field silhouette, clearly different from the Sensor Array's parabolic dish and the Defense Platform's turret.\nThis level specifically: six taller emitter masts in a ring around a larger domed capacitor hall with a bank of pale radiator fins; thicker conduits; the same single trunk.\nLevel family progression for context (do NOT draw a lineup): 1: four short emitter masts at the corners of a small capacitor hall, one conduit trunk; 2: six taller masts in a ring around a larger domed capacitor hall with a radiator bank, thicker conduits; 3: eight masts in the ring and one taller central mast rising over the hall, the hall grown a second capacitor block and a small transformer yard, two conduit trunks, on the same compact site.\nOutput: exactly the requested level alone, genuine transparent PNG.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/sensor_array/tier-3.png",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/power_plant/tier-3.png"
+  ],
+  "reference_sha256": {
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/sensor_array/tier-3.png": "602a813bb8b00a558079216b3a437077d40f0a75b97d7d3dee34340d7040eacc",
+    "/Users/peter/projects/stellar-syndicates/client/art-src/planet-surface-structures-v2/buildings/power_plant/tier-3.png": "35599cf06318d30132fdba36fddb9a1e474231fab61a9364a966c431943cdd91"
+  },
+  "transparent_background": true,
+  "initial_generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-21ad033f-ada6-492b-8a62-3331447e1fe2.png",
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-85df76bc-fdce-4d9a-bd6e-61f5cf478a92.png",
+  "file": "buildings/veil_projector/tier-2.png",
+  "source_brief": "docs/veil-art-prompt.md",
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 790808,
+    "partiallyTransparentPixels": 780764,
+    "solidBounds": {
+      "left": 23,
+      "top": 49,
+      "right": 1235,
+      "bottom": 1061
+    },
+    "solidWidthFraction": 0.967304625199362,
+    "lowestSolidFraction": 0.84688995215311,
+    "sha256": "fecae8ce618f857886cc217ecc2921f775eeaedcf4a65f2aa4dcb7938473fdd0",
+    "nativeBytesPreserved": true,
+    "visualCheck": {
+      "ringMasts": 6,
+      "centralMasts": 0,
+      "dormant": true,
+      "noBeamOrAurora": true,
+      "noTerrainOrBaseTile": true
+    }
+  },
+  "edits": [
+    {
+      "prompt": "Use case: precise-object-edit. Framing and site proportions correction ONLY for this transparent Veil Projector level 2 sprite. Preserve this exact building design and every mast, disc emitter, capacitor hall, radiator, conduit, service light and support detail. Keep exactly SIX ring masts and the domed capacitor hall, one conduit trunk. The existing rendering is TOO NARROW and its front foot TOO LOW. Recompose it into the required wider, shallower site framing: the visible solid building must extend from x=4% to x=98% of the square canvas (approximately 94% wide), with its lowest/front solid support foot at y=88%, rear ground feet around y=45%, and highest mast tip around y=4%. On a 1254 x 1254 canvas that means leftmost visible solid detail near x=50, rightmost near x=1229, lowest solid foot near y=1104, highest mast near y=50. Make the entire site approximately 9% WIDER horizontally while moving its front foot upward to y=88%. This is a measured production alignment correction, not a new design. Keep everything fully inside the image and preserve generous transparent space below the lowest foot. The square canvas itself stays 1254 x 1254; never stretch or crop the canvas. Preserve the elevated front-left camera, matte pale-stone/slate and graphite lattice materials, softly lit dimensional rendering, amber service lights, tiny cyan standby indicators and dormant state. Genuine zero-alpha background, soft translucent shadow attached to the support feet. Building alone with no ground tile or apron, no scenery, beam or aurora, no text or people. Exactly this one level.",
+      "referenced_image_paths": [
+        "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-21ad033f-ada6-492b-8a62-3331447e1fe2.png"
+      ],
+      "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-85df76bc-fdce-4d9a-bd6e-61f5cf478a92.png"
+    }
+  ]
+}

@@ -20,6 +20,8 @@ export interface NetHandlers {
   onClose: () => void;
   onSessionReplaced: () => void;
   onError: (e: Event) => void;
+  /** §client-updates: the server closed this tab for an old protocol. */
+  onProtocolChanged?: () => void;
 }
 
 // Resolve the server WebSocket URL. Works whether the page is served by Vite
@@ -150,6 +152,7 @@ export class Net {
         this.stopped = true;
         this.clearReconnect();
         if (!alreadyReported) this.handlers.onMessage({ type: "Error", message: "Network protocol changed. Reload the game." });
+        this.handlers.onProtocolChanged?.();
       }
       if (event.code === SESSION_REPLACED_CLOSE_CODE || event.code === AUTH_REQUIRED_CLOSE_CODE) {
         // This corporation permits one live client. A replacement is a

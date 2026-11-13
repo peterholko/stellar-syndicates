@@ -1,0 +1,2777 @@
+{
+  "version": "v1",
+  "recipe": "research-hex-88-v1",
+  "hexFill": 0.88,
+  "art": {
+    "field:propulsion": {
+      "source": "art-src/research-topics-icons/research-topics-icons.png",
+      "sourceSha256": "c6d4337b932310b8a1e8b6d2aea417e424d629f9a1f3d8aa3f907aac6b17ffdf",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/fields/propulsion-64.webp?v=f91d46254ec2",
+          "bytes": 1954
+        },
+        "128": {
+          "url": "/art/derived/research/v1/fields/propulsion-128.webp?v=b0d3d5d42600",
+          "bytes": 4312
+        },
+        "256": {
+          "url": "/art/derived/research/v1/fields/propulsion-256.webp?v=76f45af6d577",
+          "bytes": 10702
+        }
+      }
+    },
+    "field:materials": {
+      "source": "art-src/research-topics-icons/research-topics-icons.png",
+      "sourceSha256": "c6d4337b932310b8a1e8b6d2aea417e424d629f9a1f3d8aa3f907aac6b17ffdf",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/fields/materials-64.webp?v=4106dce7923b",
+          "bytes": 2152
+        },
+        "128": {
+          "url": "/art/derived/research/v1/fields/materials-128.webp?v=b83074946d78",
+          "bytes": 4834
+        },
+        "256": {
+          "url": "/art/derived/research/v1/fields/materials-256.webp?v=6d9d9d5985b4",
+          "bytes": 12376
+        }
+      }
+    },
+    "field:computation": {
+      "source": "art-src/research-topics-icons/research-topics-icons.png",
+      "sourceSha256": "c6d4337b932310b8a1e8b6d2aea417e424d629f9a1f3d8aa3f907aac6b17ffdf",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/fields/computation-64.webp?v=96726f8209cc",
+          "bytes": 2104
+        },
+        "128": {
+          "url": "/art/derived/research/v1/fields/computation-128.webp?v=f0aef5f0eee4",
+          "bytes": 4588
+        },
+        "256": {
+          "url": "/art/derived/research/v1/fields/computation-256.webp?v=add8c2315075",
+          "bytes": 11260
+        }
+      }
+    },
+    "field:weapons": {
+      "source": "art-src/research-topics-icons/research-topics-icons.png",
+      "sourceSha256": "c6d4337b932310b8a1e8b6d2aea417e424d629f9a1f3d8aa3f907aac6b17ffdf",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/fields/weapons-64.webp?v=daac440b67ab",
+          "bytes": 2064
+        },
+        "128": {
+          "url": "/art/derived/research/v1/fields/weapons-128.webp?v=1fc29dbbd774",
+          "bytes": 4508
+        },
+        "256": {
+          "url": "/art/derived/research/v1/fields/weapons-256.webp?v=684f7bda7e23",
+          "bytes": 11198
+        }
+      }
+    },
+    "field:hulls": {
+      "source": "art-src/research-topics-icons/research-topics-icons.png",
+      "sourceSha256": "c6d4337b932310b8a1e8b6d2aea417e424d629f9a1f3d8aa3f907aac6b17ffdf",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/fields/hulls-64.webp?v=75a25f5a9122",
+          "bytes": 2060
+        },
+        "128": {
+          "url": "/art/derived/research/v1/fields/hulls-128.webp?v=edaa90eaf0c4",
+          "bytes": 4632
+        },
+        "256": {
+          "url": "/art/derived/research/v1/fields/hulls-256.webp?v=4114843f2521",
+          "bytes": 12010
+        }
+      }
+    },
+    "field:life": {
+      "source": "art-src/research-topics-icons/research-topics-icons.png",
+      "sourceSha256": "c6d4337b932310b8a1e8b6d2aea417e424d629f9a1f3d8aa3f907aac6b17ffdf",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/fields/life-64.webp?v=3c4ed61b816d",
+          "bytes": 2152
+        },
+        "128": {
+          "url": "/art/derived/research/v1/fields/life-128.webp?v=a87d158466d4",
+          "bytes": 4872
+        },
+        "256": {
+          "url": "/art/derived/research/v1/fields/life-256.webp?v=f9e4603ad939",
+          "bytes": 12512
+        }
+      }
+    },
+    "programme:weap_cm_iii_flak_doctrine": {
+      "source": "art-src/research-emblems-v1/weap_cm_iii_flak_doctrine.png",
+      "sourceSha256": "10b73104c2c0bd126748e44355eed664bd91e061246243e1bea804ade205f3bd",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_flak_doctrine-64.webp?v=7125f7f1f485",
+          "bytes": 1908
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_flak_doctrine-128.webp?v=99036f2851f7",
+          "bytes": 4692
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_flak_doctrine-256.webp?v=1ee84d0b33ef",
+          "bytes": 11582
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_flak_doctrine-512.webp?v=e6e368ade7bf",
+          "bytes": 29510
+        }
+      }
+    },
+    "programme:weap_cm_iii_ionospheric_veil": {
+      "source": "art-src/research-emblems-v1/weap_cm_iii_ionospheric_veil.png",
+      "sourceSha256": "41d1440be2df072cd82766269563ade5ca99376a672b922e7704983e0ac5450a",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_ionospheric_veil-64.webp?v=434ef6fce86f",
+          "bytes": 2064
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_ionospheric_veil-128.webp?v=9138099aaf6a",
+          "bytes": 4516
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_ionospheric_veil-256.webp?v=3c8bff43bb4e",
+          "bytes": 10804
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_ionospheric_veil-512.webp?v=11fd6df564fd",
+          "bytes": 26146
+        }
+      }
+    },
+    "programme:weap_cm_iv_deep_veil": {
+      "source": "art-src/research-emblems-v1/weap_cm_iv_deep_veil.png",
+      "sourceSha256": "45a031d7d010e89084cc64f6bb1964441a8d9a4eb32bf620746f5c3cab7c18fd",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_deep_veil-64.webp?v=45f5eb144ea8",
+          "bytes": 2248
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_deep_veil-128.webp?v=1aab08efe329",
+          "bytes": 5468
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_deep_veil-256.webp?v=48bdf9ef0a63",
+          "bytes": 13834
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_deep_veil-512.webp?v=7abb99325e12",
+          "bytes": 33894
+        }
+      }
+    },
+    "programme:comp_sensor_gain": {
+      "source": "art-src/research-emblems-v1/sheets/computation-01.png#1",
+      "sourceSha256": "1063d3f887040bae5991267d0f7002098d449a8fe63053917580023e97a5d174#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_sensor_gain-64.webp?v=e861f55af5e0",
+          "bytes": 2152
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_sensor_gain-128.webp?v=d51cb0639446",
+          "bytes": 5096
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_sensor_gain-256.webp?v=7b6d6a455823",
+          "bytes": 12044
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_sensor_gain-512.webp?v=2caa5fb6b8a2",
+          "bytes": 29606
+        }
+      }
+    },
+    "programme:comp_signal_libraries": {
+      "source": "art-src/research-emblems-v1/sheets/computation-01.png#2",
+      "sourceSha256": "1063d3f887040bae5991267d0f7002098d449a8fe63053917580023e97a5d174#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_signal_libraries-64.webp?v=8348acce4890",
+          "bytes": 2122
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_signal_libraries-128.webp?v=8458b47bbabb",
+          "bytes": 5178
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_signal_libraries-256.webp?v=39648b1675c2",
+          "bytes": 12762
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_signal_libraries-512.webp?v=0251721ee1a2",
+          "bytes": 31118
+        }
+      }
+    },
+    "programme:comp_survey_protocols": {
+      "source": "art-src/research-emblems-v1/sheets/computation-01.png#3",
+      "sourceSha256": "1063d3f887040bae5991267d0f7002098d449a8fe63053917580023e97a5d174#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_survey_protocols-64.webp?v=cac2d50075ab",
+          "bytes": 1918
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_survey_protocols-128.webp?v=a33ac4187161",
+          "bytes": 4598
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_survey_protocols-256.webp?v=13045cca9a34",
+          "bytes": 11006
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_survey_protocols-512.webp?v=0787db03b820",
+          "bytes": 27050
+        }
+      }
+    },
+    "programme:comp_shadow_iv_recon_suite": {
+      "source": "art-src/research-emblems-v1/sheets/computation-01.png#4",
+      "sourceSha256": "1063d3f887040bae5991267d0f7002098d449a8fe63053917580023e97a5d174#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iv_recon_suite-64.webp?v=822045fd57c8",
+          "bytes": 2022
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iv_recon_suite-128.webp?v=76cfb93383bf",
+          "bytes": 4940
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iv_recon_suite-256.webp?v=c9324c9154e0",
+          "bytes": 12526
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iv_recon_suite-512.webp?v=1ef92e5f9c15",
+          "bytes": 30330
+        }
+      }
+    },
+    "programme:comp_predictive_plots": {
+      "source": "art-src/research-emblems-v1/sheets/computation-01.png#5",
+      "sourceSha256": "1063d3f887040bae5991267d0f7002098d449a8fe63053917580023e97a5d174#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_predictive_plots-64.webp?v=9fd8e1c6f0bb",
+          "bytes": 1658
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_predictive_plots-128.webp?v=9368c630690f",
+          "bytes": 3542
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_predictive_plots-256.webp?v=719ef848a65b",
+          "bytes": 8068
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_predictive_plots-512.webp?v=50de23309bd7",
+          "bytes": 19504
+        }
+      }
+    },
+    "programme:comp_deep_space_arrays": {
+      "source": "art-src/research-emblems-v1/sheets/computation-01.png#6",
+      "sourceSha256": "1063d3f887040bae5991267d0f7002098d449a8fe63053917580023e97a5d174#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_deep_space_arrays-64.webp?v=f26f16ac19f3",
+          "bytes": 2040
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_deep_space_arrays-128.webp?v=5a9ff6543703",
+          "bytes": 5022
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_deep_space_arrays-256.webp?v=3debcb8647f5",
+          "bytes": 11602
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_deep_space_arrays-512.webp?v=88ebd4886d72",
+          "bytes": 28036
+        }
+      }
+    },
+    "programme:comp_gravimetric_survey": {
+      "source": "art-src/research-emblems-v1/sheets/computation-02.png#1",
+      "sourceSha256": "5f3423df4e09afb2932284d1eb803bb5acd4f6fb502a70c8e554e99922a101e5#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_gravimetric_survey-64.webp?v=7a764aa85556",
+          "bytes": 2214
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_gravimetric_survey-128.webp?v=ad9d73f57453",
+          "bytes": 5540
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_gravimetric_survey-256.webp?v=94c4db1554d4",
+          "bytes": 12728
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_gravimetric_survey-512.webp?v=03072afdc156",
+          "bytes": 30510
+        }
+      }
+    },
+    "programme:comp_watch_iii_picket_networks": {
+      "source": "art-src/research-emblems-v1/sheets/computation-02.png#2",
+      "sourceSha256": "5f3423df4e09afb2932284d1eb803bb5acd4f6fb502a70c8e554e99922a101e5#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iii_picket_networks-64.webp?v=b8c005a139ea",
+          "bytes": 2026
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iii_picket_networks-128.webp?v=0f955fa2b01d",
+          "bytes": 4806
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iii_picket_networks-256.webp?v=9b04fda2bccb",
+          "bytes": 11144
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iii_picket_networks-512.webp?v=434da687bcc3",
+          "bytes": 26398
+        }
+      }
+    },
+    "programme:comp_watch_iii_long_baselines": {
+      "source": "art-src/research-emblems-v1/sheets/computation-02.png#3",
+      "sourceSha256": "5f3423df4e09afb2932284d1eb803bb5acd4f6fb502a70c8e554e99922a101e5#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iii_long_baselines-64.webp?v=b454388947a9",
+          "bytes": 1892
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iii_long_baselines-128.webp?v=82eb2401e42a",
+          "bytes": 4440
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iii_long_baselines-256.webp?v=679bc02afcb3",
+          "bytes": 9840
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iii_long_baselines-512.webp?v=18d69a6daa12",
+          "bytes": 23372
+        }
+      }
+    },
+    "programme:comp_shadow_iii_ecm_emitters": {
+      "source": "art-src/research-emblems-v1/sheets/computation-02.png#4",
+      "sourceSha256": "5f3423df4e09afb2932284d1eb803bb5acd4f6fb502a70c8e554e99922a101e5#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iii_ecm_emitters-64.webp?v=292b740bd904",
+          "bytes": 2004
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iii_ecm_emitters-128.webp?v=0184ad64b0d0",
+          "bytes": 4506
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iii_ecm_emitters-256.webp?v=93f7bd25b2ce",
+          "bytes": 10232
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iii_ecm_emitters-512.webp?v=1f68fbf018d9",
+          "bytes": 25188
+        }
+      }
+    },
+    "programme:comp_shadow_iii_traffic_analysis": {
+      "source": "art-src/research-emblems-v1/sheets/computation-02.png#5",
+      "sourceSha256": "5f3423df4e09afb2932284d1eb803bb5acd4f6fb502a70c8e554e99922a101e5#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iii_traffic_analysis-64.webp?v=1a6674c098fc",
+          "bytes": 2252
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iii_traffic_analysis-128.webp?v=1fea5ee00b2a",
+          "bytes": 5506
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iii_traffic_analysis-256.webp?v=54283da6a824",
+          "bytes": 13756
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iii_traffic_analysis-512.webp?v=3651ad799fdb",
+          "bytes": 32696
+        }
+      }
+    },
+    "programme:comp_watch_iv_battle_archives": {
+      "source": "art-src/research-emblems-v1/sheets/computation-02.png#6",
+      "sourceSha256": "5f3423df4e09afb2932284d1eb803bb5acd4f6fb502a70c8e554e99922a101e5#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iv_battle_archives-64.webp?v=d44077e7d5af",
+          "bytes": 2288
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iv_battle_archives-128.webp?v=eece7836695e",
+          "bytes": 5288
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iv_battle_archives-256.webp?v=1140a216a624",
+          "bytes": 12224
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iv_battle_archives-512.webp?v=0d5e2eaa9d43",
+          "bytes": 29330
+        }
+      }
+    },
+    "programme:comp_watch_iv_standing_watch": {
+      "source": "art-src/research-emblems-v1/sheets/computation-03.png#1",
+      "sourceSha256": "35abf30caf7ef071ac384fc738e5cbf60da498d681d872d877f1df70c10e117b#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iv_standing_watch-64.webp?v=f42d4e85c766",
+          "bytes": 1934
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iv_standing_watch-128.webp?v=aeb93c2435cb",
+          "bytes": 4368
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iv_standing_watch-256.webp?v=867ee81e9249",
+          "bytes": 10050
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_iv_standing_watch-512.webp?v=e1f98a1130a8",
+          "bytes": 24588
+        }
+      }
+    },
+    "programme:comp_shadow_iv_wake_analysis": {
+      "source": "art-src/research-emblems-v1/sheets/computation-03.png#2",
+      "sourceSha256": "35abf30caf7ef071ac384fc738e5cbf60da498d681d872d877f1df70c10e117b#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iv_wake_analysis-64.webp?v=966f7886115b",
+          "bytes": 2036
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iv_wake_analysis-128.webp?v=7cd6de06d41c",
+          "bytes": 4750
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iv_wake_analysis-256.webp?v=f0320903464c",
+          "bytes": 11130
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_iv_wake_analysis-512.webp?v=0fad8f47d122",
+          "bytes": 26352
+        }
+      }
+    },
+    "programme:comp_watch_v_panopticon": {
+      "source": "art-src/research-emblems-v1/sheets/computation-03.png#3",
+      "sourceSha256": "35abf30caf7ef071ac384fc738e5cbf60da498d681d872d877f1df70c10e117b#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_v_panopticon-64.webp?v=5b8b0a6193fa",
+          "bytes": 2182
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_v_panopticon-128.webp?v=2a0c90f54cd2",
+          "bytes": 5372
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_v_panopticon-256.webp?v=0986ab597b8c",
+          "bytes": 13214
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_v_panopticon-512.webp?v=818534b39417",
+          "bytes": 31384
+        }
+      }
+    },
+    "programme:comp_watch_v_survey_corps": {
+      "source": "art-src/research-emblems-v1/sheets/computation-03.png#4",
+      "sourceSha256": "35abf30caf7ef071ac384fc738e5cbf60da498d681d872d877f1df70c10e117b#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_v_survey_corps-64.webp?v=a17390d12cb2",
+          "bytes": 1948
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_v_survey_corps-128.webp?v=cf36bcef6d9a",
+          "bytes": 4394
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_v_survey_corps-256.webp?v=291706b75741",
+          "bytes": 10176
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_watch_v_survey_corps-512.webp?v=18cf15ad3ef0",
+          "bytes": 24564
+        }
+      }
+    },
+    "programme:comp_shadow_v_signature_mimicry": {
+      "source": "art-src/research-emblems-v1/sheets/computation-03.png#5",
+      "sourceSha256": "35abf30caf7ef071ac384fc738e5cbf60da498d681d872d877f1df70c10e117b#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_v_signature_mimicry-64.webp?v=f8f38ac7e94c",
+          "bytes": 2004
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_v_signature_mimicry-128.webp?v=19bfba34723c",
+          "bytes": 4698
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_v_signature_mimicry-256.webp?v=fade21662ae3",
+          "bytes": 11192
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_v_signature_mimicry-512.webp?v=d2eeefc2f982",
+          "bytes": 27178
+        }
+      }
+    },
+    "programme:comp_shadow_v_counter_intel": {
+      "source": "art-src/research-emblems-v1/sheets/computation-03.png#6",
+      "sourceSha256": "35abf30caf7ef071ac384fc738e5cbf60da498d681d872d877f1df70c10e117b#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_v_counter_intel-64.webp?v=c3c2d3e741da",
+          "bytes": 2082
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_v_counter_intel-128.webp?v=6d426811f39e",
+          "bytes": 4936
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_v_counter_intel-256.webp?v=42a0f625d8f0",
+          "bytes": 12352
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/comp_shadow_v_counter_intel-512.webp?v=fc2f3861ff2f",
+          "bytes": 29766
+        }
+      }
+    },
+    "programme:hull_line_iii_escort_datalink": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-01.png#1",
+      "sourceSha256": "2c06508c7ab1b29da3fe70c64e0bd5a9e319902dfae2d2b6926a62582f75c260#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iii_escort_datalink-64.webp?v=2970b72d20c7",
+          "bytes": 1888
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iii_escort_datalink-128.webp?v=14e691b50bd6",
+          "bytes": 4636
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iii_escort_datalink-256.webp?v=9f0c99ed0e2d",
+          "bytes": 11236
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iii_escort_datalink-512.webp?v=68d9b417db68",
+          "bytes": 27652
+        }
+      }
+    },
+    "programme:hull_cargo_pods": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-01.png#2",
+      "sourceSha256": "2c06508c7ab1b29da3fe70c64e0bd5a9e319902dfae2d2b6926a62582f75c260#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_cargo_pods-64.webp?v=a1e37331996d",
+          "bytes": 2064
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_cargo_pods-128.webp?v=51663b1dcd19",
+          "bytes": 5028
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_cargo_pods-256.webp?v=0920f602f503",
+          "bytes": 13024
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_cargo_pods-512.webp?v=c5012ad07e16",
+          "bytes": 32970
+        }
+      }
+    },
+    "programme:hull_drydock_efficiency": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-01.png#3",
+      "sourceSha256": "2c06508c7ab1b29da3fe70c64e0bd5a9e319902dfae2d2b6926a62582f75c260#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_drydock_efficiency-64.webp?v=064205493ac3",
+          "bytes": 2178
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_drydock_efficiency-128.webp?v=d96a40d2821d",
+          "bytes": 5262
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_drydock_efficiency-256.webp?v=08af058a62db",
+          "bytes": 12746
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_drydock_efficiency-512.webp?v=19ad8dc3c557",
+          "bytes": 32654
+        }
+      }
+    },
+    "programme:hull_reinforced_frames": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-01.png#4",
+      "sourceSha256": "2c06508c7ab1b29da3fe70c64e0bd5a9e319902dfae2d2b6926a62582f75c260#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_reinforced_frames-64.webp?v=c96441dd0c37",
+          "bytes": 2104
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_reinforced_frames-128.webp?v=686a5521b810",
+          "bytes": 5178
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_reinforced_frames-256.webp?v=3640969547db",
+          "bytes": 12710
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_reinforced_frames-512.webp?v=413a1814f0be",
+          "bytes": 31790
+        }
+      }
+    },
+    "programme:hull_slipway_standards": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-01.png#5",
+      "sourceSha256": "2c06508c7ab1b29da3fe70c64e0bd5a9e319902dfae2d2b6926a62582f75c260#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_slipway_standards-64.webp?v=3c92ba53f753",
+          "bytes": 1976
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_slipway_standards-128.webp?v=2b8206a1e311",
+          "bytes": 4824
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_slipway_standards-256.webp?v=fdc8119ecc50",
+          "bytes": 11752
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_slipway_standards-512.webp?v=ad59587301d9",
+          "bytes": 30796
+        }
+      }
+    },
+    "programme:hull_rapid_rearm": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-01.png#6",
+      "sourceSha256": "2c06508c7ab1b29da3fe70c64e0bd5a9e319902dfae2d2b6926a62582f75c260#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_rapid_rearm-64.webp?v=f8eac03aebe5",
+          "bytes": 2092
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_rapid_rearm-128.webp?v=52d70c8d0602",
+          "bytes": 4968
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_rapid_rearm-256.webp?v=abf3cac8d3bf",
+          "bytes": 12438
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_rapid_rearm-512.webp?v=51beafc8b68c",
+          "bytes": 31242
+        }
+      }
+    },
+    "programme:hull_modular_berths": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-02.png#1",
+      "sourceSha256": "1ed09b6085ee70ffdb832c469dfa80488a95b85db7b8d4078807bd0db8c294f0#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_modular_berths-64.webp?v=beea24f44bad",
+          "bytes": 2050
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_modular_berths-128.webp?v=191e16cae66e",
+          "bytes": 5040
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_modular_berths-256.webp?v=a1f0d44440f5",
+          "bytes": 12440
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_modular_berths-512.webp?v=12e6e218b653",
+          "bytes": 31242
+        }
+      }
+    },
+    "programme:hull_compartmentalization": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-02.png#2",
+      "sourceSha256": "1ed09b6085ee70ffdb832c469dfa80488a95b85db7b8d4078807bd0db8c294f0#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_compartmentalization-64.webp?v=f406f764760b",
+          "bytes": 2204
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_compartmentalization-128.webp?v=343e49fba28b",
+          "bytes": 5256
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_compartmentalization-256.webp?v=72ed3a312b6c",
+          "bytes": 13424
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_compartmentalization-512.webp?v=116bf9465a5d",
+          "bytes": 33774
+        }
+      }
+    },
+    "programme:hull_line_iii_hardened_anchorage": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-02.png#3",
+      "sourceSha256": "1ed09b6085ee70ffdb832c469dfa80488a95b85db7b8d4078807bd0db8c294f0#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iii_hardened_anchorage-64.webp?v=ce92bfe7880b",
+          "bytes": 2110
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iii_hardened_anchorage-128.webp?v=3e482c21afcb",
+          "bytes": 5046
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iii_hardened_anchorage-256.webp?v=1a9fc527cd49",
+          "bytes": 12362
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iii_hardened_anchorage-512.webp?v=419ec1f0d19c",
+          "bytes": 30352
+        }
+      }
+    },
+    "programme:hull_corsair_iii_wolfpack": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-02.png#4",
+      "sourceSha256": "1ed09b6085ee70ffdb832c469dfa80488a95b85db7b8d4078807bd0db8c294f0#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iii_wolfpack-64.webp?v=a40eb8d3b56c",
+          "bytes": 2088
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iii_wolfpack-128.webp?v=79f96196f6ce",
+          "bytes": 4860
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iii_wolfpack-256.webp?v=775fc7eb9c64",
+          "bytes": 11774
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iii_wolfpack-512.webp?v=00a26af1acfa",
+          "bytes": 28554
+        }
+      }
+    },
+    "programme:hull_corsair_iii_prize_holds": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-02.png#5",
+      "sourceSha256": "1ed09b6085ee70ffdb832c469dfa80488a95b85db7b8d4078807bd0db8c294f0#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iii_prize_holds-64.webp?v=5941ca919c63",
+          "bytes": 2076
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iii_prize_holds-128.webp?v=39e2b1a8d43b",
+          "bytes": 4898
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iii_prize_holds-256.webp?v=39ede6dc0f3f",
+          "bytes": 12768
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iii_prize_holds-512.webp?v=8edfd576ba78",
+          "bytes": 30024
+        }
+      }
+    },
+    "programme:hull_line_iv_destroyer": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-02.png#6",
+      "sourceSha256": "1ed09b6085ee70ffdb832c469dfa80488a95b85db7b8d4078807bd0db8c294f0#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iv_destroyer-64.webp?v=d3f3244b9649",
+          "bytes": 1974
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iv_destroyer-128.webp?v=02f085124c76",
+          "bytes": 4988
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iv_destroyer-256.webp?v=7596ebbfeda8",
+          "bytes": 13012
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iv_destroyer-512.webp?v=f95c188a8311",
+          "bytes": 32652
+        }
+      }
+    },
+    "programme:hull_line_iv_fleet_escorts": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-03.png#1",
+      "sourceSha256": "867e7f141a34e3a4038a41852a9000f5beef67e36ced578ef10139837a2b2f3f#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iv_fleet_escorts-64.webp?v=3af1162edb65",
+          "bytes": 2014
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iv_fleet_escorts-128.webp?v=8cc2e19b3bfe",
+          "bytes": 4930
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iv_fleet_escorts-256.webp?v=a41775f1cd36",
+          "bytes": 12162
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_line_iv_fleet_escorts-512.webp?v=2ca9a72c5337",
+          "bytes": 31114
+        }
+      }
+    },
+    "programme:hull_corsair_iv_slip_anchors": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-03.png#2",
+      "sourceSha256": "867e7f141a34e3a4038a41852a9000f5beef67e36ced578ef10139837a2b2f3f#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iv_slip_anchors-64.webp?v=88d2f948144b",
+          "bytes": 1972
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iv_slip_anchors-128.webp?v=bc25fb393c4a",
+          "bytes": 4548
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iv_slip_anchors-256.webp?v=7f31325fba96",
+          "bytes": 10690
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iv_slip_anchors-512.webp?v=6ab6f8904279",
+          "bytes": 26770
+        }
+      }
+    },
+    "programme:hull_corsair_iv_blockade_runners": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-03.png#3",
+      "sourceSha256": "867e7f141a34e3a4038a41852a9000f5beef67e36ced578ef10139837a2b2f3f#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iv_blockade_runners-64.webp?v=7fa4dbd00f6c",
+          "bytes": 2064
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iv_blockade_runners-128.webp?v=636fb8050607",
+          "bytes": 5320
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iv_blockade_runners-256.webp?v=3d2f65d3c5e8",
+          "bytes": 13226
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_iv_blockade_runners-512.webp?v=850c600daabc",
+          "bytes": 33332
+        }
+      }
+    },
+    "programme:hull_line_v_cruiser": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-03.png#4",
+      "sourceSha256": "867e7f141a34e3a4038a41852a9000f5beef67e36ced578ef10139837a2b2f3f#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_line_v_cruiser-64.webp?v=ea61eb0e099f",
+          "bytes": 1982
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_line_v_cruiser-128.webp?v=f358477dc4e0",
+          "bytes": 4972
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_line_v_cruiser-256.webp?v=b474d7fee658",
+          "bytes": 12672
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_line_v_cruiser-512.webp?v=502756a44e0e",
+          "bytes": 32404
+        }
+      }
+    },
+    "programme:hull_line_v_fortress_doctrine": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-03.png#5",
+      "sourceSha256": "867e7f141a34e3a4038a41852a9000f5beef67e36ced578ef10139837a2b2f3f#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_line_v_fortress_doctrine-64.webp?v=4594b6d7dfc6",
+          "bytes": 2034
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_line_v_fortress_doctrine-128.webp?v=7062a588f6db",
+          "bytes": 4850
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_line_v_fortress_doctrine-256.webp?v=c91c6488080e",
+          "bytes": 11556
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_line_v_fortress_doctrine-512.webp?v=2ec4ca5920fb",
+          "bytes": 28706
+        }
+      }
+    },
+    "programme:hull_corsair_v_salvage_rigs": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-03.png#6",
+      "sourceSha256": "867e7f141a34e3a4038a41852a9000f5beef67e36ced578ef10139837a2b2f3f#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_v_salvage_rigs-64.webp?v=32f62546ebfd",
+          "bytes": 2010
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_v_salvage_rigs-128.webp?v=be7947fe1c16",
+          "bytes": 4844
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_v_salvage_rigs-256.webp?v=ebd6a0988237",
+          "bytes": 12202
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_v_salvage_rigs-512.webp?v=7655890d2e23",
+          "bytes": 30066
+        }
+      }
+    },
+    "programme:hull_corsair_v_boarding_parties": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-04.png#1",
+      "sourceSha256": "599363c8dc940f6e04aad42739a7252c2bce8802d700af298705d7e8e9351665#1/4",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_v_boarding_parties-64.webp?v=2fa6649bb082",
+          "bytes": 2274
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_v_boarding_parties-128.webp?v=f445519187cb",
+          "bytes": 5822
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_v_boarding_parties-256.webp?v=933be97c6ac9",
+          "bytes": 14408
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_corsair_v_boarding_parties-512.webp?v=2ce2e9642090",
+          "bytes": 37488
+        }
+      }
+    },
+    "programme:hull_line_vi_battleship": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-04.png#2",
+      "sourceSha256": "599363c8dc940f6e04aad42739a7252c2bce8802d700af298705d7e8e9351665#2/4",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_line_vi_battleship-64.webp?v=b7c87e9d7c0b",
+          "bytes": 2136
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_line_vi_battleship-128.webp?v=741d94b9d976",
+          "bytes": 5310
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_line_vi_battleship-256.webp?v=1220d75a173a",
+          "bytes": 13684
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_line_vi_battleship-512.webp?v=56ef9c21fb2d",
+          "bytes": 36988
+        }
+      }
+    },
+    "programme:hull_line_vii_dreadnought": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-04.png#3",
+      "sourceSha256": "599363c8dc940f6e04aad42739a7252c2bce8802d700af298705d7e8e9351665#3/4",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_line_vii_dreadnought-64.webp?v=3fac98297d8f",
+          "bytes": 2192
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_line_vii_dreadnought-128.webp?v=89aaacf529db",
+          "bytes": 5470
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_line_vii_dreadnought-256.webp?v=e9258e084ddc",
+          "bytes": 13860
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_line_vii_dreadnought-512.webp?v=bbbacab588f7",
+          "bytes": 37798
+        }
+      }
+    },
+    "programme:hull_line_viii_titan": {
+      "source": "art-src/research-emblems-v1/sheets/hulls-04.png#4",
+      "sourceSha256": "599363c8dc940f6e04aad42739a7252c2bce8802d700af298705d7e8e9351665#4/4",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/hull_line_viii_titan-64.webp?v=4acfba0411d7",
+          "bytes": 1964
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/hull_line_viii_titan-128.webp?v=5c87d8579864",
+          "bytes": 4816
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/hull_line_viii_titan-256.webp?v=31163bfa2f24",
+          "bytes": 12618
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/hull_line_viii_titan-512.webp?v=cfcf41daca6a",
+          "bytes": 33450
+        }
+      }
+    },
+    "programme:life_hydroponics": {
+      "source": "art-src/research-emblems-v1/sheets/life-01.png#1",
+      "sourceSha256": "20a2c773fa16a3034f6f757c8730086372fbc7b8a5025e3733d42c96a9aefa04#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_hydroponics-64.webp?v=604d018f5db1",
+          "bytes": 2472
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_hydroponics-128.webp?v=894c23733c57",
+          "bytes": 5870
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_hydroponics-256.webp?v=b95d78144264",
+          "bytes": 13966
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_hydroponics-512.webp?v=6ce1279888ad",
+          "bytes": 34858
+        }
+      }
+    },
+    "programme:life_med_bays": {
+      "source": "art-src/research-emblems-v1/sheets/life-01.png#2",
+      "sourceSha256": "20a2c773fa16a3034f6f757c8730086372fbc7b8a5025e3733d42c96a9aefa04#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_med_bays-64.webp?v=0ebe8981adb9",
+          "bytes": 2376
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_med_bays-128.webp?v=ae00f8793c78",
+          "bytes": 5706
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_med_bays-256.webp?v=48b5977344c6",
+          "bytes": 14560
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_med_bays-512.webp?v=1b553041abce",
+          "bytes": 36374
+        }
+      }
+    },
+    "programme:life_dense_housing": {
+      "source": "art-src/research-emblems-v1/sheets/life-01.png#3",
+      "sourceSha256": "20a2c773fa16a3034f6f757c8730086372fbc7b8a5025e3733d42c96a9aefa04#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_dense_housing-64.webp?v=a44c560f04c0",
+          "bytes": 2366
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_dense_housing-128.webp?v=1a8c2c9b5366",
+          "bytes": 5632
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_dense_housing-256.webp?v=31b52be53bcf",
+          "bytes": 13944
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_dense_housing-512.webp?v=3886c94eb622",
+          "bytes": 35304
+        }
+      }
+    },
+    "programme:life_civic_rations": {
+      "source": "art-src/research-emblems-v1/sheets/life-01.png#4",
+      "sourceSha256": "20a2c773fa16a3034f6f757c8730086372fbc7b8a5025e3733d42c96a9aefa04#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_civic_rations-64.webp?v=10ad81fd5841",
+          "bytes": 2378
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_civic_rations-128.webp?v=998e880ad2e6",
+          "bytes": 5748
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_civic_rations-256.webp?v=42f2d773994a",
+          "bytes": 14142
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_civic_rations-512.webp?v=c8b5b3d8eb6f",
+          "bytes": 36102
+        }
+      }
+    },
+    "programme:life_cryo_berths": {
+      "source": "art-src/research-emblems-v1/sheets/life-01.png#5",
+      "sourceSha256": "20a2c773fa16a3034f6f757c8730086372fbc7b8a5025e3733d42c96a9aefa04#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_cryo_berths-64.webp?v=c99d53219b00",
+          "bytes": 2206
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_cryo_berths-128.webp?v=777875ec07ad",
+          "bytes": 5116
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_cryo_berths-256.webp?v=5b77d42bf1ce",
+          "bytes": 12442
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_cryo_berths-512.webp?v=c123bbe89386",
+          "bytes": 31468
+        }
+      }
+    },
+    "programme:life_gene_crops": {
+      "source": "art-src/research-emblems-v1/sheets/life-01.png#6",
+      "sourceSha256": "20a2c773fa16a3034f6f757c8730086372fbc7b8a5025e3733d42c96a9aefa04#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_gene_crops-64.webp?v=838e02199a44",
+          "bytes": 2406
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_gene_crops-128.webp?v=09467fd594f2",
+          "bytes": 5486
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_gene_crops-256.webp?v=926bb3a71e21",
+          "bytes": 13146
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_gene_crops-512.webp?v=55a1bff6ceb3",
+          "bytes": 32818
+        }
+      }
+    },
+    "programme:life_growth_iii_orbital_habitats": {
+      "source": "art-src/research-emblems-v1/sheets/life-02.png#1",
+      "sourceSha256": "5532a28a4d2d7fd27fc0be4502b5458bf36f2024962abb6363ffe3c874cf9645#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iii_orbital_habitats-64.webp?v=5e7ff76442c4",
+          "bytes": 2494
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iii_orbital_habitats-128.webp?v=a46a902b160f",
+          "bytes": 6152
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iii_orbital_habitats-256.webp?v=87cd2ca9c00e",
+          "bytes": 16510
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iii_orbital_habitats-512.webp?v=7d99982846ea",
+          "bytes": 42450
+        }
+      }
+    },
+    "programme:life_growth_iii_boom_charters": {
+      "source": "art-src/research-emblems-v1/sheets/life-02.png#2",
+      "sourceSha256": "5532a28a4d2d7fd27fc0be4502b5458bf36f2024962abb6363ffe3c874cf9645#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iii_boom_charters-64.webp?v=5084199fc30d",
+          "bytes": 2412
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iii_boom_charters-128.webp?v=286aa8be6639",
+          "bytes": 6160
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iii_boom_charters-256.webp?v=55122ee7e9ec",
+          "bytes": 15840
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iii_boom_charters-512.webp?v=17296ca81584",
+          "bytes": 40012
+        }
+      }
+    },
+    "programme:life_talent_iii_expert_training": {
+      "source": "art-src/research-emblems-v1/sheets/life-02.png#3",
+      "sourceSha256": "5532a28a4d2d7fd27fc0be4502b5458bf36f2024962abb6363ffe3c874cf9645#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iii_expert_training-64.webp?v=09d8c652582d",
+          "bytes": 2452
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iii_expert_training-128.webp?v=c7a0bdda03b7",
+          "bytes": 6066
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iii_expert_training-256.webp?v=d225e6bc04ea",
+          "bytes": 15030
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iii_expert_training-512.webp?v=97c71309aad6",
+          "bytes": 35536
+        }
+      }
+    },
+    "programme:life_talent_iii_deep_careers": {
+      "source": "art-src/research-emblems-v1/sheets/life-02.png#4",
+      "sourceSha256": "5532a28a4d2d7fd27fc0be4502b5458bf36f2024962abb6363ffe3c874cf9645#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iii_deep_careers-64.webp?v=ae023b2eb3f5",
+          "bytes": 2314
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iii_deep_careers-128.webp?v=1d09329d2eab",
+          "bytes": 5686
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iii_deep_careers-256.webp?v=86d393c7671d",
+          "bytes": 14026
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iii_deep_careers-512.webp?v=60eeba564b8c",
+          "bytes": 34808
+        }
+      }
+    },
+    "programme:life_growth_iv_xenoacclimation": {
+      "source": "art-src/research-emblems-v1/sheets/life-02.png#5",
+      "sourceSha256": "5532a28a4d2d7fd27fc0be4502b5458bf36f2024962abb6363ffe3c874cf9645#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iv_xenoacclimation-64.webp?v=e33d84f0e150",
+          "bytes": 2264
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iv_xenoacclimation-128.webp?v=b3f1e4684ec8",
+          "bytes": 5510
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iv_xenoacclimation-256.webp?v=3cfe4984225f",
+          "bytes": 14370
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iv_xenoacclimation-512.webp?v=926fc47cbdeb",
+          "bytes": 34610
+        }
+      }
+    },
+    "programme:life_growth_iv_closed_loop": {
+      "source": "art-src/research-emblems-v1/sheets/life-02.png#6",
+      "sourceSha256": "5532a28a4d2d7fd27fc0be4502b5458bf36f2024962abb6363ffe3c874cf9645#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iv_closed_loop-64.webp?v=e1024a16f7cb",
+          "bytes": 2396
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iv_closed_loop-128.webp?v=ea73161970ef",
+          "bytes": 6074
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iv_closed_loop-256.webp?v=bb747df39891",
+          "bytes": 15782
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_growth_iv_closed_loop-512.webp?v=e7deead19b93",
+          "bytes": 39598
+        }
+      }
+    },
+    "programme:life_talent_iv_academy_iv": {
+      "source": "art-src/research-emblems-v1/sheets/life-03.png#1",
+      "sourceSha256": "cac673a71476d7deb5aaea420c1d49d88eee6d231620a669013bf4c735b9cf05#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iv_academy_iv-64.webp?v=647500bd4170",
+          "bytes": 2336
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iv_academy_iv-128.webp?v=9f45133ee371",
+          "bytes": 5692
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iv_academy_iv-256.webp?v=146b74e1bebf",
+          "bytes": 15370
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iv_academy_iv-512.webp?v=01b0c56785c6",
+          "bytes": 38020
+        }
+      }
+    },
+    "programme:life_talent_iv_broad_curricula": {
+      "source": "art-src/research-emblems-v1/sheets/life-03.png#2",
+      "sourceSha256": "cac673a71476d7deb5aaea420c1d49d88eee6d231620a669013bf4c735b9cf05#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iv_broad_curricula-64.webp?v=ac5620b4667d",
+          "bytes": 2324
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iv_broad_curricula-128.webp?v=3085de112f6e",
+          "bytes": 5690
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iv_broad_curricula-256.webp?v=1f9800b977dc",
+          "bytes": 14356
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_talent_iv_broad_curricula-512.webp?v=c8ef16978852",
+          "bytes": 35778
+        }
+      }
+    },
+    "programme:life_growth_v_arcologies": {
+      "source": "art-src/research-emblems-v1/sheets/life-03.png#3",
+      "sourceSha256": "cac673a71476d7deb5aaea420c1d49d88eee6d231620a669013bf4c735b9cf05#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_growth_v_arcologies-64.webp?v=b0061c0bc5f3",
+          "bytes": 2502
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_growth_v_arcologies-128.webp?v=f9df62678242",
+          "bytes": 6340
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_growth_v_arcologies-256.webp?v=a0578cd5b662",
+          "bytes": 16848
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_growth_v_arcologies-512.webp?v=47e128f7f178",
+          "bytes": 42636
+        }
+      }
+    },
+    "programme:life_growth_v_generation_charters": {
+      "source": "art-src/research-emblems-v1/sheets/life-03.png#4",
+      "sourceSha256": "cac673a71476d7deb5aaea420c1d49d88eee6d231620a669013bf4c735b9cf05#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_growth_v_generation_charters-64.webp?v=5f0b411f3d7e",
+          "bytes": 2188
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_growth_v_generation_charters-128.webp?v=7bfedc27ade9",
+          "bytes": 5174
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_growth_v_generation_charters-256.webp?v=1c625f232412",
+          "bytes": 13470
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_growth_v_generation_charters-512.webp?v=f333de9d1daa",
+          "bytes": 33432
+        }
+      }
+    },
+    "programme:life_talent_v_twin_campuses": {
+      "source": "art-src/research-emblems-v1/sheets/life-03.png#5",
+      "sourceSha256": "cac673a71476d7deb5aaea420c1d49d88eee6d231620a669013bf4c735b9cf05#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_talent_v_twin_campuses-64.webp?v=651c2d7ba115",
+          "bytes": 2290
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_talent_v_twin_campuses-128.webp?v=2825aac9cfb5",
+          "bytes": 5688
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_talent_v_twin_campuses-256.webp?v=a6912effe18b",
+          "bytes": 14226
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_talent_v_twin_campuses-512.webp?v=775ef6922b0a",
+          "bytes": 35720
+        }
+      }
+    },
+    "programme:life_talent_v_founders_institutes": {
+      "source": "art-src/research-emblems-v1/sheets/life-03.png#6",
+      "sourceSha256": "cac673a71476d7deb5aaea420c1d49d88eee6d231620a669013bf4c735b9cf05#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/life_talent_v_founders_institutes-64.webp?v=1b45492d105a",
+          "bytes": 2398
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/life_talent_v_founders_institutes-128.webp?v=0b70fbb726f5",
+          "bytes": 6006
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/life_talent_v_founders_institutes-256.webp?v=6a0e67dc2757",
+          "bytes": 15468
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/life_talent_v_founders_institutes-512.webp?v=b4fa55131be5",
+          "bytes": 38664
+        }
+      }
+    },
+    "programme:mat_deep_bores": {
+      "source": "art-src/research-emblems-v1/sheets/materials-01.png#1",
+      "sourceSha256": "44f6a835ad7e3bcf7bb1c07d6aca0a9f85feab0b4563c71a06a734f13bd29489#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_deep_bores-64.webp?v=d26ee14ea9db",
+          "bytes": 2272
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_deep_bores-128.webp?v=4bf6863e571c",
+          "bytes": 5684
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_deep_bores-256.webp?v=cf3cbbb19e62",
+          "bytes": 14220
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_deep_bores-512.webp?v=a84f241ba11b",
+          "bytes": 33366
+        }
+      }
+    },
+    "programme:mat_enrichment": {
+      "source": "art-src/research-emblems-v1/sheets/materials-01.png#2",
+      "sourceSha256": "44f6a835ad7e3bcf7bb1c07d6aca0a9f85feab0b4563c71a06a734f13bd29489#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_enrichment-64.webp?v=a0c96b49949d",
+          "bytes": 2274
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_enrichment-128.webp?v=a21323a7538e",
+          "bytes": 5558
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_enrichment-256.webp?v=17130b0efed0",
+          "bytes": 13342
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_enrichment-512.webp?v=a01b16480629",
+          "bytes": 32214
+        }
+      }
+    },
+    "programme:mat_bulk_storage": {
+      "source": "art-src/research-emblems-v1/sheets/materials-01.png#3",
+      "sourceSha256": "44f6a835ad7e3bcf7bb1c07d6aca0a9f85feab0b4563c71a06a734f13bd29489#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_bulk_storage-64.webp?v=c16adfb6f45f",
+          "bytes": 2120
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_bulk_storage-128.webp?v=f3204bcc5088",
+          "bytes": 5262
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_bulk_storage-256.webp?v=db5f7dfe6bbc",
+          "bytes": 12966
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_bulk_storage-512.webp?v=5eda1e352850",
+          "bytes": 31214
+        }
+      }
+    },
+    "programme:mat_ore_recovery": {
+      "source": "art-src/research-emblems-v1/sheets/materials-01.png#4",
+      "sourceSha256": "44f6a835ad7e3bcf7bb1c07d6aca0a9f85feab0b4563c71a06a734f13bd29489#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_ore_recovery-64.webp?v=c9f961f92828",
+          "bytes": 2378
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_ore_recovery-128.webp?v=4d9daae1ab5d",
+          "bytes": 5598
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_ore_recovery-256.webp?v=868041d017c6",
+          "bytes": 13386
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_ore_recovery-512.webp?v=031a93cf76ac",
+          "bytes": 32118
+        }
+      }
+    },
+    "programme:mat_beneficiation": {
+      "source": "art-src/research-emblems-v1/sheets/materials-01.png#5",
+      "sourceSha256": "44f6a835ad7e3bcf7bb1c07d6aca0a9f85feab0b4563c71a06a734f13bd29489#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_beneficiation-64.webp?v=2c61fa790e5e",
+          "bytes": 2358
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_beneficiation-128.webp?v=528158258c64",
+          "bytes": 6040
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_beneficiation-256.webp?v=b90981718464",
+          "bytes": 15394
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_beneficiation-512.webp?v=05c0e1b53ca3",
+          "bytes": 37234
+        }
+      }
+    },
+    "programme:mat_prefab_construction": {
+      "source": "art-src/research-emblems-v1/sheets/materials-01.png#6",
+      "sourceSha256": "44f6a835ad7e3bcf7bb1c07d6aca0a9f85feab0b4563c71a06a734f13bd29489#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_prefab_construction-64.webp?v=aa24f26c6c61",
+          "bytes": 2044
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_prefab_construction-128.webp?v=882ee87eb10a",
+          "bytes": 4968
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_prefab_construction-256.webp?v=91c0c2caa3ce",
+          "bytes": 12236
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_prefab_construction-512.webp?v=b3cf3782eedb",
+          "bytes": 29762
+        }
+      }
+    },
+    "programme:mat_autoforges": {
+      "source": "art-src/research-emblems-v1/sheets/materials-02.png#1",
+      "sourceSha256": "1951755ebf1fb1cbb68cdb7ddcb2cc7ea8405dbe11b9981af275a29d05cdce3a#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_autoforges-64.webp?v=677ac9e401c5",
+          "bytes": 2488
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_autoforges-128.webp?v=585db0cbe222",
+          "bytes": 6132
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_autoforges-256.webp?v=d77c100be6bf",
+          "bytes": 14606
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_autoforges-512.webp?v=ca8e558ca4ad",
+          "bytes": 37808
+        }
+      }
+    },
+    "programme:mat_belt_stations": {
+      "source": "art-src/research-emblems-v1/sheets/materials-02.png#2",
+      "sourceSha256": "1951755ebf1fb1cbb68cdb7ddcb2cc7ea8405dbe11b9981af275a29d05cdce3a#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_belt_stations-64.webp?v=e16724cfa06a",
+          "bytes": 2562
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_belt_stations-128.webp?v=157941cdf8d6",
+          "bytes": 6580
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_belt_stations-256.webp?v=fd3597212b91",
+          "bytes": 17568
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_belt_stations-512.webp?v=02f4e2df5b63",
+          "bytes": 45796
+        }
+      }
+    },
+    "programme:mat_deepcrust_iii_tier4_extraction": {
+      "source": "art-src/research-emblems-v1/sheets/materials-02.png#3",
+      "sourceSha256": "1951755ebf1fb1cbb68cdb7ddcb2cc7ea8405dbe11b9981af275a29d05cdce3a#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iii_tier4_extraction-64.webp?v=07d97848cc9c",
+          "bytes": 2502
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iii_tier4_extraction-128.webp?v=8080220d141b",
+          "bytes": 6206
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iii_tier4_extraction-256.webp?v=687b01a5b932",
+          "bytes": 16122
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iii_tier4_extraction-512.webp?v=091dc95decb0",
+          "bytes": 40828
+        }
+      }
+    },
+    "programme:mat_deepcrust_iii_strip_rigs": {
+      "source": "art-src/research-emblems-v1/sheets/materials-02.png#4",
+      "sourceSha256": "1951755ebf1fb1cbb68cdb7ddcb2cc7ea8405dbe11b9981af275a29d05cdce3a#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iii_strip_rigs-64.webp?v=07cfb3ded1d6",
+          "bytes": 2558
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iii_strip_rigs-128.webp?v=dd0a29e57e96",
+          "bytes": 6634
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iii_strip_rigs-256.webp?v=b1d174561ca9",
+          "bytes": 17194
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iii_strip_rigs-512.webp?v=c1712cd17354",
+          "bytes": 44598
+        }
+      }
+    },
+    "programme:mat_foundry_iii_tier4_processors": {
+      "source": "art-src/research-emblems-v1/sheets/materials-02.png#5",
+      "sourceSha256": "1951755ebf1fb1cbb68cdb7ddcb2cc7ea8405dbe11b9981af275a29d05cdce3a#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iii_tier4_processors-64.webp?v=7fecde34af04",
+          "bytes": 2530
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iii_tier4_processors-128.webp?v=16b4c8be58ee",
+          "bytes": 6038
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iii_tier4_processors-256.webp?v=fc219f8f6af0",
+          "bytes": 14944
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iii_tier4_processors-512.webp?v=3991928dce65",
+          "bytes": 37344
+        }
+      }
+    },
+    "programme:mat_foundry_iii_slag_reclamation": {
+      "source": "art-src/research-emblems-v1/sheets/materials-02.png#6",
+      "sourceSha256": "1951755ebf1fb1cbb68cdb7ddcb2cc7ea8405dbe11b9981af275a29d05cdce3a#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iii_slag_reclamation-64.webp?v=6284174c3890",
+          "bytes": 2442
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iii_slag_reclamation-128.webp?v=893fd9649529",
+          "bytes": 6092
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iii_slag_reclamation-256.webp?v=40b4f9639fc3",
+          "bytes": 14932
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iii_slag_reclamation-512.webp?v=bf20fe8f9d35",
+          "bytes": 38700
+        }
+      }
+    },
+    "programme:mat_deepcrust_iv_trace_refining": {
+      "source": "art-src/research-emblems-v1/sheets/materials-03.png#1",
+      "sourceSha256": "74475777db715a399c23cd8c610c76db8d8715e8a8d2d08f76cd81d762b2c22d#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iv_trace_refining-64.webp?v=6b6db038b289",
+          "bytes": 2346
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iv_trace_refining-128.webp?v=1e92d19425c1",
+          "bytes": 5698
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iv_trace_refining-256.webp?v=1b2e886eb4d5",
+          "bytes": 14378
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iv_trace_refining-512.webp?v=62ea294f1b7b",
+          "bytes": 35216
+        }
+      }
+    },
+    "programme:mat_deepcrust_iv_prospecting_charters": {
+      "source": "art-src/research-emblems-v1/sheets/materials-03.png#2",
+      "sourceSha256": "74475777db715a399c23cd8c610c76db8d8715e8a8d2d08f76cd81d762b2c22d#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iv_prospecting_charters-64.webp?v=b2fb86b1b184",
+          "bytes": 2406
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iv_prospecting_charters-128.webp?v=355d62170d65",
+          "bytes": 5894
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iv_prospecting_charters-256.webp?v=f744cd40ee59",
+          "bytes": 14822
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_iv_prospecting_charters-512.webp?v=e2a8b8fe5cea",
+          "bytes": 37186
+        }
+      }
+    },
+    "programme:mat_foundry_iv_orbital_yards": {
+      "source": "art-src/research-emblems-v1/sheets/materials-03.png#3",
+      "sourceSha256": "74475777db715a399c23cd8c610c76db8d8715e8a8d2d08f76cd81d762b2c22d#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_orbital_yards-64.webp?v=7e807b08d4fd",
+          "bytes": 2242
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_orbital_yards-128.webp?v=937e79bcc5a6",
+          "bytes": 5370
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_orbital_yards-256.webp?v=19aaf64d1826",
+          "bytes": 13374
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_orbital_yards-512.webp?v=6e013366a2c3",
+          "bytes": 33628
+        }
+      }
+    },
+    "programme:mat_foundry_iv_arcology_frames": {
+      "source": "art-src/research-emblems-v1/sheets/materials-03.png#4",
+      "sourceSha256": "74475777db715a399c23cd8c610c76db8d8715e8a8d2d08f76cd81d762b2c22d#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_arcology_frames-64.webp?v=3088b77e0c43",
+          "bytes": 2340
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_arcology_frames-128.webp?v=f8245172cb5c",
+          "bytes": 5738
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_arcology_frames-256.webp?v=b23253602de8",
+          "bytes": 14606
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_arcology_frames-512.webp?v=99c26271bd0b",
+          "bytes": 35310
+        }
+      }
+    },
+    "programme:mat_foundry_iv_fusion_reactors": {
+      "source": "art-src/research-emblems-v1/sheets/materials-03.png#5",
+      "sourceSha256": "74475777db715a399c23cd8c610c76db8d8715e8a8d2d08f76cd81d762b2c22d#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_fusion_reactors-64.webp?v=3a65aa4577f6",
+          "bytes": 2370
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_fusion_reactors-128.webp?v=1e0462484a9a",
+          "bytes": 6094
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_fusion_reactors-256.webp?v=a0a923a82270",
+          "bytes": 15448
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_iv_fusion_reactors-512.webp?v=0e68611ad9ab",
+          "bytes": 37934
+        }
+      }
+    },
+    "programme:mat_deepcrust_v_mantle_taps": {
+      "source": "art-src/research-emblems-v1/sheets/materials-03.png#6",
+      "sourceSha256": "74475777db715a399c23cd8c610c76db8d8715e8a8d2d08f76cd81d762b2c22d#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_v_mantle_taps-64.webp?v=9b395364f93b",
+          "bytes": 2398
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_v_mantle_taps-128.webp?v=65b56a195692",
+          "bytes": 6112
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_v_mantle_taps-256.webp?v=82b4834500eb",
+          "bytes": 16232
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_v_mantle_taps-512.webp?v=c9b3de41db67",
+          "bytes": 40528
+        }
+      }
+    },
+    "programme:mat_deepcrust_v_crown_vein": {
+      "source": "art-src/research-emblems-v1/sheets/materials-04.png#1",
+      "sourceSha256": "67d8654629d594b2d6937e8be5a89fd1a5b2b2c2fe1c7bf5bf74de30160baa9d#1/4",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_v_crown_vein-64.webp?v=57b33d630d0b",
+          "bytes": 2338
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_v_crown_vein-128.webp?v=8270d6af9d51",
+          "bytes": 5504
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_v_crown_vein-256.webp?v=0b95686d8ad2",
+          "bytes": 13872
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_deepcrust_v_crown_vein-512.webp?v=438e60d4e318",
+          "bytes": 38148
+        }
+      }
+    },
+    "programme:mat_foundry_v_flash_forges": {
+      "source": "art-src/research-emblems-v1/sheets/materials-04.png#2",
+      "sourceSha256": "67d8654629d594b2d6937e8be5a89fd1a5b2b2c2fe1c7bf5bf74de30160baa9d#2/4",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_v_flash_forges-64.webp?v=3cb81e5e302a",
+          "bytes": 2452
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_v_flash_forges-128.webp?v=58a722a0836f",
+          "bytes": 5936
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_v_flash_forges-256.webp?v=86cc2ac8bf31",
+          "bytes": 15090
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_v_flash_forges-512.webp?v=32630fcd3958",
+          "bytes": 40394
+        }
+      }
+    },
+    "programme:mat_foundry_v_crown_project": {
+      "source": "art-src/research-emblems-v1/sheets/materials-04.png#3",
+      "sourceSha256": "67d8654629d594b2d6937e8be5a89fd1a5b2b2c2fe1c7bf5bf74de30160baa9d#3/4",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_v_crown_project-64.webp?v=de6826a65598",
+          "bytes": 2380
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_v_crown_project-128.webp?v=e882cf52ca93",
+          "bytes": 5750
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_v_crown_project-256.webp?v=ec8577d07d50",
+          "bytes": 14246
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_v_crown_project-512.webp?v=a86155811bfb",
+          "bytes": 39502
+        }
+      }
+    },
+    "programme:mat_foundry_vi_antimatter_synthesis": {
+      "source": "art-src/research-emblems-v1/sheets/materials-04.png#4",
+      "sourceSha256": "67d8654629d594b2d6937e8be5a89fd1a5b2b2c2fe1c7bf5bf74de30160baa9d#4/4",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_vi_antimatter_synthesis-64.webp?v=48f497172a05",
+          "bytes": 2366
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_vi_antimatter_synthesis-128.webp?v=80201f3eae27",
+          "bytes": 5578
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_vi_antimatter_synthesis-256.webp?v=3b1e9e88e5eb",
+          "bytes": 14236
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/mat_foundry_vi_antimatter_synthesis-512.webp?v=d7f5c89d3e63",
+          "bytes": 39282
+        }
+      }
+    },
+    "programme:prop_drive_tuning": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-01.png#1",
+      "sourceSha256": "23a074c526706704ba7835ab05657409e1e61fc8c899d1d3cff8e2962dee3ce3#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_drive_tuning-64.webp?v=ea784037255a",
+          "bytes": 2164
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_drive_tuning-128.webp?v=715e16cc32f7",
+          "bytes": 5266
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_drive_tuning-256.webp?v=beb7c8190cae",
+          "bytes": 12800
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_drive_tuning-512.webp?v=ef8682beab45",
+          "bytes": 32232
+        }
+      }
+    },
+    "programme:prop_bunkerage": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-01.png#2",
+      "sourceSha256": "23a074c526706704ba7835ab05657409e1e61fc8c899d1d3cff8e2962dee3ce3#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_bunkerage-64.webp?v=643e7e4876d1",
+          "bytes": 2238
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_bunkerage-128.webp?v=3e4c9233f527",
+          "bytes": 5606
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_bunkerage-256.webp?v=a432c12189e1",
+          "bytes": 14048
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_bunkerage-512.webp?v=bc9ab9304e94",
+          "bytes": 35164
+        }
+      }
+    },
+    "programme:prop_freight_frames": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-01.png#3",
+      "sourceSha256": "23a074c526706704ba7835ab05657409e1e61fc8c899d1d3cff8e2962dee3ce3#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_freight_frames-64.webp?v=61057f51a531",
+          "bytes": 2254
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_freight_frames-128.webp?v=4c16043e2a5f",
+          "bytes": 5428
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_freight_frames-256.webp?v=7e89e463f2c8",
+          "bytes": 14654
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_freight_frames-512.webp?v=5ad42162b107",
+          "bytes": 37068
+        }
+      }
+    },
+    "programme:prop_expedition_iii_extended_tanks": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-01.png#4",
+      "sourceSha256": "23a074c526706704ba7835ab05657409e1e61fc8c899d1d3cff8e2962dee3ce3#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iii_extended_tanks-64.webp?v=2b6caafe77a8",
+          "bytes": 2122
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iii_extended_tanks-128.webp?v=d37d095c4ed2",
+          "bytes": 5406
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iii_extended_tanks-256.webp?v=7b40b27f14bb",
+          "bytes": 13340
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iii_extended_tanks-512.webp?v=5874bca3d625",
+          "bytes": 34270
+        }
+      }
+    },
+    "programme:prop_efficient_burns": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-01.png#5",
+      "sourceSha256": "23a074c526706704ba7835ab05657409e1e61fc8c899d1d3cff8e2962dee3ce3#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_efficient_burns-64.webp?v=756a4043687e",
+          "bytes": 2102
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_efficient_burns-128.webp?v=ac64af0a762d",
+          "bytes": 4996
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_efficient_burns-256.webp?v=4c341e10e16d",
+          "bytes": 11844
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_efficient_burns-512.webp?v=6229a71a561c",
+          "bytes": 29562
+        }
+      }
+    },
+    "programme:prop_heavy_lifters": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-01.png#6",
+      "sourceSha256": "23a074c526706704ba7835ab05657409e1e61fc8c899d1d3cff8e2962dee3ce3#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_heavy_lifters-64.webp?v=51c16a673cde",
+          "bytes": 2340
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_heavy_lifters-128.webp?v=22536c05dfb7",
+          "bytes": 6034
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_heavy_lifters-256.webp?v=0d4eb7922db9",
+          "bytes": 16332
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_heavy_lifters-512.webp?v=dbaf6e0e4a5a",
+          "bytes": 42446
+        }
+      }
+    },
+    "programme:prop_military_drives": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-02.png#1",
+      "sourceSha256": "4bf46115c1a849289930f8bc878b40be9f8117767365dc8ffe5357f8b167d5ce#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_military_drives-64.webp?v=0dc2e30ad0e4",
+          "bytes": 2024
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_military_drives-128.webp?v=b6ec34bb8607",
+          "bytes": 4860
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_military_drives-256.webp?v=5c71675d7454",
+          "bytes": 11974
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_military_drives-512.webp?v=314e931dab18",
+          "bytes": 29628
+        }
+      }
+    },
+    "programme:prop_line_fusion_freight": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-02.png#2",
+      "sourceSha256": "4bf46115c1a849289930f8bc878b40be9f8117767365dc8ffe5357f8b167d5ce#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_line_fusion_freight-64.webp?v=8f03f3d02432",
+          "bytes": 1984
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_line_fusion_freight-128.webp?v=c0eb30563f28",
+          "bytes": 4720
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_line_fusion_freight-256.webp?v=7e9d1e395625",
+          "bytes": 11582
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_line_fusion_freight-512.webp?v=4bac59917cef",
+          "bytes": 28392
+        }
+      }
+    },
+    "programme:prop_line_express_charters": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-02.png#3",
+      "sourceSha256": "4bf46115c1a849289930f8bc878b40be9f8117767365dc8ffe5357f8b167d5ce#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_line_express_charters-64.webp?v=4a0bf0b16901",
+          "bytes": 2172
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_line_express_charters-128.webp?v=89214747d971",
+          "bytes": 5338
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_line_express_charters-256.webp?v=5a1ee8e9f639",
+          "bytes": 13850
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_line_express_charters-512.webp?v=32b35a111776",
+          "bytes": 34266
+        }
+      }
+    },
+    "programme:prop_expedition_iii_torch_regime": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-02.png#4",
+      "sourceSha256": "4bf46115c1a849289930f8bc878b40be9f8117767365dc8ffe5357f8b167d5ce#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iii_torch_regime-64.webp?v=125e141df57e",
+          "bytes": 2084
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iii_torch_regime-128.webp?v=7096c82fc6f8",
+          "bytes": 5028
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iii_torch_regime-256.webp?v=66aa0a5be495",
+          "bytes": 12138
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iii_torch_regime-512.webp?v=659bf78155f4",
+          "bytes": 30106
+        }
+      }
+    },
+    "programme:prop_line_drop_berths": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-02.png#5",
+      "sourceSha256": "4bf46115c1a849289930f8bc878b40be9f8117767365dc8ffe5357f8b167d5ce#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_line_drop_berths-64.webp?v=3e82ae122404",
+          "bytes": 2296
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_line_drop_berths-128.webp?v=f3930bb31dff",
+          "bytes": 5438
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_line_drop_berths-256.webp?v=5335e757773e",
+          "bytes": 13312
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_line_drop_berths-512.webp?v=5dfb3dc99ce1",
+          "bytes": 32334
+        }
+      }
+    },
+    "programme:prop_line_bulk_charters": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-02.png#6",
+      "sourceSha256": "4bf46115c1a849289930f8bc878b40be9f8117767365dc8ffe5357f8b167d5ce#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_line_bulk_charters-64.webp?v=3547571a2d7a",
+          "bytes": 2354
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_line_bulk_charters-128.webp?v=b420ddca253c",
+          "bytes": 5998
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_line_bulk_charters-256.webp?v=0902cbeb5ce8",
+          "bytes": 16034
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_line_bulk_charters-512.webp?v=1f00c7313654",
+          "bytes": 39442
+        }
+      }
+    },
+    "programme:prop_expedition_iv_fleet_tenders": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-03.png#1",
+      "sourceSha256": "d113be7cbb23f171ad5400087f4c77dafef2d0484bc8adb04c8a290144a7cd6a#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iv_fleet_tenders-64.webp?v=5681d0e5d28c",
+          "bytes": 2252
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iv_fleet_tenders-128.webp?v=0e58a2392431",
+          "bytes": 5306
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iv_fleet_tenders-256.webp?v=5490d849d164",
+          "bytes": 13270
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iv_fleet_tenders-512.webp?v=2f7ae7337338",
+          "bytes": 33614
+        }
+      }
+    },
+    "programme:prop_expedition_iv_long_patrol": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-03.png#2",
+      "sourceSha256": "d113be7cbb23f171ad5400087f4c77dafef2d0484bc8adb04c8a290144a7cd6a#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iv_long_patrol-64.webp?v=64603c13aab1",
+          "bytes": 2006
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iv_long_patrol-128.webp?v=d3b78fc7cb6f",
+          "bytes": 4662
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iv_long_patrol-256.webp?v=e3d1a2baccb6",
+          "bytes": 10994
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_iv_long_patrol-512.webp?v=e9975a6edef8",
+          "bytes": 27532
+        }
+      }
+    },
+    "programme:prop_line_autonomous_freight": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-03.png#3",
+      "sourceSha256": "d113be7cbb23f171ad5400087f4c77dafef2d0484bc8adb04c8a290144a7cd6a#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_line_autonomous_freight-64.webp?v=fe65e63722ef",
+          "bytes": 2422
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_line_autonomous_freight-128.webp?v=40d41dfb8143",
+          "bytes": 5894
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_line_autonomous_freight-256.webp?v=40b0aa0aca71",
+          "bytes": 15326
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_line_autonomous_freight-512.webp?v=a0babf79ccf6",
+          "bytes": 38618
+        }
+      }
+    },
+    "programme:prop_line_mass_streams": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-03.png#4",
+      "sourceSha256": "d113be7cbb23f171ad5400087f4c77dafef2d0484bc8adb04c8a290144a7cd6a#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_line_mass_streams-64.webp?v=b4d2183caa06",
+          "bytes": 1848
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_line_mass_streams-128.webp?v=41cc289bb5a7",
+          "bytes": 4240
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_line_mass_streams-256.webp?v=0154698e4512",
+          "bytes": 10226
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_line_mass_streams-512.webp?v=5ca4db44a413",
+          "bytes": 25754
+        }
+      }
+    },
+    "programme:prop_expedition_v_ramscoop": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-03.png#5",
+      "sourceSha256": "d113be7cbb23f171ad5400087f4c77dafef2d0484bc8adb04c8a290144a7cd6a#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_v_ramscoop-64.webp?v=8cc2ba758b21",
+          "bytes": 2364
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_v_ramscoop-128.webp?v=185dd98711a2",
+          "bytes": 5542
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_v_ramscoop-256.webp?v=fa50e3fc60d3",
+          "bytes": 14242
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_v_ramscoop-512.webp?v=2684185315d7",
+          "bytes": 37070
+        }
+      }
+    },
+    "programme:prop_expedition_v_underway_refit": {
+      "source": "art-src/research-emblems-v1/sheets/propulsion-03.png#6",
+      "sourceSha256": "d113be7cbb23f171ad5400087f4c77dafef2d0484bc8adb04c8a290144a7cd6a#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_v_underway_refit-64.webp?v=cc69e77dc394",
+          "bytes": 2048
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_v_underway_refit-128.webp?v=54a40ba7ecc3",
+          "bytes": 4950
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_v_underway_refit-256.webp?v=fa81d6cbec54",
+          "bytes": 12662
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/prop_expedition_v_underway_refit-512.webp?v=c5c5b1f431bd",
+          "bytes": 32592
+        }
+      }
+    },
+    "programme:weap_fire_control": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-01.png#1",
+      "sourceSha256": "113e806fc60f516960e4fecfd369550cfa7f07cef5a7522bed2e5aca37d39e99#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_fire_control-64.webp?v=700e08bd088c",
+          "bytes": 2376
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_fire_control-128.webp?v=890f95bd1a75",
+          "bytes": 5856
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_fire_control-256.webp?v=9a2d24f9e61f",
+          "bytes": 14976
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_fire_control-512.webp?v=75808758c135",
+          "bytes": 38048
+        }
+      }
+    },
+    "programme:weap_magnetic_accelerators": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-01.png#2",
+      "sourceSha256": "113e806fc60f516960e4fecfd369550cfa7f07cef5a7522bed2e5aca37d39e99#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_magnetic_accelerators-64.webp?v=e34327477abc",
+          "bytes": 2192
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_magnetic_accelerators-128.webp?v=7de25c3e82b1",
+          "bytes": 5334
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_magnetic_accelerators-256.webp?v=e9836dd7175d",
+          "bytes": 13088
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_magnetic_accelerators-512.webp?v=03b390c5cc83",
+          "bytes": 34288
+        }
+      }
+    },
+    "programme:weap_warhead_yields": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-01.png#3",
+      "sourceSha256": "113e806fc60f516960e4fecfd369550cfa7f07cef5a7522bed2e5aca37d39e99#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_warhead_yields-64.webp?v=ac2bf8f77d65",
+          "bytes": 2230
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_warhead_yields-128.webp?v=49bdd010f4ad",
+          "bytes": 5368
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_warhead_yields-256.webp?v=5be00cb4e165",
+          "bytes": 13428
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_warhead_yields-512.webp?v=280bbd09a7e4",
+          "bytes": 34402
+        }
+      }
+    },
+    "programme:weap_orbital_batteries": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-01.png#4",
+      "sourceSha256": "113e806fc60f516960e4fecfd369550cfa7f07cef5a7522bed2e5aca37d39e99#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_orbital_batteries-64.webp?v=dd3e78ab101a",
+          "bytes": 2452
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_orbital_batteries-128.webp?v=72692a4a27f2",
+          "bytes": 6270
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_orbital_batteries-256.webp?v=9a465ae198e4",
+          "bytes": 16382
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_orbital_batteries-512.webp?v=53bcec2c552c",
+          "bytes": 42264
+        }
+      }
+    },
+    "programme:weap_hardened_magazines": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-01.png#5",
+      "sourceSha256": "113e806fc60f516960e4fecfd369550cfa7f07cef5a7522bed2e5aca37d39e99#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_hardened_magazines-64.webp?v=a924fabed035",
+          "bytes": 2316
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_hardened_magazines-128.webp?v=689eda7ed014",
+          "bytes": 5922
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_hardened_magazines-256.webp?v=886177ed6379",
+          "bytes": 15114
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_hardened_magazines-512.webp?v=8aa7cc7d33e0",
+          "bytes": 39106
+        }
+      }
+    },
+    "programme:weap_munitions_lines": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-01.png#6",
+      "sourceSha256": "113e806fc60f516960e4fecfd369550cfa7f07cef5a7522bed2e5aca37d39e99#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_munitions_lines-64.webp?v=8fec74640393",
+          "bytes": 2378
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_munitions_lines-128.webp?v=9a0d075530e0",
+          "bytes": 5778
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_munitions_lines-256.webp?v=d4d0b9b76ae1",
+          "bytes": 14768
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_munitions_lines-512.webp?v=73bf9607c13e",
+          "bytes": 36808
+        }
+      }
+    },
+    "programme:weap_fire_discipline": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-02.png#1",
+      "sourceSha256": "b04ad0b9fb89018cfeb37703ec7822f705e64fa369d1e9cb178ea179ce2c4786#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_fire_discipline-64.webp?v=c95864230e5e",
+          "bytes": 2286
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_fire_discipline-128.webp?v=9044fa54df00",
+          "bytes": 5410
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_fire_discipline-256.webp?v=392479516fd4",
+          "bytes": 13400
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_fire_discipline-512.webp?v=1d7207a7015b",
+          "bytes": 32712
+        }
+      }
+    },
+    "programme:weap_strike_iii_lance_array": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-02.png#2",
+      "sourceSha256": "b04ad0b9fb89018cfeb37703ec7822f705e64fa369d1e9cb178ea179ce2c4786#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iii_lance_array-64.webp?v=befe09c7806e",
+          "bytes": 2154
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iii_lance_array-128.webp?v=de10f0dca1b8",
+          "bytes": 5092
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iii_lance_array-256.webp?v=0072626f613b",
+          "bytes": 12694
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iii_lance_array-512.webp?v=54c70b1ebf25",
+          "bytes": 30870
+        }
+      }
+    },
+    "programme:weap_strike_iii_breaching_ordnance": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-02.png#3",
+      "sourceSha256": "b04ad0b9fb89018cfeb37703ec7822f705e64fa369d1e9cb178ea179ce2c4786#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iii_breaching_ordnance-64.webp?v=34bc0e1a613e",
+          "bytes": 2286
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iii_breaching_ordnance-128.webp?v=52c384c7072c",
+          "bytes": 5486
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iii_breaching_ordnance-256.webp?v=085d0105ef34",
+          "bytes": 13864
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iii_breaching_ordnance-512.webp?v=359b6d4a8b0b",
+          "bytes": 32948
+        }
+      }
+    },
+    "programme:weap_cm_iii_ablative_refits": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-02.png#5",
+      "sourceSha256": "b04ad0b9fb89018cfeb37703ec7822f705e64fa369d1e9cb178ea179ce2c4786#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_ablative_refits-64.webp?v=8ad722769ca7",
+          "bytes": 2260
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_ablative_refits-128.webp?v=616f7f81e230",
+          "bytes": 5400
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_ablative_refits-256.webp?v=ad72ee266d06",
+          "bytes": 13038
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_ablative_refits-512.webp?v=8125a3fa752f",
+          "bytes": 32282
+        }
+      }
+    },
+    "programme:weap_cm_iii_defense_stations": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-02.png#6",
+      "sourceSha256": "b04ad0b9fb89018cfeb37703ec7822f705e64fa369d1e9cb178ea179ce2c4786#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_defense_stations-64.webp?v=6ab595d8def6",
+          "bytes": 2304
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_defense_stations-128.webp?v=c4e41c50c8be",
+          "bytes": 5878
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_defense_stations-256.webp?v=6f74cd32e2b7",
+          "bytes": 15510
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iii_defense_stations-512.webp?v=6fd5cea56584",
+          "bytes": 38302
+        }
+      }
+    },
+    "programme:weap_strike_iv_platform_lances": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-03.png#1",
+      "sourceSha256": "edeea426670d603ffc566d6a52db0c5c3a90f5a19c2be494fce0a67737e8aad2#1/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iv_platform_lances-64.webp?v=142916e07a61",
+          "bytes": 2180
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iv_platform_lances-128.webp?v=c64f3503845c",
+          "bytes": 5256
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iv_platform_lances-256.webp?v=26d1e1989f7e",
+          "bytes": 12802
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iv_platform_lances-512.webp?v=df87a4a7c8c9",
+          "bytes": 33014
+        }
+      }
+    },
+    "programme:weap_strike_iv_penetrator_slugs": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-03.png#2",
+      "sourceSha256": "edeea426670d603ffc566d6a52db0c5c3a90f5a19c2be494fce0a67737e8aad2#2/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iv_penetrator_slugs-64.webp?v=9bddde8addef",
+          "bytes": 2024
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iv_penetrator_slugs-128.webp?v=0e7a63f9e28b",
+          "bytes": 4672
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iv_penetrator_slugs-256.webp?v=b4e2934b4ade",
+          "bytes": 11282
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_iv_penetrator_slugs-512.webp?v=073ebba9bf52",
+          "bytes": 27846
+        }
+      }
+    },
+    "programme:weap_cm_iv_platform_netfire": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-03.png#3",
+      "sourceSha256": "edeea426670d603ffc566d6a52db0c5c3a90f5a19c2be494fce0a67737e8aad2#3/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_platform_netfire-64.webp?v=103e51d9c174",
+          "bytes": 2292
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_platform_netfire-128.webp?v=2c921adef96d",
+          "bytes": 5570
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_platform_netfire-256.webp?v=d2df54ed1aee",
+          "bytes": 13946
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_platform_netfire-512.webp?v=8df5ef277d62",
+          "bytes": 33946
+        }
+      }
+    },
+    "programme:weap_cm_iv_spall_liners": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-03.png#4",
+      "sourceSha256": "edeea426670d603ffc566d6a52db0c5c3a90f5a19c2be494fce0a67737e8aad2#4/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_spall_liners-64.webp?v=0ef15e4439c4",
+          "bytes": 2324
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_spall_liners-128.webp?v=531920ca0ce0",
+          "bytes": 5622
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_spall_liners-256.webp?v=87bf076749b6",
+          "bytes": 14548
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_iv_spall_liners-512.webp?v=9fd14d347704",
+          "bytes": 36886
+        }
+      }
+    },
+    "programme:weap_strike_v_first_strike": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-03.png#5",
+      "sourceSha256": "edeea426670d603ffc566d6a52db0c5c3a90f5a19c2be494fce0a67737e8aad2#5/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_v_first_strike-64.webp?v=6c6e4a5790d2",
+          "bytes": 2328
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_v_first_strike-128.webp?v=d7e83edf5029",
+          "bytes": 5724
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_v_first_strike-256.webp?v=60fe46e0ff6d",
+          "bytes": 14692
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_v_first_strike-512.webp?v=1470ea3ae38d",
+          "bytes": 37962
+        }
+      }
+    },
+    "programme:weap_strike_v_overpressure": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-03.png#6",
+      "sourceSha256": "edeea426670d603ffc566d6a52db0c5c3a90f5a19c2be494fce0a67737e8aad2#6/6",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_v_overpressure-64.webp?v=0827f3f9618a",
+          "bytes": 2208
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_v_overpressure-128.webp?v=20196f315d79",
+          "bytes": 5490
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_v_overpressure-256.webp?v=24f0d60b7efb",
+          "bytes": 13540
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_strike_v_overpressure-512.webp?v=5f931233a51d",
+          "bytes": 34904
+        }
+      }
+    },
+    "programme:weap_cm_v_grand_batteries": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-04.png#1",
+      "sourceSha256": "62b8936d6176582f58ee71562c44e13b12297736a6b29c611d85efae24a94eea#1/3",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_grand_batteries-64.webp?v=336b8debfdea",
+          "bytes": 2414
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_grand_batteries-128.webp?v=0fa06e96492e",
+          "bytes": 6238
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_grand_batteries-256.webp?v=da2a66fac7f9",
+          "bytes": 17054
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_grand_batteries-512.webp?v=7610a9b0a6f4",
+          "bytes": 46356
+        }
+      }
+    },
+    "programme:weap_cm_v_star_fortress": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-04.png#2",
+      "sourceSha256": "62b8936d6176582f58ee71562c44e13b12297736a6b29c611d85efae24a94eea#2/3",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_star_fortress-64.webp?v=e358f26c0521",
+          "bytes": 2418
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_star_fortress-128.webp?v=e92a85e66ea5",
+          "bytes": 6378
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_star_fortress-256.webp?v=085f0c592438",
+          "bytes": 16566
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_star_fortress-512.webp?v=facb05aaea5a",
+          "bytes": 44754
+        }
+      }
+    },
+    "programme:weap_cm_v_citadel_compartments": {
+      "source": "art-src/research-emblems-v1/sheets/weapons-04.png#3",
+      "sourceSha256": "62b8936d6176582f58ee71562c44e13b12297736a6b29c611d85efae24a94eea#3/3",
+      "levels": {
+        "64": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_citadel_compartments-64.webp?v=b5d9b115ea7d",
+          "bytes": 2082
+        },
+        "128": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_citadel_compartments-128.webp?v=8dab19a17b1d",
+          "bytes": 4978
+        },
+        "256": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_citadel_compartments-256.webp?v=9270f8c806e5",
+          "bytes": 12658
+        },
+        "512": {
+          "url": "/art/derived/research/v1/programmes/weap_cm_v_citadel_compartments-512.webp?v=1975b8ba7884",
+          "bytes": 33258
+        }
+      }
+    }
+  }
+}

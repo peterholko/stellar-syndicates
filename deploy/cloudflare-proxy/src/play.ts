@@ -1,7 +1,7 @@
 // §front-door (docs/front-door.md): play.stellarsyndicates.com, the game
 // server's own address. Only the game socket, /status and /healthz reach the
-// VPS through the tunnel; its root sends visitors to the front page. www and
-// the old surviveperilous address redirect to the front page too.
+// VPS through the tunnel; its root sends visitors to the front page. www
+// redirects to the front page too.
 import { toOrigin } from "./origin";
 
 const FRONT = "https://stellarsyndicates.com";

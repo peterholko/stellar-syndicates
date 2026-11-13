@@ -13,11 +13,12 @@ import { buildStationArt } from "./build-station-art.mjs";
 import { buildCommandCenterArt } from "./build-command-center-art.mjs";
 import { buildPlanetShipyardArt } from "./build-planet-shipyard-art.mjs";
 import { buildPlanetSurfaceStructureArt } from "./build-planet-surface-structure-art.mjs";
-import { buildFoundingStoryArt, buildPirateCrewArt, buildStoryEventArt, buildTraderPortraitArt } from "./build-founding-story-art.mjs";
+import { buildAdvisorPortraitArt, buildFoundingStoryArt, buildPirateCrewArt, buildStoryEventArt, buildTraderPortraitArt } from "./build-founding-story-art.mjs";
 import { buildAsteroidQuarryArt } from "./build-asteroid-quarry-art.mjs";
 import { buildSignalArt } from "./build-signal-art.mjs";
 import { buildShipyardInteriorArt } from "./build-shipyard-interior-art.mjs";
 import { buildSeasonArt } from "./build-season-art.mjs";
+import { buildResearchArt } from "./build-research-art.mjs";
 
 const clientRoot = fileURLToPath(new URL("..", import.meta.url));
 const publicArt = path.join(clientRoot, "public", "art");
@@ -266,7 +267,7 @@ async function buildResourceIcons() {
 // prompt (docs/resource-icon-prompts.md). Each is trimmed to its artwork and
 // re-centred at one fill, so a stockpile reads as one set whatever each
 // master's margins. A later folder's master replaces an earlier one's.
-const GOODS_SOURCES = ["ores-2026-09-16", "fuel-goods-2026-10-12", "goods-2026-10-24"];
+const GOODS_SOURCES = ["ores-2026-09-16", "fuel-goods-2026-10-12", "goods-2026-10-24", "goods-2026-11-07", "goods-2026-11-08"];
 const GOODS_FILL = 0.9;
 async function buildGoodsIcons() {
   const outputDir = path.join(publicArt, "ui_icons", "resource", "goods-v1");
@@ -416,7 +417,7 @@ async function buildNebulas() {
   return { sources: sources.length, written };
 }
 
-const [captains, lore, pwa, structures, nebulas, login, loginBanner, resources, goods, stars, ships, planets, planetWorkbench, structureTiers, foundingStory, authority, commandCenters, planetShipyards, surfaceStructures, stations, hub, glyphs, beltChunks, storyEvents, traderPortraits, pirateCrew, quarryArt, signals, shipyardInteriors, seasonArt, hubVisit, newsEmblems, battleAsteroids] = await Promise.all([
+const [captains, lore, pwa, structures, nebulas, login, loginBanner, resources, goods, stars, ships, planets, planetWorkbench, structureTiers, foundingStory, authority, commandCenters, planetShipyards, surfaceStructures, stations, hub, glyphs, beltChunks, storyEvents, traderPortraits, pirateCrew, advisorPortraits, quarryArt, signals, shipyardInteriors, seasonArt, hubVisit, newsEmblems, battleAsteroids, researchArt] = await Promise.all([
   buildCaptains(), buildLore(), buildPwaIcons(), buildStructureIcons(), buildNebulas(), buildLoginBackgrounds(), buildLoginBanner(),
   buildResourceIcons(), buildGoodsIcons(), buildStarDerivatives(), buildShipDerivatives(), buildPlanetDerivatives(),
   buildPlanetWorkbenchArt(), buildStructureTierArt(), buildFoundingStoryArt(), buildAuthoritySeal(),
@@ -430,6 +431,7 @@ const [captains, lore, pwa, structures, nebulas, login, loginBanner, resources, 
   buildStoryEventArt(),
   buildTraderPortraitArt(),
   buildPirateCrewArt(),
+  buildAdvisorPortraitArt(),
   buildAsteroidQuarryArt(),
   buildSignalArt(),
   buildShipyardInteriorArt(),
@@ -437,6 +439,7 @@ const [captains, lore, pwa, structures, nebulas, login, loginBanner, resources, 
   buildHubVisitArt(),
   buildNewsEmblems(),
   buildBattleAsteroids(),
+  buildResearchArt(),
 ]);
 console.log(
   `art derivatives: ${captains.sources} captain portraits (${captains.written} written), ` +
@@ -461,15 +464,17 @@ console.log(
   `${storyEvents.sources} story events, ${storyEvents.pending} awaiting art (${storyEvents.written} written), ` +
   `${traderPortraits.sources} trader portraits, ${traderPortraits.pending} awaiting art (${traderPortraits.written} written), ` +
   `${pirateCrew.sources} pirate portraits, ${pirateCrew.pending} awaiting art (${pirateCrew.written} written), ` +
+  `${advisorPortraits.sources} charter advisor portraits, ${advisorPortraits.pending} awaiting art (${advisorPortraits.written} written), ` +
   `${quarryArt.sources} asteroid quarry tiers, ${quarryArt.pending} awaiting art (${quarryArt.written} written), ` +
   `${shipyardInteriors.sources} shipyard interiors (${shipyardInteriors.written} written), ` +
   `${seasonArt.sources} season gear/gate/pirate masters (${seasonArt.written} written), ` +
   `Market Hub arrival (${hubVisit.written} written), ` +
   `${newsEmblems.sources} news emblems (${newsEmblems.written} written), ` +
-  `${signals.sources} signal paintings, ${signals.pending} awaiting art (${signals.written} written), ` +
+  `${signals.sources} signal paintings, ${signals.pending} awaiting art; ${signals.aftermath} aftermath paintings, ${signals.aftermathPending} awaiting art (${signals.written} written), ` +
   `${authority.sources} Authority seal (${authority.written} written), ` +
   `hub station ${(hub.glbBytes / 1e6).toFixed(2)} MB (${hub.written} written), ` +
   `${glyphs.glyphs} map glyphs (${glyphs.written} written), ` +
   `${beltChunks.sources} belt chunk types (${beltChunks.written} written), ` +
-  `${battleAsteroids.sources} battle asteroid sheets (${battleAsteroids.written} written)`,
+  `${battleAsteroids.sources} battle asteroid sheets (${battleAsteroids.written} written), ` +
+  `${researchArt.fields} research fields + ${researchArt.programmes}/${researchArt.known} programme emblems (${researchArt.written} written)`,
 );

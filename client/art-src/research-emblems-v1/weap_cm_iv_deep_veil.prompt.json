@@ -1,0 +1,42 @@
+{
+  "id": "weap_cm_iv_deep_veil",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept. Asset type: one transparent research emblem for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw ONE new emblem. Do not copy any of the six motifs.\nEmblem: Deep Veil, a Weapons research programme.\nMotif: The same aurora curtain thickened into three layered bands over a curved planet horizon; one heavy blunt troop transport pushes down through it nose first, its hull edges glowing where the curtain bites, a red flash at its flank.\nBadge: exactly Image 1's badge: a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. The motif sits inside the rim, centred, about 70% of the face's width. Nothing crosses the rim.\nColour: silver metal with a signal-red accent and a small orange-yellow flash; the aurora curtain alone is a pale green-cyan glow (#7DF9C6). Everything else stays in the family's navy, charcoal and silver.\nFraming: square 1:1 canvas, 1254 x 1254 pixels. The hexagon is centred: its top and bottom points about 6% from the canvas edges (88% of the canvas height), its flat sides about 80% of the canvas width apart.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. One clear motif that still reads at 48 px: a few large forms, restrained small detail.\nBackground: genuinely transparent PNG with real alpha outside the hexagon. No drop shadow, outer glow, grey backdrop or vignette around the badge.\nConstraints: exactly one badge. No text, letters, numbers, Roman numerals, labels, logos, watermark, second badge, frame or UI.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png"
+  ],
+  "reference_sha256": {
+    "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+  },
+  "transparent_background": true,
+  "initial_generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-937d321f-812d-4802-942a-41cc3567b8b8.png",
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-937d321f-812d-4802-942a-41cc3567b8b8.png",
+  "file": "weap_cm_iv_deep_veil.png",
+  "source_brief": "docs/veil-art-prompt.md",
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 747226,
+    "partiallyTransparentPixels": 824813,
+    "solidBounds": {
+      "left": 139,
+      "top": 68,
+      "right": 1113,
+      "bottom": 1180
+    },
+    "solidWidthFraction": 0.777511961722488,
+    "lowestSolidFraction": 0.9417862838915471,
+    "sha256": "45a031d7d010e89084cc64f6bb1964441a8d9a4eb32bf620746f5c3cab7c18fd",
+    "nativeBytesPreserved": true,
+    "visualCheck": {
+      "auroraGreenCyan": true,
+      "redOnlyOnImpactObject": true,
+      "oneBadge": true,
+      "noText": true
+    }
+  },
+  "edits": []
+}

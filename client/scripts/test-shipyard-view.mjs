@@ -48,7 +48,8 @@ assert.equal(scene.isYardKind("garrison"), false);
 
 // The yard's line: building hulls first, the served order kept, progress from the served clock.
 deps["./construction"] = deps["../../core/derive/construction"] = compile("core/derive/construction.ts");
-deps["./fleet"] = { shipKindLabel: (kind) => ({ raider: "Interceptor", tiny_freighter: "Tiny Freighter", destroyer: "Destroyer" })[kind] ?? kind };
+deps["./fleet"] = { goodKnown: () => true, shipKindLabel: (kind) => ({ raider: "Interceptor", tiny_freighter: "Tiny Freighter", destroyer: "Destroyer" })[kind] ?? kind,
+  dockedAtSystem: (g, id) => g.docked === id };
 deps["./market"] = market;
 deps["./format"] = { fmtBuildDur: (seconds) => `${Math.round(seconds)}s` };
 deps["./station"] ??= compile("core/derive/station.ts");
@@ -142,8 +143,11 @@ assert.match(root.innerHTML, /kind="raider" yard="shipyard" progress="1\.0000"><
 assert.doesNotMatch(root.innerHTML, /Sending|role="progressbar"/);
 
 // Wiring: queueing opens it in both shells; hull lines open it; the plates are derived.
+// Peter (Nov 9 2026: "Click Queue 1 Ship should not zoom out of the planetary
+// view"): queued from a planet's own builder, the planet stays (the hull shows
+// in its ground Shipyard); from the System View's builder, it opens.
 const empire = src("shell/deck/empire.ts");
-assert.match(empire, /this\.closeBuildWorkbench\(route\);\n\s*this\.hooks\.go\(\{ name: "shipyard", params: \{ id: dynamic\.id, systemLabel: system\.name \}, query: \{ kind, sent: String\(liveSimTime\(\)\) \} \}\);/);
+assert.match(empire, /this\.closeBuildWorkbench\(route\);\n\s*if \(!overPlanet\) this\.hooks\.go\(\{ name: "shipyard", params: \{ id: dynamic\.id, systemLabel: system\.name \}, query: \{ kind, sent: String\(liveSimTime\(\)\) \} \}\);/);
 assert.match(empire, /<small>Hulls in the yard<\/small>\$\{hulls\.map\(\(job\) =>\n\s*`<button type="button" data-deck-act="open-shipyard"/);
 assert.match(src("shell/mobile/parity.ts"), /this\.hooks\.openSheet\(\{ id: "yard", props: \{ systemId: system, kind: this\.selectedHull, sent: liveSimTime\(\) \} \}\);/);
 assert.match(src("shell/deck/workspace.ts"), /"signals", "shipyard"[,\]]/, "a pop-out over the map");
@@ -152,5 +156,20 @@ assert.match(src("shell/mobile/parity.ts"), /<ship-model-preview kind="\$\{hull\
 assert.match(src("shell/mobile/parity.ts"), /\$\{view\}\$\{info\}\$\{bar\}\$\{hullStatsHtml\(hull\)\}\$\{build\}/, "and under the mobile yard's bay");
 assert.match(readFileSync(new URL("./build-art-derivatives.mjs", import.meta.url), "utf8"), /buildShipyardInteriorArt\(\)/);
 assert.match(src("ship-construction-runtime.ts"), /localClippingEnabled = true/, "the cut is a clipping plane");
+
+// §yard-repair (Peter, Nov 5 2026): a staffed Shipyard's world mends what is
+// docked in its system; each hull in for repairs is a yard entry, drawn whole.
+{
+  const home = { id: "home", builds: [], assignments: [{ body_id: 2, structure: "shipyard", workers: 1, specialists: {} }],
+    bodies: [{ id: 1, name: "Freya I", structures: {} }, { id: 2, name: "Freya II", structures: { shipyard: 1 } }] };
+  const ghosts = [{ id: "i1", kind: "raider", own: true, docked: "home", damage: 0.36 }, { id: "f1", kind: "tiny_freighter", own: true, docked: "home", damage: 0 },
+    { id: "x1", kind: "raider", own: false, docked: "home", damage: 0.5 }];
+  assert.equal(yard.repairYardBody(home), 2, "the world with the staffed yard");
+  const repairs = JSON.parse(JSON.stringify(yard.yardRepairs(ghosts, home)));
+  assert.deepEqual(repairs.map((r) => [r.key, r.kind, r.title, r.where, r.status, r.repair.fleet]),
+    [["repair:i1", "raider", "Interceptor", "Repairing · Freya II", "64% hull", "i1"]], "only your hurt hulls");
+  assert.ok(Math.abs(repairs[0].progress - 0.64) < 1e-9, "its bar is the hull it has back");
+  assert.equal(yard.yardRepairs(ghosts, { ...home, assignments: [] }).length, 0, "an unstaffed yard mends nothing");
+}
 
 console.log("Shipyard view: scene data and plates, hull fills, the yard's line, the Deck pop-out (tabs, sending, refused, launched, empty) and the wiring in both shells passed.");

@@ -1,6 +1,6 @@
 import { triggerLabel } from "../../core/derive/format";
 import { allySystems, endpointLabel, ownedSystems } from "../../core/derive/geo";
-import { COMMODITIES } from "../../core/derive/market";
+import { COMMODITIES, knownCommodities } from "../../core/derive/market";
 import { commodityIcon, icon, label } from "../../icons";
 import type {
   Commodity,
@@ -185,7 +185,7 @@ export class DeckPolicyRoutes {
       + option("home", "Home system", this.destination === "home")
       + owned.map((system) => option(system.id, `${system.name} · colony`, system.id === this.destination)).join("")
       + allies.map((system) => option(system.id, `${system.name} · ally aid`, system.id === this.destination)).join("");
-    const commodityOptions = COMMODITIES.map((commodity) => option(commodity, label(commodity), commodity === this.commodity)).join("");
+    const commodityOptions = knownCommodities().map((commodity) => option(commodity, label(commodity), commodity === this.commodity)).join("");
     const rows = this.ctx.state.standingOrders.map((order) => this.standingOrderHtml(order)).join("");
     const amountLabel = this.triggerKind === "above_threshold" ? "Source threshold"
       : this.triggerKind === "percent_surplus" ? "Surplus percent"

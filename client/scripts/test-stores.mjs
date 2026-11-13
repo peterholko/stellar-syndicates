@@ -17,13 +17,20 @@ function compile(path, globals = {}) {
   } }).outputText, { exports, require: (name) => deps[name] ?? {}, localStorage, ...globals });
   return exports;
 }
+deps["./fleet"] = { goodKnown: () => true, ...(deps["./fleet"] ?? {}) }; // §reactors-drives: every good known in this fixture
 const s = deps["../../core/derive/stores"] = compile("core/derive/stores.ts");
 const copy = (value) => JSON.parse(JSON.stringify(value));
 
 // Every good is listed once, in one group.
 const commodities = [...src("core/derive/market.ts").match(/export const COMMODITIES: Commodity\[\] = \[([\s\S]*?)\];/)[1].matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1]);
+// §modules-as-goods: COMMODITIES lists the module kinds (equipment.ts MODULES).
+const modules = [...src("core/derive/equipment.ts").matchAll(/\{ kind: "([a-z_]+)", name:/g)].map((m) => m[1]);
+assert.deepEqual([...modules].sort(), commodities.filter((c) => modules.includes(c)).sort(), "every module is a listed good");
 const grouped = s.STORE_GROUPS.flatMap((group) => group.goods);
-assert.equal(commodities.length, 34);
+assert.equal(commodities.length, 82, "§reactors-drives: the reactors, drives, kit parts and munitions join the stores; §hull-ladder the heavy and capital parts; §modules-as-goods the 17 modules");
+// §goods-tabs: every group sits on a tab, and the modules' groups on Modules.
+assert.ok(s.STORE_GROUPS.every((group) => ["resources", "parts", "modules"].includes(group.tab)));
+assert.deepEqual(copy(s.STORE_GROUPS.filter((group) => group.tab === "modules").flatMap((group) => group.goods)).sort(), [...modules].sort());
 assert.deepEqual([...grouped].sort(), [...commodities].sort(), "the groups hold every good exactly once");
 
 // Reports every 2 sim seconds over five minutes, whole units like the View.
@@ -92,6 +99,11 @@ store = s.storageState(system({}, { storage_used: 920 }));
 assert.deepEqual([store.warn, store.full], [true, false]);
 store = s.storageState(system({}, { storage_used: 1_000 }));
 assert.deepEqual([store.full, store.fullIn], [true, null]);
+// §storage-full (Nov 3 2026): within a unit of the cap is full, as the guide
+// counts it; food eaten keeps a full store a fraction under its cap.
+store = s.storageState(system({}, { storage_used: 999.4 }));
+assert.deepEqual([store.full, store.fullIn], [true, null], "999/1,000 reads full");
+assert.equal(s.storageState(system({}, { storage_used: 998 })).full, false);
 
 // Focus: your open system, else the selected one, else home; never a rival's.
 const owned = new Set(["freya", "dabih"]);
@@ -106,9 +118,10 @@ assert.deepEqual([0.3, -2 / 60, 0.0004, null].map(s.rateText), ["+18", "−2", "
 assert.equal(s.rateText(0.4 / 60), "+0.4");
 assert.deepEqual([860, 1_240, 12_400, 128_000].map(s.stockText), ["860", "1,240", "12.4k", "128k"]);
 
-// Pins: the defaults until you pin; unknown goods are dropped.
+// Pins: the defaults until you pin; unknown goods are dropped. §reactors-drives:
+// no Deuterium by default — rung 2 is hidden until Bunkerage.
 storage.clear();
-assert.deepEqual(copy(s.storePins()), ["provisions", "metallic_ore", "alloys", "machinery", "electronics", "uranium", "deuterium"]);
+assert.deepEqual(copy(s.storePins()), ["provisions", "metallic_ore", "alloys", "machinery", "electronics", "uranium"]);
 assert.deepEqual(copy(s.togglePin("crystalline_ore").slice(-1)), ["crystalline_ore"]);
 assert.ok(!s.togglePin("uranium").includes("uranium"));
 storage.set("stellar.stores.pins.v1", JSON.stringify(["alloys", "not_a_good", 7]));
@@ -124,6 +137,12 @@ deps["../../state"] = { liveSimTime: () => 300 };
 deps["../dom"] = { renderDeferred: () => false, setHtml: (el, html) => { el.html = html; } };
 deps["../signature"] = { sheetFingerprint: (value) => JSON.stringify(value) };
 class FakeSelect {}
+deps["../../core/derive/fleet"] = { goodKnown: () => true }; // §reactors-drives: every good known in this fixture
+// §goods-tabs: the shared Resources · Parts · Modules split and its desktop strip.
+deps["./equipment"] = compile("core/derive/equipment.ts");
+deps["./fleet"] = { ...deps["./fleet"], lightBase: (c) => c.replace(/^(heavy|capital)_/, "") };
+deps["../../core/derive/goods"] = compile("core/derive/goods.ts");
+deps["./goods-tabs"] = compile("shell/deck/goods-tabs.ts");
 const { DeckStores } = compile("shell/deck/stores.ts", { HTMLSelectElement: FakeSelect });
 s.clearStockSamples();
 feed((t) => ({ provisions: 1_000 + 0.3 * t, electronics: 60 - 0.04 * t, uranium: 120 }));
@@ -144,10 +163,16 @@ assert.deepEqual(deck.toggled, [["has-stores", true]], "the chrome grows by the 
 assert.equal(resized, 1, "the map's free area is republished");
 assert.match(bar.html, /<select class="deck-stores__system" data-stores-system/, "two systems: a switcher");
 assert.match(bar.html, /<b>1,090<\/b><small class="is-up">\+18<\/small>/, "Provisions with its rate");
-assert.match(bar.html, /class="deck-stores__good is-low"[^>]*title="Semiconductors 48 · −2\.4\/min · empty in 20m"/, "draining Semiconductors warn");
+assert.match(bar.html, /class="deck-stores__good is-low"[^>]*title="Semiconductors 48 · net −2\.4\/min · empty in 20m"/, "draining Semiconductors warn");
 assert.doesNotMatch(bar.html, /<img[^>]* title=/, "the button's tooltip, not the icon's");
-assert.match(bar.html, /deck-stores__storage[^>]*title="Storage 100 \/ 1,000"/);
-assert.equal(bar.html.match(/class="deck-stores__good[ "]/g).length, 7, "seven default goods");
+assert.match(bar.html, /deck-stores__storage[^>]*title="Storage 100 \/ 1,000"><small>Storage<\/small>/);
+assert.equal(bar.html.match(/class="deck-stores__good[ "]/g).length, 6, "six default goods (§reactors-drives: no Deuterium until Bunkerage)");
+st.systems[0].storage_used = 999.5;
+stores.renderBar(null);
+assert.match(bar.html, /class="deck-stores__storage is-full"[^>]*title="Storage 1,000 \/ 1,000 · full, production stops"><small>Storage full<\/small>.*<b>999\/1,000<\/b>/s,
+  "§storage-full: the bar says it");
+st.systems[0].storage_used = 100;
+stores.renderBar(null);
 
 // Peter (Oct 28 2026): Stores opens over the map like Construction; the
 // route (here the system's Production tab) and the camera stay.
@@ -159,13 +184,37 @@ assert.equal(shell.hidden, false, "the workbench opens");
 assert.equal(title.textContent, "Freya");
 assert.match(body.html, /<h3>Refined<\/h3>.*provisions/s);
 assert.match(body.html, /deck-stores-row is-low.*empty 20m/s);
-assert.match(body.html, /data-deck-act="stores-ship" >Ship 1,138 goods to Market/, "fuels stay out of the shipment");
+// Peter (Nov 5 2026): no one-click "Ship goods to Market" any more.
+assert.doesNotMatch(body.html, /stores-ship|to Market/);
+// §goods-tabs (Peter, Nov 8 2026): Resources · Parts · Modules, only once a
+// second tab holds something; §modules-as-goods, a module in stock lists.
+assert.doesNotMatch(body.html, /deck-goods-tabs/, "one tab, no strip");
+st.systems[0].stockpile.push({ commodity: "torpedo_rack", units: 2 });
+stores.render(route, true);
+assert.match(body.html, /data-deck-act="stores-tab" data-goods-tab="resources" aria-selected="true">Resources<.*data-goods-tab="modules" aria-selected="false">Modules</s);
+assert.doesNotMatch(body.html, /torpedo_rack/, "modules wait on their tab");
+stores.handleAction({ dataset: { deckAct: "stores-tab", goodsTab: "modules" } }, route);
+assert.match(body.html, /<h3>Weapons<\/h3>.*torpedo_rack/s);
+assert.doesNotMatch(body.html, /<h3>Refined<\/h3>/);
+stores.handleAction({ dataset: { deckAct: "stores-tab", goodsTab: "resources" } }, route);
+st.systems[0].stockpile.pop();
+stores.render(route, true);
+// §stores-flows (Peter, Nov 5 2026): Made, Used and Net a minute, under a
+// header row; a system that reports flows shows them, not the measured rate.
+assert.match(body.html, /deck-stores-row is-head.*>Made<.*>Used<.*>Net \/min</s);
+st.systems[0].flows = [{ commodity: "provisions", made: 30, used: 12 }, { commodity: "metallic_ore", made: 6, used: 0 }];
+stores.render(route, true);
+assert.match(body.html, /provisions.*is-made is-up">\+30<.*is-used is-down">−12<.*is-net is-up">\+18</s, "made, used and net");
+assert.match(body.html, /metallic_ore.*is-made is-up">\+6<.*is-used">–<.*is-net is-up">\+6</s, "a good made and not used");
+assert.match(body.html, /electronics.*is-made">–<.*is-used">–<.*is-net">–</s, "reported, nothing moves: no measured guess");
+stores.renderBar(null, true);
+assert.match(bar.html, /title="provisions 1,090 · made \+30\/min · used −12\/min · net \+18\/min"/, "the bar's tooltip splits it");
+delete st.systems[0].flows;
+stores.render(route, true);
 stores.handleAction({ dataset: { deckAct: "stores-pin", good: "uranium" } }, route);
 assert.ok(!s.storePins().includes("uranium"), "unpinned from the bar");
-assert.equal(bar.html.match(/class="deck-stores__good[ "]/g).length, 6);
-stores.handleAction({ dataset: { deckAct: "stores-ship" } }, route);
-assert.deepEqual(copy(sent), [{ type: "ShipProduction", system_id: "freya" }]);
-assert.match(notices[0], /Authority pickup requested/);
+assert.equal(bar.html.match(/class="deck-stores__good[ "]/g).length, 5);
+assert.deepEqual(copy(sent), [], "nothing shipped");
 stores.handleAction({ dataset: { deckAct: "stores-open", system: "dabih" } }, route);
 assert.equal(title.textContent, "Dabih", "a system's own Open Stores shows it");
 assert.equal(stores.handleInput(Object.assign(new FakeSelect(), { value: "dabih", dataset: { storesSystem: "" } }), route), true);

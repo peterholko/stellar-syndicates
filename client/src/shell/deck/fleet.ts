@@ -17,20 +17,31 @@ import { contactIntel,
   slowCapable,
   fleetBaseSpeed,
   fleetCargoCapacity,
+  fleetHoldUsed,
   fleetTradeCapacity,
+  fmtRoom,
+  HOLD_ROOM_TIP,
+  tradeRoomFits,
   FUEL_PER_MASS_DISTANCE,
-  fleetUraniumCapacity,
   guardCapable,
   hauls,
+  hasJumpDrive,
   jumpCapable,
+  JUMP_MIXED_REASON,
   regimeStore,
-  fusionTank,
   shipKindLabel,
   transitLabel,
   shipMass,
   transitSpeedMultiplier,
   WARP_FACTOR,
-} from "../../core/derive/fleet";
+  drivesOf,
+  REACTOR_LABEL,
+  DRIVE_LABEL,
+  REACTOR_ENERGY,
+  tanks,
+  stealthCapable,
+
+ magazines, } from "../../core/derive/fleet";
 import { fmt, fmtEta, informationDelay } from "../../core/derive/format";
 import { emplacementLabel, gravityWellAt, nearestKnownDock, systemName } from "../../core/derive/geo";
 import { fitLegal, kitAffordable, kitCostLabel, maxCargoRefitCount, MODULE_SLOTS, moduleLedgerAt, ownedHaulDestinations, refitCargoBlocked, refitFuelBlocked, refitPreview } from "../../core/derive/market";
@@ -47,7 +58,6 @@ import { jumpDepartureKey } from "../../core/session";
 import { commodityIcon, icon, label, type IconKey } from "../../icons";
 import {
   fleetCargoManifest,
-  fleetCargoUnits,
   fleetExactCount,
   type Commodity,
   type EngagementEstimate,
@@ -65,6 +75,9 @@ import { renderDeferred, setHtml } from "../dom";
 import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
+
+/** §hold-room: the hold rule on every hold readout. */
+const HOLD_TIP = `title="${HOLD_ROOM_TIP}"`;
 
 interface FleetHooks {
   go(route: DeckRoute): void;
@@ -434,7 +447,7 @@ export class DeckFleetRoutes {
     if (!isStation(g)) return "";
     const st = this.ctx.state, a = g.anchor;
     const belt = a ? st.systems.find((s) => s.id === a.system)?.bodies.find((b) => b.id === a.body)?.name ?? systemName(a.system) : "";
-    const held = fleetCargoManifest(g), total = held.reduce((n, c) => n + c.units, 0);
+    const held = fleetCargoManifest(g);
     const pending = (st.pendingOrders.get(g.id) ?? []).some((o) => !o.lost && liveSimTime() < o.arrives_at);
     const status = a ? `${anchorStatus(a, liveSimTime())} · ${belt}` : "Not anchored · open a charted belt to anchor";
     const barges = a?.phase === "anchored" ? st.ghosts.filter((b) => b.own && b.industry?.kind === "mine"
@@ -445,12 +458,11 @@ export class DeckFleetRoutes {
     const top = [...held].sort((x, y) => y.units - x.units)[0];
     const loads = top ? st.ghosts.filter((f) => f.own && !f.tca && f.id !== g.id && !isStation(f) && fleetTradeCapacity(f) > 0
       && Math.hypot(f.pos.x - g.pos.x, f.pos.y - g.pos.y) <= 260).slice(0, 3).map((f) => {
-      const room = fleetTradeCapacity(f) - fleetCargoManifest(f).reduce((n, c) => n + c.units, 0);
-      const n = Math.min(room, top.units);
+      const n = Math.min(tradeRoomFits(f, top.commodity), top.units);
       return n > 0 ? `<button type="button" data-deck-act="fleet-station-load" data-into="${esc(f.id)}" data-commodity="${top.commodity}" data-units="${n}" ${pending ? "disabled" : ""}>Load ${fmt(n)} ${esc(label(top.commodity))} into ${esc(shipKindLabel(f.kind))} ${esc(f.id)}</button>` : "";
     }).join("") : "";
     return `<section class="deck-section deck-station" aria-label="Station"><div class="deck-station__line"><b>${esc(status)}</b>`
-      + `<span>Hold ${fmt(total)} / ${fmt(fleetCargoCapacity(g))}${barges ? ` · ${barges} barge${barges > 1 ? "s" : ""} unloading` : ""}</span></div>`
+      + `<span ${HOLD_TIP}>Hold ${fmtRoom(fleetHoldUsed(g))} / ${fmt(fleetCargoCapacity(g))}${barges ? ` · ${barges} barge${barges > 1 ? "s" : ""} unloading` : ""}</span></div>`
       + (unanchor || loads ? `<div class="deck-world-actions">${unanchor}${loads}</div>` : "") + `</section>`;
   }
 
@@ -506,7 +518,7 @@ export class DeckFleetRoutes {
       <dl><div><dt>Hull</dt><dd>${r.hull === null ? "Unknown" : `${Math.round(r.hull * 100)}%`}</dd></div>
       <div><dt>${esc(label(r.fuelKind))}</dt><dd>${r.fuel === null ? "Unknown" : r.fuelKind === "deuterium" ? fusionTankLine(g) : `${fmt(r.fuel)} / ${fmt(r.fuelCapacity)}`}</dd></div>
       ${r.antimatterCapacity > 0 ? `<div><dt>Antimatter</dt><dd>${r.antimatter === null ? "Unknown" : `${r.antimatter.toFixed(1)} / ${r.antimatterCapacity.toFixed(1)}`}</dd></div>` : ""}
-      <div><dt>Cargo space</dt><dd>${r.cargoCapacity ? `${fmt(r.cargoFree)} free / ${fmt(r.cargoCapacity)}` : "No hold"}</dd></div>
+      <div><dt>Cargo space</dt><dd ${HOLD_TIP}>${r.cargoCapacity ? `${fmtRoom(r.holdFree)} free / ${fmt(r.cargoCapacity)}` : "No hold"}</dd></div>
       <div><dt>Captain</dt><dd>${r.captain ? esc(`${captainTitle(r.captain.title)} ${r.captain.name}`) : "Unassigned"}</dd></div>
       <div class="deck-readiness__assignment"><dt>Assignment</dt><dd>${esc(this.activity(g))}</dd></div></dl>
       ${warnings.length ? `<div class="deck-dispatch-warning" role="status">${warnings.map(esc).join("<br>")}</div>` : ""}</section>`;
@@ -548,8 +560,10 @@ export class DeckFleetRoutes {
     const movingOrder = queue.some((order) => !order.lost && ["move", "jump", "guard", "defend", "raid", "attack", "recall", "withdraw", "haul"].includes(order.kind));
     const hasCourse = !!g.fuel_transfer || !!this.ctx.state.orders[g.id] || !!g.path?.length || Math.hypot(g.vel.x, g.vel.y) >= .5 || movingOrder;
     items.push(commandButton("fleet-move", "Move", "Choose a destination on the map.", "is-primary", pending("move") ? "Move order already in flight." : ""));
-    if (jumpCapable(g)) {
-      const jumpReason = g.docked
+    if (hasJumpDrive(g)) {
+      const jumpReason = !jumpCapable(g)
+        ? JUMP_MIXED_REASON
+        : g.docked
         ? "Undock before spooling."
         : gravityWellAt(g.pos, this.ctx.state)
           ? "Served sighting is inside a gravity well."
@@ -561,9 +575,11 @@ export class DeckFleetRoutes {
       const current = requested ?? g.transit ?? "full";
       const waiting = pending("configure");
       const hint = waiting ? "Requested setting awaits a served fleet report." : "Stealth runs dark: half speed, the quietest signature.";
-      // §fuel-overhaul: Slow is the Uranium regime; Full and Stealth burn Deuterium.
-      const slow = slowCapable(g) ? `<button type="button" data-deck-act="fleet-transit" data-mode="slow" title="${waiting ? escAttr(hint) : "½ speed · Uranium · ¼ the energy per su."}" aria-pressed="${current === "slow"}" ${waiting ? "disabled" : ""}>Slow</button>` : "";
-      transit = `<div class="deck-command-block deck-fleet-setting${waiting ? " is-pending" : ""}" title="${escAttr(hint)}"><b>Transit${waiting ? " · signal in flight" : ""}</b><div class="deck-segment"><button type="button" data-deck-act="fleet-transit" data-mode="full" title="${waiting ? escAttr(hint) : "Full speed · Deuterium."}" aria-pressed="${current === "full"}" ${waiting ? "disabled" : ""}>Full speed</button>${slow}<button type="button" data-deck-act="fleet-transit" data-mode="stealth" title="${waiting ? escAttr(hint) : "½ speed · Deuterium · quietest."}" aria-pressed="${current === "stealth"}" ${waiting ? "disabled" : ""}>Stealth</button></div></div>`;
+      // §reactors-drives: every speed burns the reactor's fuel (Uranium on
+      // Fission); Slow a quarter of it a distance.
+      const burns = label(regimeStore(g).fuel);
+      const slow = slowCapable(g) ? `<button type="button" data-deck-act="fleet-transit" data-mode="slow" title="${waiting ? escAttr(hint) : `½ speed · ¼ the ${burns} per su.`}" aria-pressed="${current === "slow"}" ${waiting ? "disabled" : ""}>Slow</button>` : "";
+      transit = `<div class="deck-command-block deck-fleet-setting${waiting ? " is-pending" : ""}" title="${escAttr(hint)}"><b>Transit${waiting ? " · signal in flight" : ""}</b><div class="deck-segment"><button type="button" data-deck-act="fleet-transit" data-mode="full" data-coach="full-speed" title="${waiting ? escAttr(hint) : `Full speed · ${burns}.`}" aria-pressed="${current === "full"}" ${waiting ? "disabled" : ""}>Full speed</button>${slow}<button type="button" data-deck-act="fleet-transit" data-mode="stealth" title="${waiting ? escAttr(hint) : `½ speed · ${burns} · quietest.`}" aria-pressed="${current === "stealth"}" ${waiting ? "disabled" : ""}>Stealth</button></div></div>`;
     }
     const dock = nearestKnownDock(g);
     if (!g.docked) items.push(commandButton("fleet-dock", "Initiate docking", dock ? `${dock.name} · ${fmt(dock.distance)} su` : "Nearest known friendly berth.", "is-primary", pending("move") ? "Move or docking order already in flight." : !dock ? "No known friendly berth." : ""));
@@ -612,31 +628,35 @@ export class DeckFleetRoutes {
     return `<div class="deck-fleet-flagship"><span>Flagship <b>${esc(current || "unnamed")}</b></span><button type="button" data-deck-act="fleet-flagship">${current ? "Rename" : "Name"}</button></div>`;
   }
 
-  /** §fuel-overhaul: one gauge per store the fleet carries: the fission store
-   * (Uranium, Slow), the fusion tank (Deuterium, Helium-3 at six per unit) and
-   * the antimatter bottle (jumps). The store the throttle burns is marked. */
+  /** §reactors-drives: the engines line (hulls by reactor and drive) and one
+   * gauge per tank the fleet carries — Uranium for Fission Reactors, Deuterium
+   * for Fusion, Helium-3 for Advanced Fusion, Antimatter for Antimatter. Every
+   * tank aboard burns; the shortest bounds the formation. */
   private fuelHtml(g: GhostView): string {
-    const store = regimeStore(g);
-    const gauge = (key: "uranium" | "deuterium" | "antimatter", text: string | null, used: number, capacity: number, tip = "") => {
-      const pct = capacity > 0 ? Math.max(0, Math.min(100, used / capacity * 100)) : 0;
-      const burning = key === store.fuel ? " · burning" : "";
-      return `<div class="deck-subhead"${tip ? ` title="${escAttr(tip)}"` : ""}><b>${icon(key, "sm")} ${label(key)}${burning}</b><span>${text ?? "report unavailable"}</span></div><div class="deck-meter"><i style="width:${pct.toFixed(1)}%"></i></div>`;
+    const drives = drivesOf(g).map((d) => `${REACTOR_LABEL[d.reactor]} · ${DRIVE_LABEL[d.drive]} ×${d.count}`).join(" · ");
+    const gauge = (t: { fuel: Commodity; served: number | null; have: number; capacity: number }) => {
+      const pct = t.capacity > 0 ? Math.max(0, Math.min(100, t.have / t.capacity * 100)) : 0;
+      const text = t.served == null ? "report unavailable" : `${fmtTank(Math.max(0, t.served), t.capacity)} / ${fmtTank(t.capacity, t.capacity)}`;
+      return `<div class="deck-subhead"><b>${commodityIcon(t.fuel)} ${label(t.fuel)}</b><span>${text}</span></div><div class="deck-meter"><i style="width:${pct.toFixed(1)}%"></i></div>`;
     };
-    const uraniumCapacity = fleetUraniumCapacity(g);
-    // The fusion tank shows SPACE: a Helium-3 unit fills one, for six of Deuterium's energy.
-    const tank = fusionTank(g);
-    const tankText = g.fuel == null ? null : tank.helium3 > 0
-      ? `${fmt(tank.deuterium)} + ${fmt(tank.helium3)} He-3 / ${fmt(tank.capacity)}` : `${fmt(tank.deuterium)} / ${fmt(tank.capacity)}`;
-    const gauges = (uraniumCapacity > 0 ? gauge("uranium", g.uranium == null ? null : `${fmt(Math.max(0, g.uranium))} / ${fmt(uraniumCapacity)}`, g.uranium ?? 0, uraniumCapacity) : "")
-      + gauge("deuterium", tankText, tank.used, tank.capacity, tank.helium3 > 0 ? "Helium-3 holds six times Deuterium's energy per unit of tank." : "")
-      + ((g.antimatter_capacity ?? 0) > 0 ? gauge("antimatter", g.antimatter == null ? null : `${g.antimatter.toFixed(1)} / ${g.antimatter_capacity!.toFixed(1)}`, g.antimatter ?? 0, g.antimatter_capacity!) : "");
-    // Range or this leg's cost in each mode the fleet can fly.
+    // §shipbuilding-overhaul Phase 5: the magazines, one gauge each; a dry
+    // rack or driver says so (the hull fights on with its kit beams).
+    const magazine = (m: { good: Commodity; have: number; capacity: number; dry: boolean }) => {
+      const pct = Math.max(0, Math.min(100, m.have / m.capacity * 100));
+      const text = m.dry ? "dry · kit beams" : `${fmtTank(m.have, m.capacity)} / ${fmtTank(m.capacity, m.capacity)}`;
+      return `<div class="deck-subhead"><b>${commodityIcon(m.good)} ${label(m.good)}</b><span>${text}</span></div><div class="deck-meter"><i style="width:${pct.toFixed(1)}%"></i></div>`;
+    };
+    const gauges = `<div class="deck-subhead"><b>Engines</b><span>${esc(drives)}</span></div>` + tanks(g).map(gauge).join("")
+      + magazines(g).map(magazine).join("");
+    // Range or this leg's cost in each throttle the fleet can fly, in the
+    // primary tank's fuel.
     const dest = this.ctx.state.orders[g.id] ?? g.path?.at(-1)?.pos;
-    const modes: TransitMode[] = slowCapable(g) ? ["slow", "full"] : ["full"];
+    const modes: TransitMode[] = [...(slowCapable(g) ? ["slow" as TransitMode] : []), "full", ...(stealthCapable(g) ? ["stealth" as TransitMode] : [])];
     const detail = modes.map((transit) => {
       const v = { ...g, transit }, fuel = regimeStore(v);
-      if (dest) return `${transitLabel(transit)} ~${fmt(estimatedFuelForLeg(v, dest))} ${label(fuel.fuel)}`;
-      const perSu = FUEL_PER_MASS_DISTANCE * shipMass(v) / WARP_FACTOR * cruiseFuelMultiplier(v);
+      const per = REACTOR_ENERGY[fuel.grade];
+      if (dest) return `${transitLabel(transit)} ~${fmtTank(estimatedFuelForLeg(v, dest) / per, fuel.capacity)} ${label(fuel.fuel)}`;
+      const perSu = FUEL_PER_MASS_DISTANCE * shipMass(v) / WARP_FACTOR * cruiseFuelMultiplier(v) / per;
       return `${transitLabel(transit)} ~${fmt(perSu > 0 ? fuel.have / perSu / 1000 : 0)}k su`;
     }).join(" · ");
     return `${gauges}<p class="deck-muted">${dest ? "Leg" : "Range"} · ${esc(detail)} · ${esc(informationDelay(g.age))}.</p>`;
@@ -683,17 +703,16 @@ export class DeckFleetRoutes {
         : stack.modules.includes("cargo_pods") && refitCargoBlocked(g, stack.kind, stack.modules, [], 1) ? "Unload cargo before removing pods" : "";
       return `<div class="deck-refit-row" data-refit-row data-ship="${stack.kind}" data-from="${escAttr(fitKey(stack.modules))}"><span><b>${stack.n}× ${esc(shipKindLabel(stack.kind))}</b><small>${esc(fitName(stack.modules))}</small></span>${options ? `<select data-refit-target>${options}</select><input data-refit-count type="number" min="1" max="${maximum}" value="${quantity}"><button type="button" data-deck-act="fleet-refit" data-coach="refit" ${busy ? "disabled" : ""}>Refit</button>` : `<em>No stocked legal change</em>`}<small data-refit-preview style="grid-column:1/-1">${esc(preview)}</small></div>`;
     }).join("");
-    const stock = REFIT_MODULES.filter((module) => (ledger[module] ?? 0) > 0).map((module) => `${label(module)} ${ledger[module]}`).join(" · ") || "ledger empty";
+    const stock = REFIT_MODULES.filter((module) => (ledger[module] ?? 0) > 0).map((module) => `${label(module)} ${ledger[module]}`).join(" · ") || "no modules in stock";
     return `<div class="deck-subhead"><b>Equipment · ${esc(systemName(dock!.id))}</b><span>${esc(stock)}</span></div><div class="deck-refit-list">${rows}</div>${busy ? `<p class="deck-warning">Fleet must be idle with no command in flight.</p>` : ""}`;
   }
 
   private cargoHtml(g: GhostView): string {
     const manifest = fleetCargoManifest(g);
-    const used = fleetCargoUnits(g);
     const capacity = fleetCargoCapacity(g);
-    const crates = Object.entries(g.modules ?? {}).filter(([, n]) => n > 0);
-    const equipment = crates.length ? `<div class="deck-subhead"><b>Module crates</b><span>Stored on docking at an owned system</span></div><div class="deck-fleet-cargo">${crates.map(([kind, n]) => `<span><b>${n}</b> ${esc(label(kind))}</span>`).join("")}</div>` : "";
-    return `<div class="deck-subhead"><b>${icon("cargo", "sm")} Cargo</b><span>${fmt(used)} / ${fmt(capacity)} units</span></div><div class="deck-fleet-cargo">${manifest.length ? manifest.map((entry) => `<span>${commodityIcon(entry.commodity)}<b>${fmt(entry.units)}</b> ${esc(label(entry.commodity))}</span>`).join("") : `<span class="deck-muted">Empty hold</span>`}</div>${equipment}`;
+    // §modules-as-goods: modules ride in the hold like any cargo.
+    // §hold-room: the hold counts room, each good its own.
+    return `<div class="deck-subhead"><b>${icon("cargo", "sm")} Cargo</b><span ${HOLD_TIP}>${fmtRoom(fleetHoldUsed(g))} / ${fmt(capacity)} room</span></div><div class="deck-fleet-cargo">${manifest.length ? manifest.map((entry) => `<span>${commodityIcon(entry.commodity)}<b>${fmt(entry.units)}</b> ${esc(label(entry.commodity))}</span>`).join("") : `<span class="deck-muted">Empty hold</span>`}</div>`;
   }
 
   private logisticsHtml(g: GhostView): string {
@@ -702,7 +721,8 @@ export class DeckFleetRoutes {
     const stocks = dockLoadStock(g).filter(([, units]) => units > 0);
     const selected = stocks.some(([commodity]) => commodity === this.loadCommodity.get(g.id)) ? this.loadCommodity.get(g.id)! : stocks[0]?.[0];
     if (selected) this.loadCommodity.set(g.id, selected);
-    const free = Math.max(0, fleetTradeCapacity(g) - fleetCargoUnits(g));
+    // §hold-room: how many of the chosen good still fit.
+    const free = selected ? tradeRoomFits(g, selected) : 0;
     const qty = Math.max(1, Math.min(free || 1, this.loadQuantity.get(g.id) ?? Math.min(50, free || 1)));
     this.loadQuantity.set(g.id, qty);
     const manifest = fleetCargoManifest(g);
@@ -713,7 +733,7 @@ export class DeckFleetRoutes {
     const load = stocks.length && free > 0 ? `<div class="deck-inline-form"><select data-fleet-load-commodity ${loadQueued ? "disabled" : ""}>${stocks.map(([commodity, units]) => `<option value="${commodity}" ${commodity === selected ? "selected" : ""}>${esc(label(commodity))} (${fmt(units)})</option>`).join("")}</select><input data-fleet-load-quantity type="number" min="1" max="${free}" value="${qty}" ${loadQueued ? "disabled" : ""}><button type="button" data-deck-act="fleet-load" ${loadQueued ? "disabled" : ""}>${loadQueued ? "Load in flight" : "Load"}</button></div>` : "";
     const unload = manifest.length ? `<button type="button" data-deck-act="fleet-unload" ${unloadQueued ? "disabled" : ""}>${unloadQueued ? "Unload queued" : "Unload all"}</button>` : "";
     const haul = manifest.length && system ? `<button type="button" class="is-primary" data-deck-act="fleet-haul-hub" ${haulQueued ? "disabled" : ""}>${haulQueued ? "Haul order in flight" : "Haul to Market Hub"}</button><label class="deck-check"><input type="checkbox" data-fleet-sell ${haulQueued ? "disabled" : ""}> Sell on arrival</label>` : "";
-    const destinations = g.docked === "hub" && (manifest.length || Object.values(g.modules ?? {}).some(n => n > 0)) ? ownedHaulDestinations() : [];
+    const destinations = g.docked === "hub" && manifest.length ? ownedHaulDestinations() : [];
     const remembered = this.haulDestination.get(g.id);
     const destination = destinations.find((entry) => entry.id === remembered) ?? destinations[0];
     if (destination) this.haulDestination.set(g.id, destination.id);
@@ -867,7 +887,7 @@ export class DeckFleetRoutes {
   private load(g: GhostView): void {
     const commodity = this.loadCommodity.get(g.id);
     if (!commodity) return;
-    const free = Math.max(0, fleetTradeCapacity(g) - fleetCargoUnits(g));
+    const free = tradeRoomFits(g, commodity);
     const available = dockLoadStock(g).find(([entry]) => entry === commodity)?.[1] ?? 0;
     const units = Math.max(1, Math.min(free, available, this.loadQuantity.get(g.id) ?? 1));
     if (g.docked === "hub") this.ctx.intent.beginFleetCommand({ type: "HubLoad", fleet_id: g.id, commodity, units });
@@ -1029,10 +1049,15 @@ function fitKey(modules: ModuleKind[]): string { return [...modules].sort().join
 function fitName(modules: ModuleKind[]): string { return modules.length ? modules.map((entry) => label(entry)).join(" + ") : "Stock"; }
 function normalizeDock(value: string): string { return value.startsWith("E") ? value.slice(1) : value; }
 
-/** The fusion tank as space: "12 + 40.5 He-3 / 52.5". */
+/** The primary tank: "12 / 52.5 Uranium". */
 function fusionTankLine(g: GhostView): string {
-  const t = fusionTank(g);
-  return t.helium3 > 0 ? `${fmt(t.deuterium)} + ${fmt(t.helium3)} He-3 / ${fmt(t.capacity)}` : `${fmt(t.deuterium)} / ${fmt(t.capacity)}`;
+  const t = regimeStore(g);
+  return `${fmtTank(t.have, t.capacity)} / ${fmtTank(t.capacity, t.capacity)} ${label(t.fuel)}`;
+}
+
+/** A tank figure: one decimal on the small dense tanks (Helium-3, Antimatter). */
+function fmtTank(value: number, capacity: number): string {
+  return capacity < 10 ? value.toFixed(1) : fmt(value);
 }
 
 function driveLabel(g: GhostView): string {

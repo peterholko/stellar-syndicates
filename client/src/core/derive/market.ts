@@ -1,10 +1,10 @@
 // Shared market derivations extracted from the desktop shell.
 
+import { goodKnown } from "./fleet";
 import type { Net } from "../../net";
 import {
   cargoUnitsPerHull,
   type ShipKind,
-  fleetCargoUnits,
   type BodyView,
   type BuildOption,
   type Commodity,
@@ -17,12 +17,11 @@ import {
   type StockSlot,
   type SystemInfo,
   type SystemStateView,
-  type TradeEvent,
-} from "../../protocol";
+  type TradeEvent, type ReactorGrade, type Drive, type LicenceView } from "../../protocol";
 import { label } from "../../icons";
 import { liveSimTime, state } from "../../state";
-import { COMMODITY_VALUE, constructionStock, dockedAtSystem, fleetCargoCapacity, fleetFuelCapacity, HULL_MASS } from "./fleet";
-import { cargoMultiplier, hullUtilitySummary, isUtility, isBlueprintOnly, MODULES, moduleFitsHull, tankMultiplier, utilityProgramme } from "./equipment";
+import { COMMODITY_VALUE, constructionStock, dockedAtSystem, fleetCargoCapacity, fleetFuelCapacity, fleetHoldUsed, fmtRoom, HULL_MASS, ROOM_SCALE } from "./fleet";
+import { cargoMultiplier, hullUtilitySummary, isUtility, isBlueprintOnly, isModuleGood, MODULES, moduleFitsHull, tankMultiplier, utilityProgramme } from "./equipment";
 
 const EMPLACE_KITS: Record<string, [Commodity, number][]> = {
   deep_space_sensor: [["alloys", 60], ["electronics", 120]],
@@ -37,7 +36,7 @@ const MODULE_FIT_COST: Record<ModuleKind, number> = {
   mass_driver: 2, torpedo_rack: 3, point_defense_screen: 2, reflective_plating: 2, whipple_armor: 3,
   extended_tanks: 2, recon_suite: 2, cargo_pods: 2, escort_datalink: 2, fuel_transfer_rig: 2,
   survey_drive: 2, nebula_spectrometer: 2, prismatic_lance: 3,
-  stasis_web: 2, warp_stabilizer: 2, interdiction_field: 3, jump_drive: 2, lance_array: 3,
+  stasis_web: 2, warp_stabilizer: 2, interdiction_field: 3, lance_array: 3,
 };
 export const FITTING_POINTS: Record<string, number> = {
   tiny_freighter: 2, small_freighter: 2, large_freighter: 2, heavy_freighter: 2, bulk_freighter: 2,
@@ -67,10 +66,13 @@ export const YARD_TITLE: Record<string, string> = {
 };
 export const slipsFor = (tier: number): number => Math.max(0, tier);
 const HULL_PROGRAMME: Record<string, string> = {
+  // §research-locked (Nov 11 2026): the Corvette's card, Escort Datalink.
+  corvette: "hull_line_iii_escort_datalink",
   small_freighter: "prop_freight_frames", convoy: "prop_heavy_lifters", large_freighter: "prop_line_express_charters",
   heavy_freighter: "prop_line_bulk_charters", bulk_freighter: "prop_line_autonomous_freight",
   destroyer: "hull_line_iv_destroyer", cruiser: "hull_line_v_cruiser",
   battleship: "hull_line_vi_battleship", dreadnought: "hull_line_vii_dreadnought", titan: "hull_line_viii_titan",
+  mining_belt_station: "mat_belt_stations",
 };
 
 export const POOL_OF: Record<string, "resource" | "industrial" | "infrastructure"> = {
@@ -89,6 +91,8 @@ export const POOL_OF: Record<string, "resource" | "industrial" | "infrastructure
   vault: "infrastructure",
   // §season: at the Command Center; no slot.
   assembly_hall: "infrastructure",
+  // §veil: off the Fusion Plant; no slot.
+  veil_projector: "infrastructure",
 };
 const EXTRACTION_OF: Record<string, Commodity[]> = {
   mining_complex: ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "olivine_ore", "bornite_ore", "ilmenite_ore", "iridium_ore", "void_crystal", "silicates", "rare_elements"],
@@ -100,8 +104,10 @@ const EXTRACTION_OF: Record<string, Commodity[]> = {
 EXTRACTION_OF.asteroid_quarry = [...EXTRACTION_OF.mining_complex, ...EXTRACTION_OF.volatile_harvester];
 /** §asteroid-quarry: a belt takes its quarry and nothing else; the quarry
  * stands only on a belt (sim `StructureKind::suits`). */
-export const suitsBody = (key: string, body: Pick<BodyView, "kind">): boolean =>
-  (body.kind === "asteroid_belt") === (key === "asteroid_quarry");
+export const suitsBody = (key: string, body: Pick<BodyView, "kind" | "environment">): boolean =>
+  // §veil: an ionised sky needs a sky — no belt, gas giant or airless rock.
+  key === "veil_projector" ? body.kind !== "asteroid_belt" && body.kind !== "gas_giant" && body.environment !== "uninhabitable"
+    : (body.kind === "asteroid_belt") === (key === "asteroid_quarry");
 export type Pool = "resource" | "industrial" | "infrastructure";
 export type PoolUse = Record<Pool, { used: number; total: number }>;
 export const POOL_LABEL: Record<Pool, string> = { resource: "Resource", industrial: "Industrial", infrastructure: "Infrastructure" };
@@ -109,7 +115,7 @@ export const POOL_LABEL: Record<Pool, string> = { resource: "Resource", industri
 export type BuildOpt = BuildOption;
 // §gun-platform: the station stands in orbit and takes no site (sim `uses_slot`).
 export const structureConsumesSlot = (key: string): boolean => !["service_berth", "command_center", "power_plant", "vault", "assembly_hall",
-  "orbital_defense"].includes(key);
+  "orbital_defense", "veil_projector"].includes(key);
 
 /** §tier-curve: mirror of the sim's structure tier curve
  * (`build::TIER_COST_MULT` / `TIER_TIME_MULT`, index 0 = tier I). Past tier II
@@ -118,6 +124,9 @@ export const TIER_CURVE = {
   cost: [1, 1, 1.6, 2.56, 4.096, 6.5536],
   time: [1, 1, 20, 180, 900, 2700],
 } as const;
+/** §progression: an income structure's level costs what it returns
+ * (`build::PRODUCTION_TIER_COST_MULT`); build times follow `TIER_CURVE.time`. */
+export const PRODUCTION_TIER_CURVE = [1, 3.5, 9, 24, 44, 65] as const;
 /** The three with explicit level ladders (`build::follows_tier_curve`). */
 const TIER_CURVE_EXEMPT: ReadonlySet<string> = new Set(["command_center", "power_plant", "orbital_defense"]);
 
@@ -130,10 +139,11 @@ export function structureLevel(option: BuildOpt, tier: number): BuildOpt {
   const level = levels?.find(entry => entry.tier === tier) ?? levels?.at(-1);
   if (level) return { ...option, ...level, research_prerequisite: level.research_prerequisite ?? undefined };
   const i = Math.min(Math.max(tier, 1), TIER_CURVE.cost.length) - 1;
-  if (i < 2 || !(option.key in POOL_OF) || TIER_CURVE_EXEMPT.has(option.key)) return option;
+  if (i === 0 || (!option.earns && i < 2) || !(option.key in POOL_OF) || TIER_CURVE_EXEMPT.has(option.key)) return option;
+  const mult = option.earns ? PRODUCTION_TIER_CURVE[i] : TIER_CURVE.cost[i];
   return {
     ...option,
-    costs: option.costs.map(cost => ({ ...cost, units: Math.round(cost.units * TIER_CURVE.cost[i]) })),
+    costs: option.costs.map(cost => ({ ...cost, units: Math.round(cost.units * mult) })),
     build_secs: option.build_secs * TIER_CURVE.time[i],
   };
 }
@@ -141,9 +151,6 @@ export function structureLevel(option: BuildOpt, tier: number): BuildOpt {
  * (`founding::OPENING_BUILDS`): while the charter runs, level I of these on the
  * home system's Command Center world rises in OPENING_BUILD_SECS. */
 export const OPENING_BUILD_SECS = 10;
-/** §charter-gates: step 4's mine rises in the privateer's flight to the
- * colony (sim `founding::CHARTER_MINE_SECS`). */
-export const CHARTER_MINE_SECS = 30;
 const OPENING_BUILDS: ReadonlySet<string> = new Set(["mining_complex", "bioharvester", "habitat", "agroplex", "power_plant"]);
 export function openingBuild(key: string, tier: number, systemId: string, body: BodyView): boolean {
   if (tier !== 1 || !OPENING_BUILDS.has(key) || !((body.structures.command_center ?? 0) > 0)) return false;
@@ -154,17 +161,39 @@ export function openingBuild(key: string, tier: number, systemId: string, body: 
   return !!at && !!home && Math.hypot(at.x - home.x, at.y - home.y) < 1;
 }
 export const structureBuildSeconds = (option: BuildOpt, body: BodyView, opening = false): number =>
-  opening ? option.key === "mining_complex" && state?.founding?.stage === "build_mine" ? CHARTER_MINE_SECS : OPENING_BUILD_SECS
+  opening ? OPENING_BUILD_SECS
     : option.build_secs * (body.structure_build_time_mult ?? body.construction_time_mult);
 export const MINERAL_DEPOSITS: Commodity[] = ["metallic_ore", "cuprite_ore", "titanium_ore", "crystalline_ore", "rare_metal_ore", "olivine_ore", "bornite_ore", "ilmenite_ore", "iridium_ore", "void_crystal", "rare_elements", "silicates"];
 
-/** §fuel-overhaul: lines that run one of several standing recipes, picked by
- * the assignment's `refining_ore`: the Smelter by its ore, the Drive Works by
- * its product (Warp Core or Fusion Core). */
-export const recipeSelectable = (key: string): boolean => key === "smelter" || key === "drive_works";
-export const defaultRecipeKey = (key: string): Commodity => key === "drive_works" ? "warp_core" : "metallic_ore";
+/** §shipbuilding-overhaul: lines that run one of several standing recipes,
+ * picked by the assignment's `refining_ore`: the Smelter by its ore, the Drive
+ * Works, Hull Fabricator, Semiconductor Fab and Armaments Complex by product. */
+export const PRODUCT_PICKERS: readonly string[] = ["drive_works", "hull_fabricator", "electronics_fabricator", "armaments_complex"];
+export const recipeSelectable = (key: string): boolean => key === "smelter" || PRODUCT_PICKERS.includes(key);
+const DEFAULT_PRODUCT: Record<string, Commodity> = { drive_works: "fission_reactor", hull_fabricator: "hull_sections",
+  electronics_fabricator: "electronics", armaments_complex: "armaments" };
+export const defaultRecipeKey = (key: string): Commodity => DEFAULT_PRODUCT[key] ?? "metallic_ore";
 export const recipeKey = (key: string, recipe: ConversionRecipe): Commodity =>
-  key === "drive_works" ? recipe.output : recipe.inputs[0]?.[0];
+  PRODUCT_PICKERS.includes(key) ? recipe.output : recipe.inputs[0]?.[0];
+
+/** Peter (Nov 9 2026): "Do not list all the ore types until the player can
+ * actually smelt/refine them". A Smelter draws on its system's stores, so it
+ * offers an ore once the system can feed it: some in the stores, some made
+ * there (mines, quarries, belt stations, barges' hauls), or a deposit under a
+ * mine or quarry on one of its worlds. Ferrite, the default, and the line's
+ * current recipe always. */
+export function smelterOres(report: Pick<SystemStateView, "stockpile" | "flows" | "bodies">, current?: Commodity | null): Set<Commodity> {
+  const ores = new Set<Commodity>([defaultRecipeKey("smelter")]);
+  if (current) ores.add(current);
+  for (const slot of report.stockpile ?? []) if (slot.units > 0) ores.add(slot.commodity);
+  for (const flow of report.flows ?? []) if (flow.made > 0) ores.add(flow.commodity);
+  for (const body of report.bodies ?? []) {
+    if ((body.structures.mining_complex ?? 0) > 0 || (body.structures.asteroid_quarry ?? 0) > 0) {
+      for (const deposit of body.deposits ?? []) ores.add(deposit.resource);
+    }
+  }
+  return ores;
+}
 
 /** Recipe is chosen from the served assignment, never a pending UI draft. */
 export function assignedRecipe(option: BuildOpt | undefined, ore?: Commodity | null): ConversionRecipe | undefined {
@@ -191,7 +220,7 @@ export function conversionSummary(option: BuildOpt): string {
   if (!recipe) return "";
   const inputs = recipe.inputs.map(([commodity, units]) => `${units} ${label(commodity)}`).join(" + ");
   const outputs = recipeOutputs(recipe).map(([c, n]) => `${n} ${label(c)}`).join(" + ");
-  const choice = option.key === "drive_works" ? " Choose Warp or Fusion Cores on the planet's Drive Works." : " Choose ore on the planet's Smelter.";
+  const choice = PRODUCT_PICKERS.includes(option.key) ? ` Choose the line's product on the planet's ${label(option.key)}.` : " Choose ore on the planet's Smelter.";
   return `${inputs || "No inputs"} → ${outputs} · base ${Number((recipe.rate * 60).toFixed(2))}/min at tier I, fully staffed.${option.refining_recipes?.length ? choice : ""}`;
 }
 export interface StructOpt {
@@ -210,6 +239,9 @@ export interface ShipOpt {
   o: BuildOpt; needTier: number; yardTier: number; yardShort: boolean; afford: boolean;
   maxAff: number; buildable: boolean; reason: string; slipsFull: boolean; slips: number; foundingLocked: boolean;
   buildRate: number; yardBody?: BodyView;
+  /** §licences: the Authority's licence for this hull, as heard (none for a
+   * ground-Shipyard hull), and whether its absence stops the keel. */
+  licence?: LicenceView; unlicensed: boolean;
 }
 
 export const buildOption = (key: string): BuildOpt | undefined => state.galaxy?.build_options.find((option) => option.key === key);
@@ -219,8 +251,26 @@ export const COMMODITIES: Commodity[] = [
   "olivine_ore", "bornite_ore", "ilmenite_ore", "iridium_ore", "helium3_ice", "void_crystal",
   "rare_elements", "silicates", "conductive_metals", "titanium", "iridium", "helium3", "exotic_matter",
   "alloys", "electronics", "polymers", "uranium", "deuterium", "antimatter", "provisions", "machinery", "armaments",
-  "composites", "hull_sections", "precision_components", "warp_core", "fusion_core",
+  "composites", "hull_sections", "precision_components",
+  // §reactors-drives: the reactor and drive ladders and the kit parts.
+  "fission_reactor", "fusion_reactor", "advanced_fusion_reactor", "antimatter_reactor",
+  "zephyr_drive", "gale_drive", "tempest_drive", "maelstrom_drive",
+  "nav_computer", "cargo_bay", "pulse_laser", "beam_battery",
+  // §shipbuilding-overhaul Phase 5: the munitions.
+  "torpedoes", "slugs", "beam_crystals",
+  // §hull-ladder: heavy and capital engines and frames (hidden until the
+  // Cruiser's and the Dreadnought's lines).
+  "heavy_fission_reactor", "heavy_fusion_reactor", "heavy_advanced_fusion_reactor", "heavy_antimatter_reactor", "heavy_zephyr_drive", "heavy_gale_drive", "heavy_tempest_drive", "heavy_maelstrom_drive", "heavy_hull_sections",
+  "capital_fission_reactor", "capital_fusion_reactor", "capital_advanced_fusion_reactor", "capital_antimatter_reactor", "capital_zephyr_drive", "capital_gale_drive", "capital_tempest_drive", "capital_maelstrom_drive", "capital_hull_sections",
+  // §modules-as-goods (Nov 8 2026): the modules (equipment.ts MODULE_KINDS).
+  "mass_driver", "torpedo_rack", "point_defense_screen", "reflective_plating", "whipple_armor", "extended_tanks", "recon_suite",
+  "cargo_pods", "escort_datalink", "fuel_transfer_rig", "survey_drive", "nebula_spectrometer", "prismatic_lance", "stasis_web",
+  "warp_stabilizer", "interdiction_field", "lance_array",
 ];
+/** §reactors-drives: the goods a catalogue, book or picker may list — every
+ * commodity but a reactor, drive or fuel research has not opened yet
+ * (Peter, Oct 28 2026: nothing research has not unlocked is rendered). */
+export const knownCommodities = (): Commodity[] => COMMODITIES.filter(goodKnown);
 
 export function ownedHaulDestinations(): { id: EntityId; name: string }[] {
   const owned = new Set(
@@ -253,7 +303,12 @@ export const freightDraft = new Map<Commodity, number>();
 
 let netSource: () => Net | null = () => null;
 let pendingFitSource: () => ModuleKind[] = () => [];
-export function bindMarketDerive(source: () => Net | null, fitSource: () => ModuleKind[]): void {
+let pendingReactorSource: () => ReactorGrade = () => "fission";
+let pendingDriveSource: () => Drive = () => "zephyr";
+export function bindMarketDerive(source: () => Net | null, fitSource: () => ModuleKind[], reactorSource: () => ReactorGrade = () => "fission",
+  driveSource: () => Drive = () => "zephyr"): void {
+  pendingReactorSource = reactorSource;
+  pendingDriveSource = driveSource;
   netSource = source;
   pendingFitSource = fitSource;
 }
@@ -315,7 +370,7 @@ export function moduleBuildReason(dyn: SystemStateView, module: ModuleKind): str
   const yard = isUtility(module) ? "shipyard" : "armaments_complex";
   if (!(dyn.structures[yard] > 0)) return isUtility(module) ? "Needs Shipyard I" : "Needs Armaments Complex";
   if (isUtility(module) && !dyn.bodies.some(body => shipyardBoost(dyn, body) > 0)) return "Assign Shipyard workforce";
-  // Module recipes draw on the local ledger, not docked commodity holds.
+  // Module recipes draw on the local stockpile, not docked commodity holds.
   const stock = new Map((dyn.stockpile ?? []).map(s => [s.commodity, s.units]));
   const recipe = buildOption(`module:${module}`);
   return !recipe || recipe.costs.some(c => (stock.get(c.commodity as Commodity) ?? 0) < c.units) ? "Insufficient stock" : "";
@@ -330,14 +385,14 @@ export function refitCargoCapacity(g: GhostView, hull: string, from: ModuleKind[
 }
 
 export function refitCargoBlocked(g: GhostView, hull: string, from: ModuleKind[], to: ModuleKind[], n: number): boolean {
-  return fleetCargoUnits(g) > refitCargoCapacity(g, hull, from, to, n);
+  return fleetHoldUsed(g) > refitCargoCapacity(g, hull, from, to, n) * ROOM_SCALE; // §hold-room: Fleet::cargo_fits
 }
 
 /** The pooled manifest can allow removing one set of pods but not a whole
  * fitted stack. Clamp the selector to the actual arrived free hold space. */
 export function maxCargoRefitCount(g: GhostView, hull: string, from: ModuleKind[], to: ModuleKind[], available: number): number {
   const loss = cargoUnitsPerHull(hull as ShipKind) * (cargoMultiplier(from) - cargoMultiplier(to));
-  return loss > 0 ? Math.max(0, Math.min(available, Math.floor((fleetCargoCapacity(g) - fleetCargoUnits(g)) / loss))) : available;
+  return loss > 0 ? Math.max(0, Math.min(available, Math.floor((fleetCargoCapacity(g) * ROOM_SCALE - fleetHoldUsed(g)) / (loss * ROOM_SCALE)))) : available;
 }
 
 export function refitPreview(g: GhostView, hull: import("../../protocol").ShipKind, from: ModuleKind[], to: ModuleKind[], n: number): string {
@@ -347,7 +402,7 @@ export function refitPreview(g: GhostView, hull: import("../../protocol").ShipKi
   const fuel = Math.abs(cap - oldCap) > 1e-9 ? ` · Fleet tank ${oldCap.toFixed(1)} → ${cap.toFixed(1)} Fuel · aboard ${g.fuel?.toFixed(1) ?? "unknown"} unchanged` : "";
   const oldCargo = fleetCargoCapacity(g);
   const newCargo = refitCargoCapacity(g, hull, from, to, n);
-  const cargo = oldCargo !== newCargo ? `Cargo ${oldCargo} → ${newCargo} · aboard ${fleetCargoUnits(g)} unchanged` : "";
+  const cargo = oldCargo !== newCargo ? `Cargo ${oldCargo} → ${newCargo} · aboard ${fmtRoom(fleetHoldUsed(g))} unchanged` : "";
   return `${detail}${fuel}${cargo ? `${detail || fuel ? " · " : ""}${cargo}` : ""}${detail || fuel || cargo ? " · " : ""}Refit ${3 * n}s after receipt${refitFuelBlocked(g, from, to) ? " · Use fuel before removing tanks" : ""}${refitCargoBlocked(g, hull, from, to, n) ? " · Unload cargo before removing pods" : ""}`;
 }
 
@@ -395,9 +450,11 @@ export function moduleRecipeValue(m: ModuleKind): number | null {
   return v;
 }
 
-// The module ledger at a system (owner-only; {} if unseen).
+// §modules-as-goods (Nov 8 2026): the whole modules in a system's stockpile (owner-only; {} if unseen).
 export function moduleLedgerAt(sid: string): Record<string, number> {
-  return state.systems.find((s) => s.id === sid)?.modules ?? {};
+  const stock = state.systems.find((s) => s.id === sid)?.stockpile ?? [];
+  return Object.fromEntries(stock.filter((line) => isModuleGood(line.commodity) && line.units >= 1)
+    .map((line) => [line.commodity, Math.floor(line.units)]));
 }
 
 export function bodyPoolTotals(b: BodyView): Record<"resource" | "industrial" | "infrastructure", number> {
@@ -511,7 +568,8 @@ export function structOption(o: BuildOpt, dyn: SystemStateView, body: BodyView, 
     ? `Grows only on ${label(o.requires_environment)} worlds.` : "";
   // §asteroid-quarry: a belt takes its quarry and nothing else.
   const groundReason = suitsBody(o.key, body) ? ""
-    : o.key === "asteroid_quarry" ? "An Asteroid Quarry stands on an asteroid belt." : "A belt takes only an Asteroid Quarry.";
+    : o.key === "asteroid_quarry" ? "An Asteroid Quarry stands on an asteroid belt."
+      : o.key === "veil_projector" ? "A Veil needs an atmosphere to ionise." : "A belt takes only an Asteroid Quarry.";
   // §charter-v4: the charter's land grant covers only the landing world until
   // "Expand mining operations" (sim World::apply_build).
   const landing = (dyn.bodies ?? []).find((b) => (b.structures?.command_center ?? 0) > 0);
@@ -573,6 +631,38 @@ export function hullResearched(key: string): boolean {
   return state.research?.programmes.find((p) => p.id === prog)?.state === "completed";
 }
 
+/** §licences (docs/blueprint-licences.md): research is the skill to build a
+ * hull, the Authority's licence the right to. Every Orbital Shipyard and
+ * Capital Slipway hull needs one; this is its licence as heard, or undefined
+ * for a hull that needs none. */
+export function licenceFor(key: string): LicenceView | undefined {
+  return state.charter?.licences?.find((l) => l.hull === key);
+}
+/** A licence that stops a keel: needed, not held, and not at war (a
+ * syndicate at war with the Authority needs none). */
+export const licenceMissing = (l: LicenceView | undefined): boolean => !!l && !l.held && l.refusal?.reason !== "at_war";
+/** Can the Authority sell this licence now? */
+export const licenceForSale = (l: LicenceView | undefined): boolean => !!l && !l.held && !l.refusal;
+const credits = (n: number) => Math.round(n).toLocaleString("en-US");
+/** One short line for a licence: held, its price, or why not. Empty for a
+ * hull research hasn't unlocked (nothing it hasn't unlocked is shown). */
+export function licenceNote(l: LicenceView | undefined): string {
+  if (!l || l.refusal?.reason === "needs_research") return "";
+  if (l.held) return "Licensed";
+  switch (l.refusal?.reason) {
+    case "at_war": return "None needed · at war";
+    case "charter_closed": return "Suspended · charter revoked";
+    case "needs_commissioned": return `Commissioned only · ${credits(l.price)} Cr`;
+    default: return `${credits(l.price)} Cr`;
+  }
+}
+/** Why a missing licence stops the keel, for the build card. */
+function licenceReason(l: LicenceView): string {
+  if (l.refusal?.reason === "charter_closed") return "Licences are suspended while your charter is revoked.";
+  if (l.refusal?.reason === "needs_commissioned") return "The Authority licenses capitals only at Commissioned standing.";
+  return "Needs the Authority's licence.";
+}
+
 export function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
   const have = constructionStock(dyn, o.key).available;
   // §yards: read the gating yard's tier from the owner-only structures map
@@ -601,16 +691,19 @@ export function shipOption(o: BuildOpt, dyn: SystemStateView): ShipOpt {
   const yardBody = dyn.bodies?.reduce<BodyView | undefined>((best, body) =>
     !best || (body.structures?.[gate.yard] ?? 0) >= (best.structures?.[gate.yard] ?? 0) ? body : best, undefined);
   const buildRate = yardBody ? shipyardBoost(dyn, yardBody, gate.yard) : 0;
-  const buildable = !foundingLocked && !yardShort && !unresearched && !slipsFull && afford;
+  const licence = licenceFor(o.key);
+  const unlicensed = !unresearched && licenceMissing(licence);
+  const buildable = !foundingLocked && !yardShort && !unresearched && !unlicensed && !slipsFull && afford;
   const reason = foundingLocked
     ? "Complete the Founding Programme to unlock expansion."
     : unresearched
     ? `Requires ${researchTitle} research.`
+    : unlicensed ? licenceReason(licence!)
     : yardShort ? `Needs ${YARD_TITLE[gate.yard] ?? gate.yard} tier ${needTier} (have ${yardTier}).`
     : slipsFull ? `All ${slips} slipway${slips === 1 ? "" : "s"} busy — raise the ${YARD_TITLE[gate.yard] ?? gate.yard} or wait for a hull to launch.`
     : !afford ? "Not enough goods available at this system."
     : buildRate <= 0 ? `Queued hulls wait for workforce at ${YARD_TITLE[gate.yard] ?? gate.yard}${yardBody ? ` · ${yardBody.name}` : ""}.` : "";
-  return { o, needTier, yardTier, yardShort: yardShort || unresearched, afford, maxAff, buildable, reason, slipsFull, slips, foundingLocked, buildRate, yardBody };
+  return { o, needTier, yardTier, yardShort: yardShort || unresearched, afford, maxAff, buildable, reason, slipsFull, slips, foundingLocked, buildRate, yardBody, licence, unlicensed };
 }
 
 /// Mirrors sim::production::shipyard_work_rate. These are served factors, used
@@ -637,9 +730,13 @@ export function dispatchBuildKey(k: string, sid: string, bodyId?: number): void 
     // silent server reject). The ledger is debited server-side.
     const fit = pendingFitSource().filter((m) => (moduleLedgerAt(sid)[m] ?? 0) > 0 && moduleFitsHull(m, k)).slice(0, MODULE_SLOTS[k] ?? 0);
     if (!fitLegal(k, fit)) return;
-    net.send({ type: "BuildShip", system_id: sid, ship_kind: k as import("../../protocol").ShipKind, loadout: fit.length ? fit : undefined });
+    // §reactors-drives: and the reactor and drive the card chose.
+    const reactor = pendingReactorSource();
+    const drive = pendingDriveSource();
+    net.send({ type: "BuildShip", system_id: sid, ship_kind: k as import("../../protocol").ShipKind, loadout: fit.length ? fit : undefined,
+      reactor: reactor === "fission" ? undefined : reactor, drive: drive === "zephyr" ? undefined : drive });
   }
-  // §modules Part B3: "module:<slug>" → manufacture into the system ledger.
+  // §modules Part B3: "module:<slug>" → manufacture into the system's stockpile (§modules-as-goods).
   else if (k.startsWith("module:")) net.send({ type: "BuildModule", system_id: sid, module: k.slice(7) as ModuleKind });
   // §bodies: the body panel names its body; omitted → the sim auto-sites.
   else net.send({ type: "DevelopSystem", system_id: sid, upgrade: k, body_id: bodyId }); // §economy: any structure slug
@@ -652,7 +749,7 @@ export function dispatchBuildKey(k: string, sid: string, bodyId?: number): void 
 // operating reserve (they power movement; sell them via the Market), so they
 // must neither light the button nor be promised in feedback.
 // The View's stockpile is already owner-only whole units, so this is exact.
-export const SHIP_FUELS: readonly Commodity[] = ["uranium", "deuterium", "antimatter"];
+export const SHIP_FUELS: readonly Commodity[] = ["uranium", "deuterium", "helium3", "antimatter"];
 export function shippableStock(dyn: SystemStateView | undefined): StockSlot[] {
   return (dyn?.stockpile ?? []).filter((s) => !SHIP_FUELS.includes(s.commodity) && s.units >= 1);
 }

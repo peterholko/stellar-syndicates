@@ -165,6 +165,7 @@ mod tests {
     fn clearing_a_stronghold_opens_settlement_and_physical_plunder_not_a_home_teleport() {
         let (mut w, p) = setup();
         let (sid, pos) = site(&w, pirate::STRONGHOLD_TIER);
+        w.grant_claim(p, sid);
         let colony = friendly(&mut w, p, ShipKind::Colony, pos);
         w.resolve_colony_arrivals(&mut Vec::new());
         assert!(w.fleets.contains_key(&colony));

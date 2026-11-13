@@ -462,6 +462,28 @@ mod tests {
         assert_eq!(allowance[&Commodity::MetallicOre], 30, "the bulk ore, a tenth");
     }
 
+    /// §modules-as-goods (Nov 8 2026): modules lie in the stockpile, so a home
+    /// raid takes them like any good, the dearest first.
+    #[test]
+    fn a_home_raid_takes_a_torpedo_rack_first() {
+        let (mut w, _, home, base, fleet) = scene();
+        launch(&mut w, base, fleet);
+        w.time = w.pirate_home_raids[&fleet].depart_at;
+        let main = w.systems.iter().find(|s| s.id == home).unwrap().main_world().unwrap();
+        w.park_at(fleet, home, main);
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile = BTreeMap::from([
+            (Commodity::TorpedoRack, 10.0), (Commodity::Electronics, 50.0), (Commodity::MetallicOre, 40.0)]);
+        w.tick_pirate_home_raids(&mut Vec::new());
+        w.resolve_blockades(&mut Vec::new());
+        for _ in 0..2_000 {
+            if w.fleets[&fleet].cargo_units() > 0 { break; }
+            w.plunder_home_raid(fleet, &mut Vec::new());
+        }
+        assert_eq!(w.fleets[&fleet].cargo_units(), 1);
+        assert_eq!(w.fleets[&fleet].cargo_amount(Commodity::TorpedoRack), 1, "the dearest good goes first");
+        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(crate::module::ModuleKind::TorpedoRack), 9);
+    }
+
     #[test]
     fn home_raid_freezes_per_good_allowance_and_survives_save_load() {
         let (mut w, _, home, base, fleet) = scene();

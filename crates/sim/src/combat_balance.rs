@@ -295,13 +295,17 @@ pub struct Tier {
     pub budget: f64,
 }
 
-/// Picked so whole hulls land close to every budget: a skirmish fields two
-/// battleships or one dreadnought (no titan), a fleet action one titan, a
-/// major battle three titans or about 180 interceptors.
+/// Picked so whole hulls land close to every budget. §hull-ladder (Nov 7
+/// 2026): equal cost stops being the yardstick above the Destroyer — a
+/// Battleship is 1.29M, a Titan 130M, and the roster holds 300 a side — so
+/// the tiers cover the light ladder: a skirmish fields one Destroyer or 25
+/// Interceptors, a fleet action one Cruiser or five Destroyers, a major battle
+/// two Cruisers or about 250 Interceptors. Battleships and up sit every tier
+/// out; their balance is set by role targets, not equal cost.
 pub const TIERS: [Tier; 3] = [
-    Tier { key: "skirmish", name: "Skirmish", budget: 55_000.0 },
-    Tier { key: "fleet", name: "Fleet action", budget: 115_000.0 },
-    Tier { key: "major", name: "Major battle", budget: 340_000.0 },
+    Tier { key: "skirmish", name: "Skirmish", budget: 50_000.0 },
+    Tier { key: "fleet", name: "Fleet action", budget: 250_000.0 },
+    Tier { key: "major", name: "Major battle", budget: 500_000.0 },
 ];
 
 /// An archetype that can't come within this share of a budget in whole hulls
@@ -886,8 +890,9 @@ mod tests {
     #[test]
     fn hull_values_are_their_recipes_at_reference_prices() {
         // The same reference the capital recipes pin (build.rs).
-        for (kind, value) in [(ShipKind::Destroyer, 5_756.0), (ShipKind::Cruiser, 10_923.0),
-            (ShipKind::Battleship, 23_910.0), (ShipKind::Dreadnought, 49_265.0), (ShipKind::Titan, 106_970.0)] {
+        // §hull-ladder: the kits (docs/hull-ladder-plan.md §2) with the assembly fee.
+        for (kind, value) in [(ShipKind::Destroyer, 50_041.0), (ShipKind::Cruiser, 257_123.0),
+            (ShipKind::Battleship, 1_289_457.0), (ShipKind::Dreadnought, 13_042_445.0), (ShipKind::Titan, 130_470_653.0)] {
             assert!((hull_value(kind) / value - 1.0).abs() < 0.01, "{kind:?}: {}", hull_value(kind));
         }
         let driver = Loadout::new(vec![DRIVER, DRIVER]);
@@ -936,25 +941,29 @@ mod tests {
                 }
             }
         }
-        assert!(build_fleet(archetype("titan_beam"), TIERS[0].budget).is_none(), "no titan in a skirmish");
-        let titans = build_fleet(archetype("titan_beam"), TIERS[2].budget).unwrap();
-        assert_eq!(titans.hulls(), 3);
-        // Every archetype fights in the two larger tiers.
-        for arch in ARCHETYPES {
+        // §hull-ladder: nothing from the Battleship up fits an equal-cost tier.
+        for arch in ARCHETYPES.iter().filter(|a| a.parts.iter().any(|p| p.kind.is_siege_anchor())) {
+            for tier in TIERS {
+                assert!(build_fleet(arch, tier.budget).is_none(), "{} sits out {}", arch.key, tier.key);
+            }
+        }
+        // Every light archetype fights in the two larger tiers.
+        for arch in ARCHETYPES.iter().filter(|a| a.parts.iter().all(|p| !p.kind.is_siege_anchor())) {
             assert!(build_fleet(arch, TIERS[1].budget).is_some(), "{} in a fleet action", arch.key);
             assert!(build_fleet(arch, TIERS[2].budget).is_some(), "{} in a major battle", arch.key);
         }
+        assert_eq!(build_fleet(archetype("cruiser_beam"), TIERS[2].budget).unwrap().hulls(), 2);
         // A mixed fleet keeps every part, carrying rounding down the ladder.
-        let group = build_fleet(archetype("battle_group"), TIERS[1].budget).unwrap();
-        assert_eq!(group.squadrons.len(), 4);
-        assert!((group.cost / TIERS[1].budget - 1.0).abs() < 0.02, "{}", group.cost);
+        let pack = build_fleet(archetype("wolfpack"), TIERS[1].budget).unwrap();
+        assert_eq!(pack.squadrons.len(), 2);
+        assert!((pack.cost / TIERS[1].budget - 1.0).abs() < 0.02, "{}", pack.cost);
     }
 
     #[test]
     fn a_cell_counts_every_fight_and_replays_exactly() {
         let a = archetype("interceptor_beam");
-        let d = archetype("cruiser_beam");
-        let budget = 25_000.0;
+        let d = archetype("destroyer_beam");
+        let budget = 50_000.0;
         let (fa, fd) = (build_fleet(a, budget).unwrap(), build_fleet(d, budget).unwrap());
         let cell = run_cell((a, &fa), (d, &fd), budget, 6);
         assert_eq!(cell.runs, 6);
@@ -968,16 +977,25 @@ mod tests {
 
     #[test]
     fn interceptors_hold_what_cruisers_cannot_catch_and_torpedoes_finish_it() {
-        let budget = TIERS[0].budget;
-        let runner = build_fleet(archetype("battleship_driver"), budget).unwrap();
-        let tries = |hunter: &str| -> Vec<Escape> {
-            let hunter = build_fleet(archetype(hunter), budget).unwrap();
+        // A tactical regression, not an equal-cost claim: these are the
+        // fleets the v13 harness fought (55,000 Cr of each at pre-ladder
+        // prices). §hull-ladder: at today's prices the hunters are a tenth of
+        // the runner, which is the point of the ladder.
+        let hand = |key: &str, count: u32| -> Fleet {
+            let part = &archetype(key).parts[0];
+            let fit = part.fit.loadout(part.kind);
+            let unit = ship_value(part.kind, &fit);
+            Fleet { squadrons: vec![Squadron { kind: part.kind, fit: fit.key(), count, unit }], cost: unit * f64::from(count) }
+        };
+        let runner = hand("battleship_driver", 2);
+        let tries = |hunter: &str, count: u32| -> Vec<Escape> {
+            let hunter = hand(hunter, count);
             (0..4).map(|k| escape(&hunter, &runner, k)).collect()
         };
         let mean = |v: &[Escape], f: fn(&Escape) -> f64| v.iter().map(f).sum::<f64>() / v.len() as f64;
-        let free = tries("cruiser_driver");
-        let held = tries("interceptor_beam");
-        let killed = tries("interceptor_torpedo");
+        let free = tries("cruiser_driver", 4);
+        let held = tries("interceptor_beam", 27);
+        let killed = tries("interceptor_torpedo", 19);
         assert!(mean(&free, |e| e.escaped) > 0.9, "nothing holds it against cruisers: {free:?}");
         // Light guns can't kill a battleship, but they keep it in the fight
         // (since v12 its drivers fire one shot each and clear the tacklers in

@@ -15,7 +15,6 @@ export function mountDeckMarkup(root: HTMLElement): void {
         <div id="deck-merchant-chip" class="deck-construction-chip deck-merchant-chip" hidden></div>
         <div id="deck-signals-chip" class="deck-construction-chip deck-signals-chip" hidden></div>
         <nav id="deck-nav" class="deck-nav" aria-label="Command Deck">
-          ${navButton("command", "Command")}
           ${navButton("fleets", "Fleets")}
           ${navButton("logistics", "Logistics")}
           ${navButton("market", "Market")}
@@ -50,7 +49,7 @@ export function mountDeckMarkup(root: HTMLElement): void {
         <header class="deck-workspace__header">
           <button type="button" data-deck-act="back" aria-label="Back">←</button>
           <nav id="deck-breadcrumb" class="deck-breadcrumb" aria-label="Breadcrumb"></nav>
-          <h1 id="deck-workspace-title">Command</h1>
+          <h1 id="deck-workspace-title"></h1>
           <button type="button" data-deck-act="width" aria-label="Toggle workspace width">↔</button>
           <button type="button" data-deck-act="close" aria-label="Close workspace">✕</button>
         </header>
@@ -158,8 +157,9 @@ export function mountDeckMarkup(root: HTMLElement): void {
 }
 
 /** Top-bar destinations that fold into More first when the row runs out of
- * room; Command, Fleets, Logistics and Market always stay. */
-const NAV_FOLD_ORDER = ["faction", "comms", "syndicate", "operations", "officers", "log", "research"];
+ * room; Fleets, Logistics and Market always stay, and Log, with its count,
+ * folds last. */
+const NAV_FOLD_ORDER = ["faction", "comms", "syndicate", "operations", "officers", "research", "log"];
 
 /** Keep every destination reachable: when the row would clip (window width,
  * credit digits, the construction chip), fold the least-used destinations into

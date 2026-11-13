@@ -1,10 +1,11 @@
 //! §power: PER-PLANET POWER GRIDS (`docs/power-plants-plan.md`).
 //!
 //! Every planet (moons, belts and gas giants included) runs its own grid.
-//! Mines, factories, yards and the Academy draw power; civic structures —
-//! food, housing, storage, the Command Center, berths, garrisons, defence and
-//! sensors — never do, so a power failure can't starve a colony or silence
-//! its guns. Every planet supplies a small base of its own; past that it needs
+//! Mines, factories, yards, the Academy and (§habitat-first, Nov 8 2026) the
+//! food chain's Bioharvester and Agroplex draw power; civic structures —
+//! housing, storage, the Command Center, berths, garrisons, defence and
+//! sensors — never do, so a power failure can't leave a colony homeless or
+//! silence its guns. Every planet supplies a small base of its own; past that it needs
 //! its Power Plant: one per planet, in its own slot. §fuel-overhaul: tiers
 //! I–II are Solar Arrays and burn nothing; III–IV are Fusion Plants on
 //! Deuterium (with the Authority's Fusion Core); V–VI fuse Helium-3 after
@@ -20,13 +21,17 @@ use crate::cargo::Commodity;
 
 /// §charter-v4: no planet has free power (Peter, Oct 14 2026: "No planet
 /// should have free power, they should require a power source"). A Command
-/// Center's reactor, the landed colony ship's, powers its own planet with
-/// this much: enough for a Mining Complex I, not a Shipyard beside it.
-/// Everything else needs a plant. Tunable.
-pub const COMMAND_CENTER_MW: f64 = 1.0;
+/// Center's reactor, the landed colony ship's, used to run a Mining Complex I.
+/// §charter-v6 (Peter, Nov 7 2026: "use the command center's power output
+/// not to include the mine and smelter"): it runs the colony itself and
+/// nothing on the grid; the first mine waits for the Solar Array (step 4).
+/// Tunable.
+pub const COMMAND_CENTER_MW: f64 = 0.0;
 /// The free supply every planet had before v4. Only the legacy mechanics
-/// sandbox still runs on it (`World::legacy_free_power`).
-pub const LEGACY_BASE_MW: f64 = 3.0;
+/// sandbox still runs on it (`World::legacy_free_power`). §habitat-first
+/// (Nov 8 2026): 3 → 6 MW, so the sandbox's homes keep their old output now
+/// that their farms draw power too. Test-only.
+pub const LEGACY_BASE_MW: f64 = 6.0;
 
 /// A planet's own supply before any plant: its Command Center's reactor.
 pub fn base_mw(command_center_tier: u32) -> f64 {
@@ -60,6 +65,10 @@ pub fn powered(kind: StructureKind) -> bool {
     match kind {
         K::MiningComplex
         | K::VolatileHarvester
+        // §habitat-first (Nov 8 2026): the food chain runs on the Solar
+        // Array like the mine, one tier-throughput each.
+        | K::Bioharvester
+        | K::Agroplex
         | K::Smelter
         | K::ElectronicsFabricator
         | K::ChemicalWorks
@@ -77,9 +86,8 @@ pub fn powered(kind: StructureKind) -> bool {
         | K::CapitalSlipway
         | K::OrdnanceFoundry
         | K::Academy => true,
-        K::Bioharvester
-        | K::Agroplex
-        | K::LivingTerraces
+        // Housing: the Gaia terraces house first and farm second.
+        K::LivingTerraces
         | K::Habitat
         | K::OrbitalWarehouse
         | K::Warehouse
@@ -93,8 +101,21 @@ pub fn powered(kind: StructureKind) -> bool {
         | K::CommandCenter
         | K::PowerPlant
         // §asteroid-quarry: it carries its own power.
-        | K::AsteroidQuarry => false,
+        | K::AsteroidQuarry
+        // §veil: fed straight off the Fusion Plant's reactor while raised
+        // (`World::resolve_veil` burns its fuel), never a grid load.
+        | K::VeilProjector => false,
     }
+}
+
+/// §veil: the reactor output a raised Veil takes, by projector level (I–III).
+/// Charged to the plant's fuel at its own burn rate, on top of the grid, so a
+/// Veil holds exactly as long as the world's fuel reserve does: a Veil I on
+/// Deuterium burns 0.03 a second, 108 an hour. Tunable.
+pub const VEIL_MW: [f64; 3] = [6.0, 10.0, 16.0];
+/// The MW a Veil Projector at `level` draws while raised (0 unbuilt).
+pub fn veil_mw(level: u32) -> f64 {
+    if level == 0 { 0.0 } else { VEIL_MW[(level as usize - 1).min(VEIL_MW.len() - 1)] }
 }
 
 /// The MW a fully crewed structure of `kind` at `tier` draws: its tier
@@ -200,13 +221,18 @@ pub fn browning_out(power: f64, was: bool) -> bool {
 mod tests {
     use super::*;
 
+    /// The pre-v4 free base these grid sums were written for (the sandbox's
+    /// own base is `LEGACY_BASE_MW`).
+    const BASE: f64 = 3.0;
+
     #[test]
     fn only_a_command_center_powers_a_planet_without_a_plant() {
         assert_eq!((base_mw(0), base_mw(1), base_mw(3)), (0.0, COMMAND_CENTER_MW, COMMAND_CENTER_MW));
+        // §charter-v6: the reactor runs the colony, nothing on the grid.
         let (g, burned) = settle(1.0, base_mw(1), 0, 0.0, 1.0);
-        assert_eq!((g.power, burned), (1.0, 0.0), "the reactor runs a Mining Complex I");
-        let (g, _) = settle(2.0, base_mw(1), 0, 100.0, 1.0);
-        assert_eq!(g.power, 0.5, "a Shipyard beside it needs a plant");
+        assert_eq!((g.power, burned), (0.0, 0.0), "a Mining Complex I waits for a plant");
+        let (g, _) = settle(2.0, base_mw(1), 1, 0.0, 1.0);
+        assert_eq!(g.power, 1.0, "a Solar Array runs the mine and a Smelter");
         let (g, _) = settle(1.0, base_mw(0), 0, 100.0, 1.0);
         assert_eq!(g.power, 0.0, "no Command Center and no plant: nothing powered runs");
         let (g, burned) = settle(2.0, base_mw(1), 1, 0.0, 1.0);
@@ -217,18 +243,18 @@ mod tests {
 
     #[test]
     fn fusion_burns_deuterium_then_helium3_and_short_fuel_supplies_what_it_covers() {
-        let (g, burned) = settle(33.4, LEGACY_BASE_MW, 3, 100.0, 1.0);
+        let (g, burned) = settle(33.4, BASE, 3, 100.0, 1.0);
         assert_eq!(g.power, 1.0);
         assert!((burned - (30.4 - 17.6) * FUEL_PER_MW_S).abs() < 1e-12,
             "burn follows the load above the base and the kept solar fields");
         assert_eq!(plant_fuel(3), Some(Commodity::Deuterium));
-        let (g, burned) = settle(40.0, LEGACY_BASE_MW, 3, 0.02, 1.0);
+        let (g, burned) = settle(40.0, BASE, 3, 0.02, 1.0);
         assert!(g.no_fuel && (burned - 0.02).abs() < 1e-12);
         assert_eq!(g.power, 0.61, "(3 + 17.6 solar + 4 fuelled) / 40, rounded down");
-        let (g, _) = settle(100.0, LEGACY_BASE_MW, 4, 1e9, 1.0);
+        let (g, _) = settle(100.0, BASE, 4, 1e9, 1.0);
         assert_eq!(g.power, 0.51, "Deuterium tops out at a tier IV plant");
         assert_eq!(plant_fuel(5), Some(Commodity::Helium3));
-        let (g, burned) = settle(60.0, LEGACY_BASE_MW, 5, 1e9, 1.0);
+        let (g, burned) = settle(60.0, BASE, 5, 1e9, 1.0);
         assert_eq!(g.power, 1.0);
         assert!((burned - (57.0 - 17.6) * FUEL_PER_MW_S / crate::fuel::HELIUM3_FUEL_EQUIV).abs() < 1e-12);
     }
@@ -238,12 +264,12 @@ mod tests {
         // A 20 MW planet runs free on Solar II. On Fusion III the same load
         // still runs free — the reactor burns only above the solar fields —
         // and a dry reactor falls back to them, not to the base.
-        let (solar, burned) = settle(20.0, LEGACY_BASE_MW, 2, 0.0, 1.0);
+        let (solar, burned) = settle(20.0, BASE, 2, 0.0, 1.0);
         assert_eq!((solar.power, burned), (1.0, 0.0));
-        let (fusion, burned) = settle(20.0, LEGACY_BASE_MW, 3, 0.0, 1.0);
+        let (fusion, burned) = settle(20.0, BASE, 3, 0.0, 1.0);
         assert_eq!((fusion.power, burned, fusion.no_fuel), (1.0, 0.0, false));
-        let (dry, _) = settle(30.0, LEGACY_BASE_MW, 3, 0.0, 1.0);
-        assert!(dry.no_fuel && (dry.supply - (LEGACY_BASE_MW + solar_mw(3))).abs() < 1e-12);
+        let (dry, _) = settle(30.0, BASE, 3, 0.0, 1.0);
+        assert!(dry.no_fuel && (dry.supply - (BASE + solar_mw(3))).abs() < 1e-12);
         assert_eq!(dry.power, 0.68, "(3 + 17.6) / 30, rounded down");
         for tier in 3..=6 {
             assert!((solar_mw(tier) - plant_mw(2)).abs() < 1e-12);
@@ -258,14 +284,28 @@ mod tests {
     }
 
     #[test]
-    fn food_housing_and_defence_never_draw_power() {
+    fn the_food_chain_draws_like_a_mine() {
+        // §habitat-first (Nov 8 2026): one tier-throughput each, so a Solar
+        // Array I's 8 MW runs the landing world's farms, mine, Smelter,
+        // Shipyard and Academy (1 + 1 + 1 + 2 + 1 + 1 = 7).
+        assert_eq!((draw_mw(StructureKind::Bioharvester, 1), draw_mw(StructureKind::Agroplex, 1)), (1.0, 1.0));
+        let charter: f64 = [StructureKind::Bioharvester, StructureKind::Agroplex, StructureKind::MiningComplex,
+            StructureKind::Smelter, StructureKind::Shipyard, StructureKind::Academy]
+            .into_iter().map(|k| draw_mw(k, 1)).sum();
+        assert!(charter <= plant_mw(1), "{charter} MW on one Solar Array I");
+        assert_eq!(draw_mw(StructureKind::Habitat, 1), 0.0, "the settlers' home needs no power");
+    }
+
+    #[test]
+    fn housing_storage_and_defence_never_draw_power() {
         for kind in StructureKind::ALL {
-            let civic = matches!(kind, StructureKind::Bioharvester | StructureKind::Agroplex
-                | StructureKind::LivingTerraces | StructureKind::Habitat | StructureKind::Warehouse
+            let civic = matches!(kind, StructureKind::LivingTerraces | StructureKind::Habitat | StructureKind::Warehouse
                 | StructureKind::OrbitalWarehouse | StructureKind::CommandCenter | StructureKind::ServiceBerth
                 | StructureKind::Garrison | StructureKind::OrbitalDefense | StructureKind::DefensePlatform
                 | StructureKind::SensorArray | StructureKind::PowerPlant | StructureKind::AsteroidQuarry
-                | StructureKind::Vault | StructureKind::AssemblyHall);
+                | StructureKind::Vault | StructureKind::AssemblyHall
+                // §veil: reactor-fed in `World::resolve_veil`, never a grid load.
+                | StructureKind::VeilProjector);
             assert_eq!(powered(kind), !civic, "{kind:?}");
         }
     }

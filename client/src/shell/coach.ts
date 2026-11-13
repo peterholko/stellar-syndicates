@@ -20,8 +20,16 @@ interface Active {
 
 let active: Active | null = null;
 
+/** §privateer-contract: the caption on the charter contract's Accept. */
+export const CONTRACT_COACH = "Accept the contract here.";
+
 const LOOK_FOR_MS = 4_000;
 const SHOW_MS = 14_000;
+
+/** The visible `[data-coach=target]`, an enabled one first. */
+export function coachTarget(target: string): HTMLElement | null {
+  return find(target);
+}
 
 function find(target: string): HTMLElement | null {
   const all = [...document.querySelectorAll<HTMLElement>(`[data-coach="${target}"]`)];
@@ -44,8 +52,12 @@ export function clearCoach(): void {
 
 /** Ring `[data-coach=target]` with a short caption once it appears. The
  * caption goes below the control unless `above` is asked for (or there is no
- * room), e.g. when text beneath the control must stay readable. */
-export function coach(target: string, caption: string, placement: "auto" | "above" = "auto"): void {
+ * room), e.g. when text beneath the control must stay readable.
+ * §charter-advisor: `face` puts the Charter Advisor's face beside it, and
+ * `right` sets the caption beside the control (clear of the card it sits
+ * in), or above it where there is no room. */
+export function coach(target: string, caption: string, placement: "auto" | "above" | "right" = "auto",
+  face?: { src: string; alt: string }): void {
   clearCoach();
   const ring = document.createElement("div");
   ring.className = "coach-ring";
@@ -54,7 +66,18 @@ export function coach(target: string, caption: string, placement: "auto" | "abov
   const bubble = document.createElement("div");
   bubble.className = "coach-bubble";
   bubble.setAttribute("role", "status");
-  bubble.textContent = caption;
+  if (face) {
+    const img = document.createElement("img");
+    img.src = face.src;
+    img.alt = face.alt;
+    img.decoding = "async";
+    const text = document.createElement("span");
+    text.textContent = caption;
+    bubble.classList.add("has-face");
+    bubble.append(img, text);
+  } else {
+    bubble.textContent = caption;
+  }
   bubble.hidden = true;
   document.body.append(ring, bubble);
   const started = performance.now();
@@ -84,9 +107,12 @@ export function coach(target: string, caption: string, placement: "auto" | "abov
       ring.hidden = bubble.hidden = false;
       Object.assign(ring.style, { left: `${r.left - 4}px`, top: `${r.top - 4}px`, width: `${r.width + 8}px`, height: `${r.height + 8}px` });
       const roomAbove = r.top - bubble.offsetHeight - 10 >= 8;
-      const below = placement === "above" && roomAbove ? false : r.bottom + 44 < window.innerHeight;
-      const left = Math.max(8, Math.min(window.innerWidth - bubble.offsetWidth - 8, r.left));
-      Object.assign(bubble.style, { left: `${left}px`, top: below ? `${r.bottom + 10}px` : `${Math.max(8, r.top - bubble.offsetHeight - 10)}px` });
+      const beside = placement === "right" && r.right + 20 + bubble.offsetWidth <= window.innerWidth - 8;
+      const below = !beside && (placement !== "auto" && roomAbove ? false : r.bottom + 44 < window.innerHeight);
+      const left = beside ? r.right + 20 : Math.max(8, Math.min(window.innerWidth - bubble.offsetWidth - 8, r.left));
+      const top = beside ? Math.max(8, Math.min(window.innerHeight - bubble.offsetHeight - 8, r.top + r.height / 2 - bubble.offsetHeight / 2))
+        : below ? r.bottom + 10 : Math.max(8, r.top - bubble.offsetHeight - 10);
+      Object.assign(bubble.style, { left: `${left}px`, top: `${top}px` });
     }
     state.frame = requestAnimationFrame(tick);
   };

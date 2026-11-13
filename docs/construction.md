@@ -201,6 +201,12 @@ shows what is still locked.
   hull; routes stop adding stops at three (a return trip) until Autonomous
   Freight.
 - **Refining estimate:** shown only once a Smelter stands or Enrichment is done.
+- **Corvette (Nov 11 2026):** Peter: "Shouldn't the corvette and combat
+  freighter not show up in the shipyard until they have been unlocked by
+  research?" The Corvette now needs Escort Datalink (Hulls I, whose card
+  always named it): `ship::requires_hull_unlock` and the client's
+  `HULL_PROGRAMME`, which a test now checks against the sim. The Combat
+  Freighter has no programme yet and still shows; its unlock is Peter's pick.
 - Already hidden before this: unresearched hulls, structures whose first
   level needs research, the lance battery, Mass Streams, signature mimicry
   and crown designations.

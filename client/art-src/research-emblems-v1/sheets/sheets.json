@@ -1,0 +1,163 @@
+{
+  "propulsion-01": [
+    "prop_drive_tuning",
+    "prop_bunkerage",
+    "prop_freight_frames",
+    "prop_expedition_iii_extended_tanks",
+    "prop_efficient_burns",
+    "prop_heavy_lifters"
+  ],
+  "propulsion-02": [
+    "prop_military_drives",
+    "prop_line_fusion_freight",
+    "prop_line_express_charters",
+    "prop_expedition_iii_torch_regime",
+    "prop_line_drop_berths",
+    "prop_line_bulk_charters"
+  ],
+  "propulsion-03": [
+    "prop_expedition_iv_fleet_tenders",
+    "prop_expedition_iv_long_patrol",
+    "prop_line_autonomous_freight",
+    "prop_line_mass_streams",
+    "prop_expedition_v_ramscoop",
+    "prop_expedition_v_underway_refit"
+  ],
+  "materials-01": [
+    "mat_deep_bores",
+    "mat_enrichment",
+    "mat_bulk_storage",
+    "mat_ore_recovery",
+    "mat_beneficiation",
+    "mat_prefab_construction"
+  ],
+  "materials-02": [
+    "mat_autoforges",
+    "mat_belt_stations",
+    "mat_deepcrust_iii_tier4_extraction",
+    "mat_deepcrust_iii_strip_rigs",
+    "mat_foundry_iii_tier4_processors",
+    "mat_foundry_iii_slag_reclamation"
+  ],
+  "materials-03": [
+    "mat_deepcrust_iv_trace_refining",
+    "mat_deepcrust_iv_prospecting_charters",
+    "mat_foundry_iv_orbital_yards",
+    "mat_foundry_iv_arcology_frames",
+    "mat_foundry_iv_fusion_reactors",
+    "mat_deepcrust_v_mantle_taps"
+  ],
+  "materials-04": [
+    "mat_deepcrust_v_crown_vein",
+    "mat_foundry_v_flash_forges",
+    "mat_foundry_v_crown_project",
+    "mat_foundry_vi_antimatter_synthesis"
+  ],
+  "computation-01": [
+    "comp_sensor_gain",
+    "comp_signal_libraries",
+    "comp_survey_protocols",
+    "comp_shadow_iv_recon_suite",
+    "comp_predictive_plots",
+    "comp_deep_space_arrays"
+  ],
+  "computation-02": [
+    "comp_gravimetric_survey",
+    "comp_watch_iii_picket_networks",
+    "comp_watch_iii_long_baselines",
+    "comp_shadow_iii_ecm_emitters",
+    "comp_shadow_iii_traffic_analysis",
+    "comp_watch_iv_battle_archives"
+  ],
+  "computation-03": [
+    "comp_watch_iv_standing_watch",
+    "comp_shadow_iv_wake_analysis",
+    "comp_watch_v_panopticon",
+    "comp_watch_v_survey_corps",
+    "comp_shadow_v_signature_mimicry",
+    "comp_shadow_v_counter_intel"
+  ],
+  "weapons-01": [
+    "weap_fire_control",
+    "weap_magnetic_accelerators",
+    "weap_warhead_yields",
+    "weap_orbital_batteries",
+    "weap_hardened_magazines",
+    "weap_munitions_lines"
+  ],
+  "weapons-02": [
+    "weap_fire_discipline",
+    "weap_strike_iii_lance_array",
+    "weap_strike_iii_breaching_ordnance",
+    "weap_cm_iii_flak_doctrine",
+    "weap_cm_iii_ablative_refits",
+    "weap_cm_iii_defense_stations"
+  ],
+  "weapons-03": [
+    "weap_strike_iv_platform_lances",
+    "weap_strike_iv_penetrator_slugs",
+    "weap_cm_iv_platform_netfire",
+    "weap_cm_iv_spall_liners",
+    "weap_strike_v_first_strike",
+    "weap_strike_v_overpressure"
+  ],
+  "weapons-04": [
+    "weap_cm_v_grand_batteries",
+    "weap_cm_v_star_fortress",
+    "weap_cm_v_citadel_compartments"
+  ],
+  "hulls-01": [
+    "hull_line_iii_escort_datalink",
+    "hull_cargo_pods",
+    "hull_drydock_efficiency",
+    "hull_reinforced_frames",
+    "hull_slipway_standards",
+    "hull_rapid_rearm"
+  ],
+  "hulls-02": [
+    "hull_modular_berths",
+    "hull_compartmentalization",
+    "hull_line_iii_hardened_anchorage",
+    "hull_corsair_iii_wolfpack",
+    "hull_corsair_iii_prize_holds",
+    "hull_line_iv_destroyer"
+  ],
+  "hulls-03": [
+    "hull_line_iv_fleet_escorts",
+    "hull_corsair_iv_slip_anchors",
+    "hull_corsair_iv_blockade_runners",
+    "hull_line_v_cruiser",
+    "hull_line_v_fortress_doctrine",
+    "hull_corsair_v_salvage_rigs"
+  ],
+  "hulls-04": [
+    "hull_corsair_v_boarding_parties",
+    "hull_line_vi_battleship",
+    "hull_line_vii_dreadnought",
+    "hull_line_viii_titan"
+  ],
+  "life-01": [
+    "life_hydroponics",
+    "life_med_bays",
+    "life_dense_housing",
+    "life_civic_rations",
+    "life_cryo_berths",
+    "life_gene_crops"
+  ],
+  "life-02": [
+    "life_growth_iii_orbital_habitats",
+    "life_growth_iii_boom_charters",
+    "life_talent_iii_expert_training",
+    "life_talent_iii_deep_careers",
+    "life_growth_iv_xenoacclimation",
+    "life_growth_iv_closed_loop"
+  ],
+  "life-03": [
+    "life_talent_iv_academy_iv",
+    "life_talent_iv_broad_curricula",
+    "life_growth_v_arcologies",
+    "life_growth_v_generation_charters",
+    "life_talent_v_twin_campuses",
+    "life_talent_v_founders_institutes"
+  ]
+}

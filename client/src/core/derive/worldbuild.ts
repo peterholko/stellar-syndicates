@@ -12,7 +12,7 @@ import { stationName } from "./station";
  * report alone says a job has started or finished. */
 
 /** Founding Camp projects share the slot (their base seconds, see SETTLEMENT_PROJECTS). */
-const PROJECT_SECONDS: Record<string, number> = { camp_prospect: 60, camp_workings: 120, camp_storehouse: 90, camp_quarters: 120 };
+const PROJECT_SECONDS: Record<string, number> = { camp_prospect: 60, camp_workings: 120, camp_storehouse: 90 };
 
 export const isProjectKey = (key: string): boolean => key in PROJECT_SECONDS;
 /** Structure tiers read as Roman numerals across the construction UI. */
@@ -99,7 +99,7 @@ export function hullJobs(report: SystemStateView, body: BodyView): BuildState[] 
 }
 
 /** A structure order's name: the building and the level it builds. */
-/** A station job is named for the level it raises ("Gun Platform"). */
+/** A station job is named for the level it raises ("Laser Battery"). */
 export const jobTitle = (job: StructureJob): string => job.project ? label(job.key)
   : job.key === "orbital_defense" ? stationName(job.tier) : `${label(job.key)} ${romanTier(job.tier)}`;
 
@@ -132,7 +132,7 @@ export function yardStatus(job: BuildState, now: number): string {
 export const TIER_THROUGHPUT: readonly number[] = [0, 1, 2.2, 3.8, 6, 8.6, 11.5];
 /** colony::POP_CAP_PER_HABITAT_TIER and TERRACE_POP_PER_TIER, in people per
  * level, before the world's habitat multiplier. */
-const HOUSING_PER_LEVEL: Readonly<Record<string, number>> = { habitat: 25_000, living_terraces: 20_000 };
+const HOUSING_PER_LEVEL: Readonly<Record<string, number>> = { habitat: 8_000, living_terraces: 6_400 };
 /** build::STORAGE_WAREHOUSE_INITIAL, STORAGE_PER_WAREHOUSE_TIER and
  * STORAGE_PER_ORBITAL_WAREHOUSE_TIER. §charter-v4: a Warehouse holds its full
  * amount on a camp world too; the Storehouse project enlarges the colony
@@ -141,21 +141,33 @@ const WAREHOUSE_FIRST = 700, WAREHOUSE_PER_LEVEL = 400, ORBITAL_STORAGE_PER_LEVE
 const EXTRACTORS: ReadonlySet<string> = new Set(["mining_complex", "volatile_harvester", "bioharvester"]);
 
 /** §power (sim::power): what draws power, each planet's base, and a plant's
- * output. Food, housing, storage, defence and sensors never draw. */
+ * output. Housing, storage, defence and sensors never draw; §habitat-first
+ * (Nov 8 2026) the food chain's Bioharvester and Agroplex do, like a mine. */
 export const POWERED_STRUCTURES: ReadonlySet<string> = new Set([
-  "mining_complex", "volatile_harvester", "smelter", "electronics_fabricator", "chemical_works", "fuel_refinery",
+  "mining_complex", "volatile_harvester", "bioharvester", "agroplex",
+  "smelter", "electronics_fabricator", "chemical_works", "fuel_refinery",
   "machine_works", "armaments_complex", "composite_works", "hull_fabricator", "precision_works", "drive_works",
   "uranium_mill", "antimatter_plant",
   "shipyard", "naval_drydock", "capital_slipway", "ordnance_foundry", "academy",
 ]);
 /** §charter-v4: no planet has free power; a Command Center's reactor gives its
- * own planet 1 MW (power::COMMAND_CENTER_MW). */
-export const COMMAND_CENTER_MW = 1;
+ * own planet nothing on the grid since §charter-v6 (Nov 7 2026): its reactor
+ * runs the colony, not the mine or the Smelter (power::COMMAND_CENTER_MW). */
+export const COMMAND_CENTER_MW = 0;
 export const baseMW = (body: BodyView): number => (body.structures.command_center ?? 0) > 0 ? COMMAND_CENTER_MW : 0;
 /** §fuel-overhaul: I–II Solar Array (burns nothing), III–IV Fusion Plant on
  * Deuterium, V–VI on Helium-3. */
 export const FUSION_CORE_TIER = 3;
 export const FUSION_TIER = 5;
+/** The Power Plant's flavour line, by level (Peter, Nov 8 2026: the old line
+ * "is not good"). The card's Supplies and Burns rows give the MW and the
+ * fuel, so this names neither number; Helium-3 shows only at the levels its
+ * research opens. */
+export function powerPlantFlavour(tier: number): string {
+  if (tier >= FUSION_TIER) return "The reactor fuses Helium-3: hotter, cleaner, six times the energy a unit.";
+  if (tier >= FUSION_CORE_TIER) return "A fusion reactor beside the solar fields, burning Deuterium for the power sunlight can't give.";
+  return "Fields of panels turn sunlight into power for this world.";
+}
 /** The heat-heavy works draw double; the Antimatter Plant ten times. */
 const DRAW_FACTOR: Readonly<Record<string, number>> = { smelter: 2, machine_works: 2, drive_works: 2, antimatter_plant: 10 };
 const throughputAt = (tier: number) => TIER_THROUGHPUT[Math.max(0, Math.min(tier, TIER_THROUGHPUT.length - 1))];
@@ -192,7 +204,8 @@ export function gridLine(body: BodyView): { text: string; short: boolean; tip: s
  * research has opened so far is `structureCeiling` (served, v72). */
 export function maxLevel(option: BuildOpt): number {
   if (option.tiers?.length) return Math.max(...option.tiers.map(level => level.tier));
-  return option.key === "service_berth" ? 1 : 6;
+  // §veil: three projector levels.
+  return option.key === "service_berth" ? 1 : option.key === "veil_projector" ? 3 : 6;
 }
 
 export interface StructureFact { label: string; from: string | null; to: string }
@@ -235,10 +248,7 @@ export function structureFacts(option: BuildOpt, from: number, to: number, body:
   const housing = HOUSING_PER_LEVEL[key];
   if (housing) {
     const mult = body.habitat_capacity_mult ?? 1;
-    const terraces = HOUSING_PER_LEVEL.living_terraces * mult * (body.structures.living_terraces ?? 0);
-    // A Founding Camp's first Habitat houses the camp, not a full level.
-    const camp = key === "habitat" && from === 1 && body.founding_camp ? Math.max(0, (body.population_capacity ?? 0) * 1e6 - terraces) : null;
-    facts.push({ label: "Houses", from: was(num(camp ?? housing * mult * from)), to: num(housing * mult * to) });
+    facts.push({ label: "Houses", from: was(num(housing * mult * from)), to: num(housing * mult * to) });
   }
   if (key === "warehouse") {
     const cap = (tier: number) => (WAREHOUSE_FIRST + WAREHOUSE_PER_LEVEL * (tier - 1)) * storageMult;

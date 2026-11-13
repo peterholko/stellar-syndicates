@@ -7,7 +7,7 @@ export const PRODUCTION_INPUTS: Record<string, Commodity[]> = {
   chemical_works: ["volatiles", "biomass"], fuel_refinery: ["volatiles"], agroplex: ["biomass"], living_terraces: [],
   machine_works: ["alloys", "electronics"], armaments_complex: ["alloys", "electronics", "polymers"],
   composite_works: ["alloys", "polymers", "silicates"], hull_fabricator: ["composites", "machinery", "titanium"],
-  precision_works: ["electronics", "machinery", "rare_elements"], drive_works: ["precision_components", "composites", "iridium"],
+  precision_works: ["electronics", "machinery", "rare_elements"], drive_works: ["precision_components", "composites", "machinery"],
   antimatter_plant: ["deuterium"],
 };
 const ROLE_PRODUCT: Record<ColonyOpportunityView["role"], Commodity[]> = {

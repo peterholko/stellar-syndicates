@@ -37,7 +37,7 @@ impl World {
         self.operations.get_mut(&id).unwrap().briefing = Some(OperationBriefing {
             follow_up: FollowUpKind::SiteRecovery, title: format!("Recover {}", prize.title()),
             difficulty: "Equipment recovery".into(), suitable_fleets: "Freighter".into(), variant: 0,
-            summary: format!("{} Dock at an owned system to store the modules. Data radios home after recovery; research gates still apply.", prize.summary()),
+            summary: format!("{} Unload the modules at an owned system. Data radios home after recovery; research gates still apply.", prize.summary()),
         });
     }
 
@@ -55,37 +55,17 @@ impl World {
         let Some(fleet) = self.fleets.get_mut(&fleet_id) else { return; };
         let modules = prize.modules();
         let needed: u32 = modules.values().sum();
-        // Module crates already have their own transport berths, separate from
-        // bulk commodity capacity. A cache is atomic; a full Freighter leaves it
-        // on-site rather than silently dropping equipment or paying partial data.
-        let capacity = fleet.freighter_count().saturating_mul(crate::module::MODULE_CONVOY_BERTHS);
-        let aboard: u32 = fleet.modules.values().sum();
-        if fleet.owner != player || !in_reach || capacity.saturating_sub(aboard) < needed { return; }
-        for (kind, count) in modules { *fleet.modules.entry(kind).or_default() += count; }
+        let room: u64 = modules.iter().map(|(m, n)| *n as u64 * m.good().room_quarters() as u64).sum();
+        // §modules-as-goods: a cache's modules ride in the hold like any cargo.
+        // A cache is atomic; a full hold leaves it on-site rather than silently
+        // dropping equipment or paying partial data.
+        if fleet.owner != player || !in_reach || fleet.cargo_room().quarters() < room { return; }
+        for (kind, count) in modules { fleet.add_cargo(kind.good(), count); }
         let operation = self.operations.get_mut(&id).unwrap();
         operation.assigned_fleets.insert(player, fleet_id);
         operation.contribution_mut(player).goods += needed;
         operation.contribution_mut(player).progress += 1;
         self.complete_operation(id, Some(player), pos, events);
-    }
-
-    /// Physical docking lands recovered crates, just like an existing module
-    /// transfer arriving. Never move the hull or create a transport; crates lost
-    /// with it stay lost. Remote inventory/manifest changes use ordinary served
-    /// snapshots and ModulesDelivered news, not the recovery report's clock.
-    pub(super) fn land_recovered_modules(&mut self, events: &mut Vec<Event>) {
-        let arrivals: Vec<_> = self.fleets.values().filter(|f| !f.modules.is_empty() && f.mission.is_none())
-            .filter_map(|f| match self.dock_of(f.id) {
-                Some(DockSite::System(sid)) if self.systems.iter().any(|s| s.id == sid && s.owner == Some(f.owner))
-                    => Some((f.id, f.owner, sid)),
-                _ => None,
-            }).collect();
-        for (fleet, owner, system) in arrivals {
-            let manifest = std::mem::take(&mut self.fleets.get_mut(&fleet).unwrap().modules);
-            let sys = self.systems.iter_mut().find(|s| s.id == system).unwrap();
-            for (&kind, &count) in &manifest { *sys.modules.entry(kind).or_default() += count; }
-            events.push(Event::new(self.time, EventPayload::ModulesDelivered { owner, system, manifest }));
-        }
     }
 }
 
@@ -122,6 +102,16 @@ mod tests {
         w.deliver_operation_reports(&mut Vec::new());
     }
 
+    /// §modules-as-goods: the modules aboard a fleet (cargo) and at a system.
+    fn aboard(w: &World, fleet: EntityId) -> BTreeMap<ModuleKind, u32> {
+        crate::module::MODULE_KINDS.into_iter()
+            .map(|m| (m, w.fleets[&fleet].cargo_amount(m.good()))).filter(|(_, n)| *n > 0).collect()
+    }
+    fn stocked(w: &World, system: EntityId) -> BTreeMap<ModuleKind, u32> {
+        let sys = w.systems.iter().find(|s| s.id == system).unwrap();
+        crate::module::MODULE_KINDS.into_iter().map(|m| (m, sys.module_stock(m))).filter(|(_, n)| *n > 0).collect()
+    }
+
     #[test]
     fn a_site_prize_is_finite_reported_and_physically_hauled() {
         for (tier, freight_kind) in [pirate::DEPOT_TIER, pirate::STRONGHOLD_TIER].into_iter()
@@ -130,7 +120,7 @@ mod tests {
             let prize = SitePrize::for_tier(tier).unwrap();
             let home = w.players[&p].home_system.unwrap();
             let home_pos = w.players[&p].home;
-            let before = w.systems.iter().find(|s| s.id == home).unwrap().modules.clone();
+            let before = stocked(&w, home);
             assert!(!w.operations[&id].is_visible_to(p));
             w.apply_accept_operation(p, id);
             assert_eq!(w.operations[&id].state, OperationState::Offered, "unarrived prize cannot be accepted");
@@ -138,46 +128,46 @@ mod tests {
             w.apply_accept_operation(p, id);
             let hull = fleet(&mut w, p, freight_kind, home_pos);
             w.apply_recover_operation(p, id, hull, &mut Vec::new());
-            assert!(w.fleets[&hull].modules.is_empty(), "no remote recovery");
+            assert!(aboard(&w, hull).is_empty(), "no remote recovery");
             let fighter = fleet(&mut w, p, ShipKind::Raider, pos);
             w.apply_recover_operation(p, id, fighter, &mut Vec::new());
-            assert!(w.fleets[&fighter].modules.is_empty(), "combatants cannot carry the cache");
+            assert!(aboard(&w, fighter).is_empty(), "a hull with no hold cannot carry the cache");
             let rival = fleet(&mut w, PlayerId(999), ShipKind::Convoy, pos);
             w.apply_recover_operation(PlayerId(999), id, rival, &mut Vec::new());
             w.apply_recover_operation(p, id, rival, &mut Vec::new());
-            assert!(w.fleets[&rival].modules.is_empty(), "scope and hull ownership both enforced");
+            assert!(aboard(&w, rival).is_empty(), "scope and hull ownership both enforced");
+            // §modules-as-goods: the modules ride in the hold, so a full hold
+            // leaves the cache where it is.
             let f = w.fleets.get_mut(&hull).unwrap();
             f.pos = pos;
-            f.modules.insert(ModuleKind::TorpedoRack, crate::module::MODULE_CONVOY_BERTHS);
+            let full = f.cargo_capacity(); // §hold-room: ore, a whole room unit each
+            f.add_cargo(crate::cargo::Commodity::MetallicOre, full);
             w.apply_recover_operation(p, id, hull, &mut Vec::new());
-            assert_eq!(w.operations[&id].state, OperationState::Active, "full crate berths leave the cache intact");
-            w.fleets.get_mut(&hull).unwrap().modules.clear();
+            assert_eq!(w.operations[&id].state, OperationState::Active, "a full hold leaves the cache intact");
+            w.fleets.get_mut(&hull).unwrap().take_cargo();
             w.apply_assign_operation_fleet(p, id, hull, None);
             w.tick_operations(&mut Vec::new());
-            assert_eq!(w.fleets[&hull].modules, prize.modules(), "assigned Freighter automatically recovers on site");
+            assert_eq!(aboard(&w, hull), prize.modules(), "assigned Freighter automatically recovers on site");
             assert_eq!(w.operations[&id].state, OperationState::Completed);
             assert!(w.players[&p].research.recovered_data.is_empty(), "pickup isn't CC knowledge");
-            assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules, before);
-            w.land_recovered_modules(&mut Vec::new());
-            assert_eq!(w.fleets[&hull].modules, prize.modules(), "unowned site is not a home inventory");
+            assert_eq!(stocked(&w, home), before);
             w.apply_recover_operation(p, id, hull, &mut Vec::new());
-            assert_eq!(w.fleets[&hull].modules, prize.modules(), "repeated pickup cannot mint another cache");
+            assert_eq!(aboard(&w, hull), prize.modules(), "repeated pickup cannot mint another cache");
 
             let mut saved: World = serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
             saved.fixup_after_load();
             saved.offer_pirate_prize(p, site, tier, pos, &mut Vec::new());
             assert_eq!(saved.operations.values().filter(|o| matches!(o.kind,
                 OperationKind::PrizeRecovery { system, .. } if system == site)).count(), 1);
+            // Home, it unloads like any cargo into the stockpile.
             saved.fleets.get_mut(&hull).unwrap().pos = home_pos;
-            let mut events = Vec::new();
-            saved.land_recovered_modules(&mut events);
-            assert!(saved.fleets[&hull].modules.is_empty());
-            assert!(events.iter().any(|e| matches!(e.payload, EventPayload::ModulesDelivered { .. })));
-            let deposited = saved.systems.iter().find(|s| s.id == home).unwrap().modules.clone();
+            saved.step(&[]);
+            assert_eq!(aboard(&saved, hull), prize.modules(), "docking alone lands nothing");
+            saved.apply_now(&Command::SystemUnload { player_id: p, fleet_id: hull, system: home }, &mut Vec::new());
+            assert!(aboard(&saved, hull).is_empty());
+            let deposited = stocked(&saved, home);
             for (kind, n) in prize.modules() { assert_eq!(deposited[&kind], before.get(&kind).copied().unwrap_or(0) + n); }
-            saved.land_recovered_modules(&mut events);
-            assert_eq!(saved.systems.iter().find(|s| s.id == home).unwrap().modules, deposited);
-            assert!(saved.fleets.contains_key(&hull), "docking never consumes the player's Freighter");
+            assert!(saved.fleets.contains_key(&hull), "unloading never consumes the player's Freighter");
         }
     }
 
@@ -246,9 +236,8 @@ mod tests {
         let hull = fleet(&mut w, p, ShipKind::Convoy, pos);
         w.apply_recover_operation(p, id, hull, &mut Vec::new());
         w.fleets.remove(&hull); // ordinary destruction removes its carried modules too
-        w.land_recovered_modules(&mut Vec::new());
         let home = w.players[&p].home_system.unwrap();
-        assert!(w.systems.iter().find(|s| s.id == home).unwrap().modules.is_empty());
+        assert!(stocked(&w, home).is_empty());
         w.offer_pirate_prize(p, site, pirate::STRONGHOLD_TIER, pos, &mut Vec::new());
         assert_eq!(w.operations.values().filter(|o| matches!(o.kind, OperationKind::PrizeRecovery { .. })).count(), 1);
     }
@@ -266,34 +255,34 @@ mod tests {
     }
 
     #[test]
-    fn crate_only_return_haul_keeps_the_players_freighter() {
+    fn a_module_return_haul_keeps_the_players_freighter() {
         let (mut w, p, _, _, _) = cleared_site(pirate::DEPOT_TIER);
         let home = w.players[&p].home_system.unwrap();
         let pos = w.players[&p].home;
         let hull = fleet(&mut w, p, ShipKind::Convoy, pos);
         let manifest = SitePrize::BreacherCache.modules();
-        w.fleets.get_mut(&hull).unwrap().modules = manifest.clone();
+        for (kind, n) in &manifest { w.fleets.get_mut(&hull).unwrap().add_cargo(kind.good(), *n); }
         w.fleets.get_mut(&hull).unwrap().mission = Some(TradeMission::DeliverToSystem { system: home });
         w.resolve_trade_arrivals(&mut Vec::new());
         assert!(w.fleets.contains_key(&hull), "a module-only return is not an expendable transfer convoy");
-        assert!(w.fleets[&hull].modules.is_empty());
+        assert!(aboard(&w, hull).is_empty());
         assert!(w.fleets[&hull].mission.is_none());
-        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules, manifest);
+        assert_eq!(stocked(&w, home), manifest);
 
-        // Real player hauls target the Warehouse, not the legacy disposable
-        // SellAtHub mission. Bulk goods unload; equipment stays aboard, with no
-        // surprise home redirect and no deletion of a persistent hull.
+        // §modules-as-goods: at the Hub, modules unload into the Warehouse with
+        // the bulk goods, like any good.
         w.fleets.get_mut(&hull).unwrap().pos = w.hub;
-        w.fleets.get_mut(&hull).unwrap().modules = SitePrize::ScreenCache.modules();
+        for (kind, n) in SitePrize::ScreenCache.modules() { w.fleets.get_mut(&hull).unwrap().add_cargo(kind.good(), n); }
         w.fleets.get_mut(&hull).unwrap().add_cargo(crate::cargo::Commodity::Alloys, 7);
         w.fleets.get_mut(&hull).unwrap().mission = Some(TradeMission::DeliverToWarehouse { sell_on_arrival: false });
         w.resolve_trade_arrivals(&mut Vec::new());
         assert!(w.fleets.contains_key(&hull));
-        assert_eq!(w.fleets[&hull].modules, SitePrize::ScreenCache.modules());
+        assert!(aboard(&w, hull).is_empty());
         assert_eq!(w.fleets[&hull].cargo_amount(crate::cargo::Commodity::Alloys), 0);
         assert!(w.fleets[&hull].mission.is_none());
         assert!(matches!(w.fleets[&hull].order, FleetOrder::Idle));
         assert_eq!(w.players[&p].warehouse[&crate::cargo::Commodity::Alloys], 7);
+        for (kind, n) in SitePrize::ScreenCache.modules() { assert_eq!(w.players[&p].warehouse[&kind.good()], n); }
     }
 
     #[test]

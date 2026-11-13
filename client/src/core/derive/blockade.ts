@@ -3,9 +3,8 @@
 // mobile sheets all say the same thing about the same blockade.
 
 import type { DiplomacyView, GhostView, SystemInfo, SystemStateView, Vec2 } from "../../protocol";
-import { fleetCargoUnits } from "../../protocol";
 import { fmtDur } from "./format";
-import { fleetCargoCapacity } from "./fleet";
+import { fleetCargoCapacity, fleetHoldUsed, fmtRoom } from "./fleet";
 
 export type BlockadeState = NonNullable<SystemStateView["blockade"]>;
 
@@ -74,12 +73,15 @@ export interface BlockadeBrief {
 }
 
 /** `marinesNeeded`: the ground readout's break-even landing, when served. */
-export function blockadeBrief(b: BlockadeState, now: number, baseSecs: number, marinesNeeded?: number | null): BlockadeBrief {
+export function blockadeBrief(b: BlockadeState, now: number, baseSecs: number, marinesNeeded?: number | null, veilUp = false): BlockadeBrief {
   const who = b.by_name || "A rival";
   const stage = blockadeStage(b);
   const clock = siegeClock(b, now, baseSecs);
   const marines = marinesNeeded ? ` (about ${marinesNeeded} marines for an even chance)` : "";
   const odds = blockadeOdds(b);
+  // §veil: the ionised sky changes what a held blockade can do.
+  const theirVeil = veilUp ? " Its Veil is up: nothing is stripped and only Transports land, less the descent; it holds while their fuel does." : "";
+  const yourVeil = veilUp ? " Your Veil is up: guns pin nothing and nothing is stripped while the Fusion Plant has fuel." : "";
   if (b.by_me) {
     if (stage === "contested") {
       return { tone: "warn", title: "Contesting the defenses",
@@ -89,13 +91,13 @@ export function blockadeBrief(b: BlockadeState, now: number, baseSecs: number, m
       return { tone: "good", title: "Blockade holds",
         detail: "Its logistics are cut and its stores are yours while you hold station."
           + (odds ? ` Freighters running it: ${odds}; interceptors on station tighten it.` : "")
-          + (b.capturable ? "" : " It is a home system: it can be blockaded, never captured.") };
+          + (b.capturable ? "" : " It is a home system: it can be blockaded, never captured.") + theirVeil };
     }
     return clock?.ripe
       ? { tone: "good", title: "Siege ripe",
-        detail: `Land marines now with a separate, idle troop-transport fleet at the star${marines}.` }
+        detail: `Land marines now with a separate, idle troop-transport fleet at the star${marines}.${theirVeil}` }
       : { tone: "good", title: `Siege ${Math.floor(clock?.pct ?? 0)}%`,
-        detail: `Ripe in ${fmtDur(clock?.left ?? 0)} while the blockade holds. Then land marines with a separate, idle troop-transport fleet at the star${marines}.` };
+        detail: `Ripe in ${fmtDur(clock?.left ?? 0)} while the blockade holds. Then land marines with a separate, idle troop-transport fleet at the star${marines}.${theirVeil}` };
   }
   if (byPirates(b) && stage !== "siege") {
     // §raid-feedback (Peter, Oct 27 2026): what a raid costs, in numbers.
@@ -113,15 +115,16 @@ export function blockadeBrief(b: BlockadeState, now: number, baseSecs: number, m
   }
   if (stage === "held") {
     return { tone: "bad", title: `Blockaded by ${who}`,
-      detail: "Its logistics are cut off: deliveries wait outside and its stores are being stripped. Send warships, or raise the system's station a level: its new hardpoints contest the blockade."
+      detail: (veilUp ? "Its logistics are cut off: deliveries wait outside." : "Its logistics are cut off: deliveries wait outside and its stores are being stripped.")
+        + " Send warships, or raise the system's station a level: its new hardpoints contest the blockade."
         + (odds ? ` A freighter set to run blockades tries to slip through: ${odds}.` : "")
-        + (b.capturable ? "" : " Your home can't be captured.") };
+        + (b.capturable ? "" : " Your home can't be captured.") + yourVeil };
   }
   return clock?.ripe
     ? { tone: "bad", title: `Besieged by ${who} · ripe`,
-      detail: "Rival marines can land and take the system now. Send warships, or raise the system's station a level, to contest the blockade." }
+      detail: `Rival marines can land and take the system now. Send warships, or raise the system's station a level, to contest the blockade.${yourVeil}` }
     : { tone: "bad", title: `Besieged by ${who}`,
-      detail: `Falls to a marine landing in ${fmtDur(clock?.left ?? 0)} unless you contest the blockade: send warships, or raise the system's station a level.` };
+      detail: `Falls to a marine landing in ${fmtDur(clock?.left ?? 0)} unless you contest the blockade: send warships, or raise the system's station a level.${yourVeil}` };
 }
 
 /** An own fleet that can blockade: it carries an interceptor. */
@@ -182,7 +185,7 @@ export function blockadeStatus(g: GhostView, view: {
     // §raid-order: a raid shows its load against its hold; §player-styles:
     // a repeating one its trip.
     const trip = g.raid_trip ? ` · ↻ ${g.raid_trip}` : "";
-    return g.raiding ? `Raiding ${info.name}${trip} · ${tail} · ${fleetCargoUnits(g)}/${fleetCargoCapacity(g)}`
+    return g.raiding ? `Raiding ${info.name}${trip} · ${tail} · ${fmtRoom(fleetHoldUsed(g))}/${fleetCargoCapacity(g)}`
       : `Blockading ${info.name} · ${tail}`;
   }
   return g.raiding ? `Sailing to raid${g.raid_trip ? ` · ↻ ${g.raid_trip}` : ""}` : "Sailing to blockade";

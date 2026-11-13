@@ -4,7 +4,7 @@
 // ship is queued, and from a hull line in the Construction card.
 import "../../ship-construction-view";
 import { liveProgressAttr } from "../../core/derive/construction";
-import { pickYardJob, yardFallback, yardJobs, type YardJob } from "../../core/derive/shipyard";
+import { pickYardJob, yardFallback, yardJobs, yardRepairs, type YardJob } from "../../core/derive/shipyard";
 import { shipKindLabel } from "../../core/derive/fleet";
 import { hullFigures } from "../../core/derive/orders";
 import { commandDelayTo } from "../../core/derive/geo";
@@ -39,12 +39,13 @@ export class DeckShipyardRoutes {
   render(route: DeckRoute | null, force = false): boolean {
     if (route?.name !== "shipyard") return false;
     const system = this.ctx.state.systems.find((entry) => entry.id === route.params?.id);
-    const signature = sheetFingerprint([route, this.picked, Math.floor(liveSimTime()), system?.builds, system?.bodies.length]);
+    const repairs = yardRepairs(this.ctx.state.ghosts, system).map((job) => [job.key, job.progress]);
+    const signature = sheetFingerprint([route, this.picked, Math.floor(liveSimTime()), system?.builds, system?.bodies.length, repairs]);
     if (!force && signature === this.signature) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
     this.signature = signature;
     setHtml(this.root, this.html(route));
-    const shown = JSON.stringify([route.params?.id, route.query?.kind]);
+    const shown = JSON.stringify([route.params?.id, route.query?.kind, route.query?.repair]);
     if (shown !== this.shown) {
       this.shown = shown;
       this.root.scrollTop = 0;
@@ -76,12 +77,14 @@ export class DeckShipyardRoutes {
     const id = route.params?.id;
     const system = this.ctx.state.systems.find((entry) => entry.id === id);
     const now = liveSimTime();
-    const jobs = yardJobs(system, now);
+    // §yard-repair: hulls in for repairs follow the builds.
+    const jobs = [...yardJobs(system, now), ...yardRepairs(this.ctx.state.ghosts, system)];
     const ordered = route.query?.kind && HULL_YARD[route.query.kind as ShipKind] ? route.query.kind as ShipKind : null;
     // The hull the yard opened on keeps the bay unless a tab is picked: an
     // order just sent shows at once, as a blueprint, until its report arrives;
     // seen building and then gone, it launched.
-    const picked = jobs.find((entry) => entry.key === this.picked) ?? null;
+    const picked = jobs.find((entry) => entry.key === this.picked)
+      ?? (route.query?.repair ? jobs.find((entry) => entry.repair?.fleet === route.query?.repair) : undefined) ?? null;
     const watch = ordered ? `${id}|${ordered}|${route.query?.sent ?? ""}` : null;
     const inYard = jobs.some((entry) => entry.kind === ordered);
     if (watch && inYard) this.seen.add(watch);
@@ -97,9 +100,9 @@ export class DeckShipyardRoutes {
     }
     const kind = job?.kind ?? ordered!;
     const yard = job?.yard ?? HULL_YARD[kind]!;
-    const progress = job ? job.progress : fallback?.state === "launched" ? 1 : null;
+    const progress = job?.repair ? 1 : job ? job.progress : fallback?.state === "launched" ? 1 : null;
     const tabs = jobs.length > 1 ? `<nav class="deck-shipyard__tabs" aria-label="Hulls in the yard">${jobs.map((entry) => tab(entry, entry === job)).join("")}</nav>` : "";
-    const bar = job?.progress == null ? "" : `<span class="deck-queue-progress" role="progressbar"${liveProgressAttr(job.line)} aria-label="${esc(job.title)} build progression" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(job.progress * 100)}"><i style="width:${(job.progress * 100).toFixed(1)}%"></i></span>`;
+    const bar = job?.progress == null ? "" : `<span class="deck-queue-progress${job.repair ? " is-repair" : ""}" role="progressbar"${liveProgressAttr(job.line)} aria-label="${esc(job.title)} ${job.repair ? "hull" : "build progression"}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(job.progress * 100)}"><i style="width:${(job.progress * 100).toFixed(1)}%"></i></span>`;
     const note = fallback?.state === "silent"
       ? `<small class="is-warn">No report yet · it may have been refused</small>`
       : `<small>${esc(job?.where ?? YARD_TITLE[yard] ?? "Shipyard")}</small>`;

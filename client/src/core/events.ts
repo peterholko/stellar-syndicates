@@ -1,4 +1,5 @@
 import type {
+  Commodity,
   EngagementEstimate,
   EntityId,
   OrderKind,
@@ -39,9 +40,17 @@ export type CoreEvent =
   | { kind: "CharterMilestone"; title: string; message: string; tone?: "good" | "bad" }
   /** §charter-v5: a story turn shown as an illustrated pop-up (boot.ts):
    * the raid's report, with what it took. */
-  | { kind: "StoryEvent"; story: "pirates"; semiconductors: number; armaments: number }
+  | { kind: "StoryEvent"; story: "pirates"; goods: Partial<Record<Commodity, number>> }
   /** §charter-v4: the free trader docked at home (the server's arrival line). */
   | { kind: "StoryEvent"; story: "free_trader" }
+  /** §den-loot: the den's fall, its loot waiting for a freighter. */
+  | { kind: "StoryEvent"; story: "den_loot" }
+  /** §den-contract: the Authority's contract on the privateer's den, with
+   * the kill's report ("Authority contract · {title} · {reward}."). */
+  | { kind: "StoryEvent"; story: "den_contract"; title: string; reward: string }
+  /** §privateer-contract: the Authority's contract on the privateer, offered
+   * as the hunt begins ("Authority contract offered · {title} · {reward}."). */
+  | { kind: "StoryEvent"; story: "privateer_contract"; title: string; reward: string }
   /** §vendetta: a turn of the pirate family's story (a "Vendetta · …" line,
    * `text` without its prefix). */
   | { kind: "StoryEvent"; story: "vendetta"; beat: Exclude<VendettaBeat, "raid">; text: string }
@@ -56,6 +65,8 @@ export type CoreEvent =
   | { kind: "StoryEvent"; story: "ending"; at: number }
   /** §season phase 4: the GNN's "The relics stir", first heard this session. */
   | { kind: "StoryEvent"; story: "relics" }
+  /** §signal-report: a signal's report reached command. */
+  | { kind: "StoryEvent"; story: "signal"; signalId: EntityId }
   /** §chapters: a painted chapter of the charter opens. */
   | { kind: "StoryEvent"; story: "chapter"; chapter: ChapterOpening }
   | { kind: "ReportArrived"; report: RaidReport }

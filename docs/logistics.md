@@ -21,14 +21,12 @@ follows the clickable mockup Peter approved.
 - **When the top bar runs out of room:** `fitDeckNav` (`shell/deck/markup.ts`)
   folds the least-used destinations into **More** instead of clipping them. It
   runs from a ResizeObserver on the bar and its neighbours.
-  - The order is `NAV_FOLD_ORDER`: Faction, Syndicate, Operations, Officers,
-    Log, Research.
-  - Command, Fleets, Logistics and Market always stay.
+  - The order is `NAV_FOLD_ORDER`: Faction, Comms, Syndicate, Operations,
+    Officers, Research, Log.
+  - Fleets, Logistics and Market always stay.
   - More lists exactly the folded destinations plus Rankings.
   - More stays pinned in view, and a folded destination's alert shows as a dot
     on it.
-- **Command page:** the Fleet policy section has a **Logistics** button
-  (formerly "Standing logistics").
 - **A Freighter's route line:** in the deck fleet panel and the mobile fleet
   sheet, **Open in Logistics** opens that Freighter's trip. On the desktop this
   is the route `{ name: "logistics", query: { fleet } }`, and a route preset
@@ -93,6 +91,30 @@ From the served run only:
 - **After Assign:** the editor closes once the order's pending report has been
   seen and has cleared.
 
+## Editing a trip under way
+
+Peter (Nov 5 2026): "I tried to modify the return items when the freighter
+was still traveling to the hub but I couldn't save the changes."
+
+- **Edit route** on a trip under way opens the editor as a revision
+  (`Ui.revising`). **Assign route…** sends `SetFreightRoute` with
+  `revise: true`; a new route, the first shipment and every bot route send
+  it without.
+- **In the sim** (`World::assign_freight_route`): a revision with the same
+  ports in the same order keeps the run's place (`FreightRun::keeps_place`,
+  `FreightRun::revised`). Bound for a stop, it takes that stop's new
+  manifests on arrival. Working one (unloading, loading, fuel, escort), each
+  transfer still to come moves by what the edit adds or takes off, so units
+  already moved never move twice, an unload never past what is aboard, and
+  added work sends it back to that step. A changed itinerary, a finished run
+  or a plain assignment starts over at stop 1, as before; bots replan that
+  way on purpose.
+- **In the editor**, "Aboard after" counts from where the trip is
+  (`routeResume`, `routeAboardFrom` in `core/derive/industry.ts`), and stops
+  already done this trip read "Done this trip". It used to replay the route
+  from stop 1 on top of the cargo aboard: the first shipment's 50 ore loaded
+  twice read "100 of 50", which disabled **Assign route…**.
+
 ## Rendering
 
 The panel reads more than fleets and systems.
@@ -116,3 +138,28 @@ The panel reads more than fleets and systems.
   rules in `deck.css`.
 - **Tests:** `client/scripts/test-industrial-expansion.mjs`, and the pop-out
   source checks in `test-market-workbench.mjs` and `test-planet-panel.mjs`.
+
+## Goods picker (Nov 11 2026)
+
+Peter: "the drop down should just be for the item and not include the price,
+calculate the price after the player has picked the item", then "can we have
+the dropdown styled in the stellar syndicate game style instead of a native
+html dropdown?"
+
+- **No native select.** The route editor's Add cargo picker is the game's own
+  (`goodsPicker` in `client/src/shell/industry.ts`, `.lx-goodpick` in
+  `styles/industry.css`): a button with the picked good's icon and name;
+  open, the list unfolds in place under it (a scrolling stop column never
+  clips it) with Resources · Parts · Modules tabs and icon rows.
+- **Names only, and only goods research has opened** (`knownCommodities`),
+  those the port holds first. A report never changes the list, so the game's
+  morphing redraw leaves it open, scrolled where it was.
+- **The price beside it** (`pickerQuote`), for the units typed: at the Hub,
+  "≈ −N cr" when the route buys there (only what the warehouse lacks) or
+  "≈ +N cr" when the stop sells, else what the warehouse holds; at a world,
+  what it holds.
+- A pick or Cancel closes it; on desktop Esc closes it first
+  (`closeIndustryMenu` at the top of `escapeOneLayer`).
+- The trip panel's money row names what it sells ("Alloys sale", `saleLabel`).
+- Preview: `/scripts/logistics-fixture.html` on the Vite dev server
+  (`?open=1` opens the list, `?stop=0` picks at the home world).

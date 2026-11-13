@@ -31,7 +31,7 @@ assert.deepEqual(body, original, "selecting art is read-only");
 assert.equal(planetSurface(globe, "home", { ...body, kind: "ocean" }), "archipelago-world");
 assert.equal(planetSurface(globe, "home", { ...body, kind: "gas_giant" }), null);
 for (const [profile, surface] of Object.entries(FOUNDING_SURFACES)) {
-  for (const completed of [[], ["prospect", "quarters", "storehouse", "surface_workings"]]) {
+  for (const completed of [[], ["prospect", "storehouse", "surface_workings"]]) {
     assert.equal(planetSurface(globe, "home", { ...body, founding_camp: { profile, completed } }), surface);
   }
 }

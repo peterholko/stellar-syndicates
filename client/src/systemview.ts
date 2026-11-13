@@ -41,6 +41,7 @@ import {
   terminatorTexture, type OrbitalItem,
 } from "./systembodyfx";
 import { StarFx } from "./systemstarfx";
+import { RollingStar } from "./starroll";
 import { SystemTrafficLayer, type ShipArtResolver, type TrafficModelCandidate, type TrafficPick } from "./systemtrafficlayer";
 import type { SystemPicture } from "./systemtraffic";
 import { hasOrbitalShipConstruction } from "./planet-structure-art";
@@ -219,8 +220,16 @@ const COMMODITY_COLOR: Record<Commodity, number> = {
   metallic_ore: 0xb0894f, rare_elements: 0xffd76b, silicates: 0xd8c9a3, volatiles: 0x6bd0ff, biomass: 0x7fdc8a,
   alloys: 0xc99bff, electronics: 0x6be2d8, polymers: 0xe89ad1, deuterium: 0xff9d5c, provisions: 0x9fe08a,
   machinery: 0x9fb0c8, armaments: 0xff7a6b,
-  composites: 0x78c6b7, hull_sections: 0xb5c9dd, precision_components: 0xe9ca75, warp_core: 0x85baff,
-  uranium: 0x9be35a, antimatter: 0xff5cd6, fusion_core: 0xffe08a,
+  composites: 0x78c6b7, hull_sections: 0xb5c9dd, precision_components: 0xe9ca75, fission_reactor: 0xffb347,
+  uranium: 0x9be35a, antimatter: 0xff5cd6, fusion_reactor: 0x85baff, advanced_fusion_reactor: 0xffd54a, antimatter_reactor: 0xc98bff,
+  zephyr_drive: 0xffc98a, gale_drive: 0xa9d0ff, tempest_drive: 0xffe28a, maelstrom_drive: 0xdcb3ff,
+  // §hull-ladder: the sized parts take their light part's colour.
+  heavy_fission_reactor: 0xffb347, heavy_fusion_reactor: 0x85baff, heavy_advanced_fusion_reactor: 0xffd54a, heavy_antimatter_reactor: 0xc98bff, heavy_zephyr_drive: 0xffc98a, heavy_gale_drive: 0xa9d0ff, heavy_tempest_drive: 0xffe28a, heavy_maelstrom_drive: 0xdcb3ff, heavy_hull_sections: 0xb5c9dd,
+  capital_fission_reactor: 0xffb347, capital_fusion_reactor: 0x85baff, capital_advanced_fusion_reactor: 0xffd54a, capital_antimatter_reactor: 0xc98bff, capital_zephyr_drive: 0xffc98a, capital_gale_drive: 0xa9d0ff, capital_tempest_drive: 0xffe28a, capital_maelstrom_drive: 0xdcb3ff, capital_hull_sections: 0xb5c9dd,
+  nav_computer: 0x5fe0ff, cargo_bay: 0xa9b4c2, pulse_laser: 0xff8a8a, beam_battery: 0xff6b6b,
+  torpedoes: 0xd9534f, slugs: 0x8d949c, beam_crystals: 0xf4a7c3,
+  // §modules-as-goods: modules never lie in the ground; one tint for totality.
+  mass_driver: 0xd0b8ff, torpedo_rack: 0xd0b8ff, point_defense_screen: 0xd0b8ff, reflective_plating: 0xd0b8ff, whipple_armor: 0xd0b8ff, extended_tanks: 0xd0b8ff, recon_suite: 0xd0b8ff, cargo_pods: 0xd0b8ff, escort_datalink: 0xd0b8ff, fuel_transfer_rig: 0xd0b8ff, survey_drive: 0xd0b8ff, nebula_spectrometer: 0xd0b8ff, prismatic_lance: 0xd0b8ff, lance_array: 0xd0b8ff, stasis_web: 0xd0b8ff, warp_stabilizer: 0xd0b8ff, interdiction_field: 0xd0b8ff,
 };
 
 // ---- Deterministic RNG (public geography — same for every player) ------------
@@ -498,7 +507,7 @@ export class SystemViewScene {
   private bodyStack = new Container();
   private starLayer = new Container(); // the star (sprite or procedural fallback)
   private starHolder = new Container(); // the star artwork, between its glows
-  private starSprite: Sprite | null = null;
+  private starSprite: RollingStar | null = null; // §star-roll: turns about its north–south axis
   private starGfx = new Graphics(); // procedural star fallback
   private starFx = new StarFx();
   private overlay = new Graphics(); // ownership + selection (screen-space, dynamic)
@@ -711,6 +720,16 @@ export class SystemViewScene {
     return this.vis?.systemId ?? null;
   }
 
+  /// §charting: bodies charted while their system is shown (a fleet's arrival
+  /// report) join its picture; zoom, focus and the picked world stay, as when
+  /// art arrives late.
+  syncRoster(vis: VisualSystem): void {
+    if (this.vis?.systemId !== vis.systemId) return;
+    this.vis = vis;
+    this.buildStatic(vis, this.lastStarTex);
+    this.layout(this.viewW, this.viewH, this.cameraRect);
+  }
+
   /** Late high-resolution art updates just the star, never the selected planet,
    * body hit targets, orbit geometry, or the current handoff transform. */
   setStarArt(texture: Texture | null, geometry: StarArtGeometry | null): void {
@@ -736,8 +755,11 @@ export class SystemViewScene {
     // The interactive System View supplies its own detailed-art master geometry.
     const anchor = this.lastStarGeometry?.anchor ?? starAnchor(st);
     const ratio = this.lastStarGeometry?.visualRatio ?? starVisualRatio(st);
-    const sprite = this.starSprite ??= this.starHolder.addChild(new Sprite(texture));
+    // Only the detailed art's surface is mapped (starroll.ts): an icon stays still.
+    const slug = this.lastStarGeometry ? st.slug : null;
+    const sprite = this.starSprite ??= this.starHolder.addChild(new RollingStar(texture, slug));
     sprite.texture = texture;
+    sprite.setStar(slug);
     sprite.anchor.set(anchor[0], anchor[1]);
     sprite.scale.set(SYSTEM_STAR_VISIBLE_UNITS / (ratio * texture.width));
     this.starGfx.clear();

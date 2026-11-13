@@ -21,7 +21,7 @@ fn yard() -> (World, PlayerId, EntityId, EntityId) {
     sys.bodies[0].structures.insert(K::Shipyard, 1);
     sys.bodies[0].assignments.insert(K::Shipyard, crate::production::Assignment::crew(1));
     for m in [M::ExtendedTanks, M::ReconSuite, M::CargoPods, M::EscortDatalink] {
-        sys.modules.insert(m, 3);
+        sys.put_modules(m, 3);
         for (c, _) in crate::build::module_recipe(m).costs { sys.stockpile.insert(*c, 1000.0); }
     }
     let pos = sys.pos;
@@ -56,7 +56,7 @@ fn utilities_have_real_early_unlocks_and_strict_hull_limits() {
     for m in crate::module::MODULE_KINDS {
         // The utilities, and a Warp Stabilizer for running blockades.
         assert_eq!(Loadout::new(vec![m]).validate(ShipKind::Convoy),
-            matches!(m, M::ExtendedTanks | M::CargoPods | M::FuelTransferRig | M::WarpStabilizer | M::JumpDrive));
+            matches!(m, M::ExtendedTanks | M::CargoPods | M::FuelTransferRig | M::WarpStabilizer));
     }
     for hull in [ShipKind::Freighter, ShipKind::Colony, ShipKind::Titan, ShipKind::Builder] {
         assert!(!Loadout::new(vec![M::ExtendedTanks]).validate(hull));
@@ -113,7 +113,7 @@ fn datalink_blueprint_makes_physical_crates_with_staffed_shipyard_work() {
     w.tick += 1000;
     w.resolve_builds(&mut vec![]);
     assert!(w.build_queue.is_empty());
-    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&M::EscortDatalink], 4);
+    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(M::EscortDatalink), 4);
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn fitting_and_removing_a_datalink_preserves_the_gun_hull_and_command_delay() {
     let pd = Loadout::new(vec![M::PointDefenseScreen]);
     let linked = Loadout::new(vec![M::PointDefenseScreen, M::EscortDatalink]);
     fleet.set_fitted(ShipKind::Corvette, &pd, 1);
-    fleet.fuel = 20.0;
+    fleet.fuel = 5.0; // §shipbuilding-overhaul: a fusion Corvette's tank holds 7
     fleet.ships[0].hp -= 15.0;
     w.fleets.insert(id, fleet);
     let before = w.fleets[&id].clone();
@@ -145,13 +145,13 @@ fn fitting_and_removing_a_datalink_preserves_the_gun_hull_and_command_delay() {
     assert_eq!(w.fleets[&id].ships[0].hp, before.ships[0].hp);
     assert_eq!(w.fleets[&id].ships[0].id, before.ships[0].id);
     assert_eq!(w.fleets[&id].fuel, before.fuel);
-    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&M::EscortDatalink], 2);
+    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(M::EscortDatalink), 2);
     w.apply_refit(owner, id, ShipKind::Corvette, linked, pd.clone(), 1, &mut vec![]);
     finish_refit(&mut w);
     assert_eq!(w.fleets[&id].ships[0].loadout, pd);
-    let modules = &w.systems.iter().find(|s| s.id == home).unwrap().modules;
-    assert_eq!(modules[&M::EscortDatalink], 3);
-    assert_eq!(modules.get(&M::PointDefenseScreen).copied().unwrap_or(0), 0, "never duplicate the retained PD gun");
+    let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+    assert_eq!(sys.module_stock(M::EscortDatalink), 3);
+    assert_eq!(sys.module_stock(M::PointDefenseScreen), 0, "never duplicate the retained PD gun");
 }
 
 #[test]
@@ -163,7 +163,8 @@ fn fitted_capacity_and_sensors_belong_to_hulls_not_every_ship_in_the_fleet() {
     let cap = f.fuel_capacity();
     let fuel = f.fuel;
     f.set_fitted(ShipKind::Convoy, &Loadout::new(vec![M::ExtendedTanks]), 1);
-    assert!((f.fuel_capacity() - cap - ShipKind::Convoy.hull_mass() * 0.035 * 0.75).abs() < 1e-9);
+    // §reactors-drives: a Fusion Reactor's tank holds twice the energy at four a unit.
+    assert!((f.fuel_capacity() - cap - ShipKind::Convoy.hull_mass() * 0.035 * 2.0 / 4.0 * 0.75).abs() < 1e-9);
     assert_eq!(f.fuel, fuel);
     f.set_fitted(ShipKind::Scout, &Loadout::new(vec![M::ReconSuite]), 1);
     assert_eq!(f.sensor_mult(), 0.5);
@@ -200,8 +201,11 @@ fn utilities_need_research_local_materials_and_live_shipyard_workforce() {
     w.resolve_builds(&mut vec![]);
     assert!(w.build_queue.is_empty());
     let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-    assert_eq!(sys.modules[&M::ExtendedTanks], 4);
-    assert_eq!(sys.stockpile, debited, "resuming work never debits a second recipe");
+    assert_eq!(sys.module_stock(M::ExtendedTanks), 4);
+    // §modules-as-goods: the made module joins the stockpile; nothing else moved.
+    let mut expected = debited.clone();
+    *expected.entry(M::ExtendedTanks.good()).or_insert(0.0) += 1.0;
+    assert_eq!(sys.stockpile, expected, "resuming work never debits a second recipe");
 }
 
 #[test]
@@ -214,7 +218,7 @@ fn utility_refits_preserve_identity_damage_manifest_and_fuel_and_survive_restart
     assert_eq!(w.refit_queue.len(), 1, "recovered crate needs no research or foundry");
     assert_eq!(w.fleets[&id].fuel_capacity(), before.fuel_capacity());
     assert!(!w.fleet_at_owned_system(owner, id), "cannot split/merge while in the yard");
-    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&M::ExtendedTanks], 2);
+    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(M::ExtendedTanks), 2);
     let mut w: World = serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
     finish_refit(&mut w);
     let f = &w.fleets[&id];
@@ -224,10 +228,10 @@ fn utility_refits_preserve_identity_damage_manifest_and_fuel_and_survive_restart
     assert_eq!(f.ships[0].id, before.ships[0].id);
     assert!((f.fuel_capacity() - before.fuel_capacity() * 1.75).abs() < 1e-9);
     w.apply_refit(owner, id, ShipKind::Convoy, to, Loadout::default(), 1, &mut vec![]);
-    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&M::ExtendedTanks], 2,
+    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(M::ExtendedTanks), 2,
         "an installed crate cannot be lent to another hull during removal");
     finish_refit(&mut w);
-    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&M::ExtendedTanks], 3);
+    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(M::ExtendedTanks), 3);
     assert_eq!(w.fleets[&id].fuel, before.fuel);
 }
 
@@ -241,7 +245,7 @@ fn tank_removal_never_deletes_excess_fuel_and_basic_yards_cannot_refit_weapons()
     assert!(w.refit_queue.is_empty());
     let raider = w.alloc_entity_id();
     w.fleets.insert(raider, Fleet::single(raider, owner, ShipKind::Raider, w.fleets[&id].pos, FleetOrder::Idle, None));
-    w.systems.iter_mut().find(|s| s.id == home).unwrap().modules.insert(M::MassDriver, 1);
+    w.systems.iter_mut().find(|s| s.id == home).unwrap().put_modules(M::MassDriver, 1);
     w.apply_refit(owner, raider, ShipKind::Raider, Loadout::default(), Loadout::new(vec![M::MassDriver]), 1, &mut vec![]);
     assert!(w.refit_queue.is_empty());
 }
@@ -290,16 +294,21 @@ fn bunkerage_composes_with_fittings_splits_merges_and_refit_fuel_checks() {
     let (mut w, owner, _, id) = yard();
     w.players.get_mut(&owner).unwrap().research.completed.insert("prop_bunkerage".into());
     w.refresh_fleet_fuel_research();
-    let base = ShipKind::Convoy.hull_mass() * crate::fuel::FUEL_PER_HULL_MASS * 1.25;
+    let base = ShipKind::Convoy.hull_mass() * crate::fuel::ReactorGrade::Fusion.tank_per_hull_mass() * 1.25;
     let tanks = Loadout::new(vec![M::ExtendedTanks]);
     w.fleets.get_mut(&id).unwrap().set_fitted(ShipKind::Convoy, &tanks, 1);
     assert!((w.fleets[&id].fuel_capacity() - base * 1.75).abs() < 1e-9);
-    w.fleets.get_mut(&id).unwrap().add(ShipKind::Scout, 1);
+    {
+        // §shipbuilding-overhaul: a fusion Scout, so it shares the Deuterium tank.
+        let f = w.fleets.get_mut(&id).unwrap();
+        f.add_fitted_on(ShipKind::Scout, &Loadout::default(), (crate::fuel::ReactorGrade::Fusion, crate::fuel::Drive::Zephyr), 1);
+        f.fill_stores();
+    }
     let (capacity, fuel) = (w.fleets[&id].fuel_capacity(), w.fleets[&id].fuel);
     let mut events = vec![];
     w.apply_split_fleet(owner, id, &BTreeMap::from([(ShipKind::Scout, 1)]), &mut events);
     let split = events.iter().find_map(|e| if let EventPayload::ShipSpawned { id, .. } = e.payload { Some(id) } else { None }).unwrap();
-    assert!((w.fleets[&split].fuel_capacity() - 3.5).abs() < 1e-9);
+    assert!((w.fleets[&split].fuel_capacity() - 1.75).abs() < 1e-9, "a fusion Scout's tank with Bunkerage (twice the energy aboard)");
     assert!((w.fleets[&id].fuel_capacity() + w.fleets[&split].fuel_capacity() - capacity).abs() < 1e-9);
     assert!((w.fleets[&id].fuel + w.fleets[&split].fuel - fuel).abs() < 1e-9);
     w.apply_merge_fleets(owner, id, split, &mut []);
@@ -316,7 +325,7 @@ fn bunkerage_composes_with_fittings_splits_merges_and_refit_fuel_checks() {
     assert_eq!(w.refit_queue.len(), 1);
     finish_refit(&mut w);
     assert_eq!(w.fleets[&id].fuel, before);
-    assert!((w.fleets[&id].fuel_capacity() - base - 3.5).abs() < 1e-9);
+    assert!((w.fleets[&id].fuel_capacity() - base - 1.75).abs() < 1e-9);
 }
 
 #[test]
@@ -351,10 +360,10 @@ fn an_interrupted_utility_refit_returns_only_reserved_crates_not_a_remote_upgrad
     w.resolve_refits(&mut events);
     assert!(w.refit_queue.is_empty());
     assert_eq!(w.fleets[&id].fuel_capacity(), before);
-    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&M::ExtendedTanks], 3);
+    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(M::ExtendedTanks), 3);
     assert!(events.iter().any(|e| matches!(e.payload, EventPayload::OrderRejected { .. }) && e.origin.is_some()));
     w.resolve_refits(&mut vec![]);
-    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&M::ExtendedTanks], 3, "refund once");
+    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(M::ExtendedTanks), 3, "refund once");
 }
 
 #[test]
@@ -396,13 +405,13 @@ fn cargo_pods_are_manufactured_only_after_research_with_staffed_work() {
     w.update_ship_build_work();
     w.tick += 1000;
     w.resolve_builds(&mut vec![]);
-    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&M::CargoPods], 3);
+    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(M::CargoPods), 3);
     w.systems.iter_mut().find(|s| s.id == home).unwrap().bodies[0].assignments.insert(K::Shipyard, crate::production::Assignment::crew(1));
     w.update_ship_build_work();
     w.tick += 1000;
     w.resolve_builds(&mut vec![]);
     assert!(w.build_queue.is_empty());
-    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&M::CargoPods], 4);
+    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(M::CargoPods), 4);
 }
 
 #[test]
@@ -421,8 +430,11 @@ fn cargo_pod_refits_preserve_goods_and_expand_real_loading_space_only_on_complet
     w.apply_logistics_load(owner, id, Some(home), C::Polymers, 300, &mut vec![]);
     assert_eq!(w.fleets[&id].cargo_units(), 342);
     let stock = w.systems.iter().find(|s| s.id == home).unwrap().stockpile.clone();
-    w.apply_logistics_load(owner, id, Some(home), C::Alloys, 459, &mut vec![]);
-    assert_eq!(w.fleets[&id].cargo_units(), 342, "the 801st unit refuses the whole lot");
+    // §hold-room: 42 ore and 300 Polymers fill 192 of 800 room.
+    let left = w.fleets[&id].trade_room().fits(C::Alloys);
+    assert_eq!(left, 2 * (800 - 192));
+    w.apply_logistics_load(owner, id, Some(home), C::Alloys, left + 1, &mut vec![]);
+    assert_eq!(w.fleets[&id].cargo_units(), 342, "one Alloy past the hold refuses the whole lot");
     assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().stockpile, stock);
 }
 
@@ -432,31 +444,31 @@ fn loaded_pods_cannot_be_removed_or_swapped_and_partial_refits_respect_pooled_ca
     let pods = Loadout::new(vec![M::CargoPods]);
     let fleet = w.fleets.get_mut(&id).unwrap();
     fleet.set_fitted(ShipKind::Convoy, &pods, 1);
-    fleet.add_cargo(C::Alloys, 359); // 401 across two commodity stacks
-    let ledger = w.systems.iter().find(|s| s.id == home).unwrap().modules.clone();
+    fleet.add_cargo(C::Alloys, 718); // 401 room across two commodity stacks (§hold-room: Alloys 0.5)
+    let ledger = w.systems.iter().find(|s| s.id == home).unwrap().stockpile.clone();
     for to in [Loadout::default(), Loadout::new(vec![M::ExtendedTanks])] {
         w.apply_refit(owner, id, ShipKind::Convoy, pods.clone(), to, 1, &mut vec![]);
         assert!(w.refit_queue.is_empty());
-        assert_eq!(w.fleets[&id].cargo_units(), 401);
-        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules, ledger);
+        assert_eq!(w.fleets[&id].hold_used(), 401 * crate::cargo::ROOM_SCALE as u64);
+        assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().stockpile, ledger);
     }
-    w.fleets.get_mut(&id).unwrap().remove_cargo(C::Alloys, 1);
+    w.fleets.get_mut(&id).unwrap().remove_cargo(C::Alloys, 2);
     w.apply_refit(owner, id, ShipKind::Convoy, pods.clone(), Loadout::new(vec![M::ExtendedTanks]), 1, &mut vec![]);
     finish_refit(&mut w);
-    assert_eq!(w.fleets[&id].cargo_units(), 400);
+    assert_eq!(w.fleets[&id].hold_used(), 400 * crate::cargo::ROOM_SCALE as u64);
     assert_eq!(w.fleets[&id].cargo_capacity(), 400);
     assert_eq!(w.fleets[&id].fuel, 20.0);
-    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&M::CargoPods], 4);
+    assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(M::CargoPods), 4);
 
     let fleet = w.fleets.get_mut(&id).unwrap();
     fleet.add_fitted(ShipKind::Convoy, &pods, 2);
-    fleet.add_cargo(C::Polymers, 801); // 1201 / 2000; only one set can come off
+    fleet.add_cargo(C::Polymers, 1602); // 1201 / 2000 room; only one set can come off
     w.apply_refit(owner, id, ShipKind::Convoy, pods.clone(), Loadout::default(), 2, &mut vec![]);
     assert!(w.refit_queue.is_empty());
     w.apply_refit(owner, id, ShipKind::Convoy, pods, Loadout::default(), 1, &mut vec![]);
     finish_refit(&mut w);
     assert_eq!(w.fleets[&id].cargo_capacity(), 1600);
-    assert_eq!(w.fleets[&id].cargo_units(), 1201);
+    assert_eq!(w.fleets[&id].hold_used(), 1201 * crate::cargo::ROOM_SCALE as u64);
 }
 
 #[test]
@@ -465,13 +477,13 @@ fn cargo_changes_during_refit_cancel_without_losing_goods_or_duplicating_pods() 
     let pods = Loadout::new(vec![M::CargoPods]);
     w.fleets.get_mut(&id).unwrap().set_fitted(ShipKind::Convoy, &pods, 1);
     w.apply_refit(owner, id, ShipKind::Convoy, pods, Loadout::new(vec![M::ExtendedTanks]), 1, &mut vec![]);
-    w.fleets.get_mut(&id).unwrap().add_cargo(C::Alloys, 359);
+    w.fleets.get_mut(&id).unwrap().add_cargo(C::Alloys, 718); // 401 room: over the 400 left without pods
     finish_refit(&mut w);
     assert_eq!(w.fleets[&id].cargo_capacity(), 800);
-    assert_eq!(w.fleets[&id].cargo_units(), 401);
-    let modules = &w.systems.iter().find(|s| s.id == home).unwrap().modules;
-    assert_eq!(modules[&M::ExtendedTanks], 3, "unused reservation is returned");
-    assert_eq!(modules[&M::CargoPods], 3, "installed pods are not returned as loose crates");
+    assert_eq!(w.fleets[&id].hold_used(), 401 * crate::cargo::ROOM_SCALE as u64);
+    let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+    assert_eq!(sys.module_stock(M::ExtendedTanks), 3, "unused reservation is returned");
+    assert_eq!(sys.module_stock(M::CargoPods), 3, "installed pods are not returned as loose modules");
 }
 
 #[test]
@@ -480,11 +492,11 @@ fn splitting_cannot_strand_cargo_but_a_safe_split_keeps_its_pods() {
     let fleet = w.fleets.get_mut(&id).unwrap();
     fleet.add(ShipKind::Convoy, 1);
     fleet.set_fitted(ShipKind::Convoy, &Loadout::new(vec![M::CargoPods]), 1);
-    fleet.add_cargo(C::Alloys, 408); // 450; removing the podded hull would leave 400
+    fleet.add_cargo(C::Alloys, 816); // 450 room; removing the podded hull would leave 400
     let before = serde_json::to_value(&w.fleets).unwrap();
     w.apply_split_fleet(owner, id, &BTreeMap::from([(ShipKind::Convoy, 1)]), &mut vec![]);
     assert_eq!(serde_json::to_value(&w.fleets).unwrap(), before);
-    w.fleets.get_mut(&id).unwrap().remove_cargo(C::Alloys, 408);
+    w.fleets.get_mut(&id).unwrap().remove_cargo(C::Alloys, 816);
     let mut events = vec![];
     w.apply_split_fleet(owner, id, &BTreeMap::from([(ShipKind::Convoy, 1)]), &mut events);
     let split = events.iter().find_map(|e| if let EventPayload::ShipSpawned { id, .. } = e.payload { Some(id) } else { None }).unwrap();

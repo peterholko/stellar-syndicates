@@ -29,11 +29,28 @@ impl World {
     fn owns_station(&self, owner: PlayerId, id: EntityId) -> bool {
         self.fleets.get(&id).is_some_and(|f| f.owner == owner && f.contains(ShipKind::MiningBeltStation))
     }
+    /// The tests' plain assignment: a fresh run, as bots send.
+    #[cfg(test)]
     pub(super) fn set_freight_route(
         &mut self,
         owner: PlayerId,
         id: EntityId,
         route: Option<FreightRoute>,
+        events: &mut Vec<Event>,
+    ) {
+        self.assign_freight_route(owner, id, route, false, events);
+    }
+
+    /// A route for this freighter, or none. `revise` (§route-edit): the
+    /// player's edit of a run under way keeps its place when its ports are
+    /// unchanged ([`FreightRun::keeps_place`]); otherwise, and for bots, the
+    /// run starts over at the first stop.
+    pub(super) fn assign_freight_route(
+        &mut self,
+        owner: PlayerId,
+        id: EntityId,
+        route: Option<FreightRoute>,
+        revise: bool,
         events: &mut Vec<Event>,
     ) {
         if !self
@@ -52,7 +69,7 @@ impl World {
             tenders::hold(f);
             return;
         };
-        let capacity = self.fleets[&id].trade_capacity() as u64;
+        let capacity = self.fleets[&id].trade_capacity() as u64 * crate::cargo::ROOM_SCALE as u64;
         let return_trip = !route.repeat && route.stops.len() == 3
             && route.stops[0].port == route.stops[2].port;
         let valid = (2..=MAX_STOPS).contains(&route.stops.len())
@@ -62,7 +79,9 @@ impl World {
             && route.name.chars().count() <= 48
             && route.fuel_reserve.is_finite()
             && route.fuel_reserve >= 0.0
-            && route.fuel_reserve <= self.fleets[&id].fuel_capacity()
+            // §shipbuilding-overhaul: the reserve is energy, checked against every
+            // tank aboard (a fission hull has no Deuterium tank at all).
+            && route.fuel_reserve <= self.fleets[&id].energy_capacity()
             && route.escort != Some(id)
             && route.shopping_budget.is_none_or(|budget| budget.is_finite() && (0.0..=1_000_000_000.0).contains(&budget))
             && (route.stops.len() <= 2
@@ -75,8 +94,9 @@ impl World {
                         FreightPort::Station { id } => self.owns_station(owner, id) && s.unload.is_empty(),
                         _ => true,
                     }
-                    && s.load.values().map(|n| *n as u64).sum::<u64>() <= capacity
-                    && s.unload.values().map(|n| *n as u64).sum::<u64>() <= capacity
+                    // §hold-room: a stop's manifest fits the hold by room.
+                    && crate::cargo::manifest_quarters(&s.load) <= capacity
+                    && crate::cargo::manifest_quarters(&s.unload) <= capacity
             })
             && route.stops.windows(2).all(|s| s[0].port != s[1].port);
         if !valid {
@@ -88,6 +108,18 @@ impl World {
         f.mission = None;
         f.defense = None;
         f.pursuit_plan = None;
+        // §route-edit: the player's edit of a run under way keeps its place,
+        // en route or at work; a new itinerary or a finished run starts over.
+        let kept = match &f.industry {
+            Some(FleetIndustry::Route { run }) if revise && run.keeps_place(&route) => Some(run.clone()),
+            _ => None,
+        };
+        if let Some(run) = kept {
+            let aboard: BTreeMap<C, u32> = C::ALL.iter().map(|&c| (c, f.cargo_amount(c))).collect();
+            let run = run.revised(route, |c| aboard.get(&c).copied().unwrap_or(0));
+            f.industry = Some(FleetIndustry::Route { run });
+            return;
+        }
         f.industry = Some(FleetIndustry::Route {
             run: FreightRun {
                 route,
@@ -338,11 +370,11 @@ impl World {
         let mods = self.production_mods(owner);
         // §belts: your station anchored at this belt takes the ore next.
         let station = self.anchored_station_at(owner, system, body);
-        let station_room = station.map_or(0, |(_, room)| room);
+        let station_room = station.map_or(0, |(_, room)| room.fits(ore));
         let f = self.fleets.get_mut(&id).unwrap();
         f.order = FleetOrder::Idle;
         tenders::hold(f);
-        let free = f.trade_capacity().saturating_sub(f.cargo_units());
+        let free = f.trade_room().fits(ore);
         let mut cut = 0.0;
         let mut to_stock = 0.0;
         let mut to_station = 0;
@@ -359,6 +391,7 @@ impl World {
                     * BARGE_ORE_PER_S
                     * share
                     * crate::production::ore_bulk_ratio(ore)
+                    * crate::production::OUTPUT_SCALE
                     * mods.extraction
                     * mods.extraction_moons
                     * DT)
@@ -869,18 +902,18 @@ impl World {
                         }
                         amount -= tank;
                         harvested += tank;
-                        if f.has_freighter() && f.cargo_units() < f.trade_capacity() {
+                        if f.has_freighter() && f.trade_room().fits(C::Helium3) > 0 {
                             cargo_fraction += amount;
                             let n = (cargo_fraction.floor() as u32)
-                                .min(f.trade_capacity() - f.cargo_units());
+                                .min(f.trade_room().fits(C::Helium3));
                             f.add_cargo(C::Helium3, n);
                             cargo_fraction -= n as f64;
                             harvested += n as f64;
                         }
-                        let tank_full = !f.fuel_research.helium3 || f.fusion_room() <= 1e-9;
+                        let tank_full = f.room(C::Helium3) <= 1e-9;
                         if tank_full
                             && (!f.has_freighter()
-                                || f.cargo_units() >= f.trade_capacity())
+                                || f.trade_room().fits(C::Helium3) == 0)
                         {
                             "full"
                         } else {
@@ -1021,10 +1054,7 @@ impl World {
             // §belts: a station stop takes ore straight from the station's hold
             // and waits there until the manifest is aboard.
             for (&c, left) in &mut run.remaining_load {
-                let room = {
-                    let f = &self.fleets[&id];
-                    f.trade_capacity().saturating_sub(f.cargo_units())
-                };
+                let room = self.fleets[&id].trade_room().fits(c);
                 let n = (*left).min(room).min(self.fleets[&sid].cargo_amount(c));
                 if n > 0 {
                     self.fleets.get_mut(&sid).unwrap().remove_cargo(c, n);
@@ -1039,7 +1069,7 @@ impl World {
                 run.phase = RoutePhase::Fuel;
             } else {
                 run.hold = Some(
-                    if self.fleets[&id].cargo_units() >= self.fleets[&id].trade_capacity() {
+                    if !self.fleets[&id].trade_room().fits_any(run.remaining_load.iter().filter(|(_, n)| **n > 0).map(|(c, _)| *c)) {
                         "Cargo space full; revise the unload manifest"
                     } else {
                         "Waiting for ore at the station"
@@ -1058,13 +1088,11 @@ impl World {
                 let f = &self.fleets[&id];
                 let escort = run.route.escort.and_then(|escort| self.fleets.get(&escort))
                     .filter(|g| g.owner == owner && g.pos.distance(f.pos) <= 1_000.0);
-                let need = |g: &crate::ship::Fleet| if g.burns_uranium() {
-                    (C::Uranium, (g.uranium_capacity() - g.uranium).max(0.0).floor() as u32)
-                } else {
-                    (C::Deuterium, g.fusion_room().floor() as u32)
-                };
+                // §shipbuilding-overhaul: each hull's own core fuel.
+                let need = |g: &crate::ship::Fleet| g.fuels_aboard().into_iter()
+                    .map(|c| (c, g.room(c).floor() as u32)).collect::<Vec<_>>();
                 let mut quote = 0.0;
-                for (c, n) in std::iter::once(need(f)).chain(escort.map(need)) {
+                for (c, n) in need(f).into_iter().chain(escort.map(need).unwrap_or_default()) {
                     quote += self.market.quote_buy(c, n).total;
                 }
                 (quote + self.exchange_penalty(owner,quote)) * 1.05
@@ -1072,7 +1100,7 @@ impl World {
             for (&c, left) in &mut run.remaining_load {
                 if system.is_none() && let Some(budget) = run.route.shopping_budget {
                     let stocked = self.players[&owner].warehouse.get(&c).copied().unwrap_or(0);
-                    let room = self.fleets[&id].trade_capacity().saturating_sub(self.fleets[&id].cargo_units());
+                    let room = self.fleets[&id].trade_room().fits(c);
                     let need = (*left).min(room).saturating_sub(stocked);
                     // §treasury: this visit's sales are still on their way
                     // home; the Hub nets the shopping out of them.
@@ -1103,10 +1131,9 @@ impl World {
                     .unwrap_or_else(|| {
                         self.players[&owner].warehouse.get(&c).copied().unwrap_or(0)
                     });
-                let f = &self.fleets[&id];
                 let n = (*left)
                     .min(available)
-                    .min(f.trade_capacity().saturating_sub(f.cargo_units()));
+                    .min(self.fleets[&id].trade_room().fits(c));
                 if n > 0 {
                     let before = self.fleets[&id].cargo_amount(c);
                     self.apply_logistics_load(owner, id, system, c, n, events);
@@ -1120,7 +1147,7 @@ impl World {
                 run.phase = RoutePhase::Fuel;
             } else {
                 run.hold = Some(
-                    if self.fleets[&id].cargo_units() >= self.fleets[&id].trade_capacity() {
+                    if !self.fleets[&id].trade_room().fits_any(run.remaining_load.iter().filter(|(_, n)| **n > 0).map(|(c, _)| *c)) {
                         "Cargo space full; revise the unload manifest"
                     } else {
                         "Waiting for unreserved cargo"
@@ -1239,10 +1266,9 @@ impl World {
                 .iter()
                 .find(|s| s.id == sid)
                 .map_or(0, |s| s.free_stock(c).floor() as u32);
-            let f = &self.fleets[&id];
             let n = (*left)
                 .min(available)
-                .min(f.trade_capacity().saturating_sub(f.cargo_units()));
+                .min(self.fleets[&id].trade_room().fits(c));
             if n > 0 {
                 let before = self.fleets[&id].cargo_amount(c);
                 self.apply_logistics_load(owner, id, Some(sid), c, n, events);
@@ -1263,10 +1289,10 @@ impl World {
         let consumption = f.propulsion_fuel_mult();
         let budget = crate::fuel::route_estimate(f.pos, dest, f.mass(), consumption,
             self.systems.iter().map(|s| s.pos).chain(std::iter::once(self.hub))) + route.fuel_reserve;
-        // §fuel-overhaul: the store the route's throttle burns (Uranium on Slow).
-        let reason = if budget > f.propulsion_capacity() {
+        // §shipbuilding-overhaul: the estimate is energy; the tanks hold energy.
+        let reason = if budget > f.energy_capacity() {
             "Leg exceeds tank range; shorten route or reduce cargo"
-        } else if f.propulsion_store() + 1e-9 < budget {
+        } else if f.energy_aboard() + 1e-9 < budget {
             "Waiting for fuel and arrival reserve"
         } else if !f.supplied {
             "Waiting for ship supplies"
@@ -1283,11 +1309,10 @@ impl World {
             let g = &self.fleets[&escort];
             // §fuel-overhaul: an escort burns its charge's Uranium regime when
             // it can fly it, else its own fusion tank. Price that hull itself.
-            let (uranium, escort_consumption) = g.formation_burn(f.burns_uranium());
+            let (_, escort_consumption) = g.formation_burn(f.flies_slow());
             let escort_budget = crate::fuel::route_estimate(f.pos, dest, g.mass(), escort_consumption,
                 self.systems.iter().map(|s| s.pos).chain(std::iter::once(self.hub)));
-            !g.supplied
-                || (if uranium { g.uranium } else { g.fuel }) + 1e-9 < escort_budget
+            !g.supplied || g.energy_aboard() + 1e-9 < escort_budget
         }) {
             "Waiting for escort fuel or supplies"
         } else {
@@ -1305,8 +1330,8 @@ impl World {
             if let Some(mut outpost) = s.industry.outpost.take() {
                 // §fuel-overhaul: an outpost burns no fuel.
                 let inputs = [
-                    (C::Provisions, 0.03),
-                    (C::Machinery, 0.005),
+                    (C::Provisions, 0.03 * crate::production::OUTPUT_SCALE),
+                    (C::Machinery, 0.005 * crate::production::OUTPUT_SCALE),
                 ];
                 outpost.supplied = safe
                     && inputs
@@ -1316,6 +1341,7 @@ impl World {
                 if outpost.supplied {
                     for (c, n) in inputs {
                         *s.stockpile.get_mut(&c).unwrap() -= n * DT;
+                        s.tally_used(c, n * DT);
                     }
                     if outpost.kind == OutpostKind::Extraction {
                         outpost.rate =
@@ -1369,11 +1395,13 @@ impl World {
                     }
                     for (c, n) in outputs {
                         *s.stockpile.entry(*c).or_default() += n * DT * fraction;
+                        s.tally_made(*c, n * DT * fraction);
                         p.outputs.push((*c, n * fraction));
                     }
                 }
                 for (c, n) in p.kind.inputs() {
                     *s.stockpile.get_mut(c).unwrap() -= n * DT * fraction;
+                    s.tally_used(*c, n * DT * fraction);
                 }
                 p.supplied = true;
             }
@@ -1392,6 +1420,7 @@ fn extract_site(s: &mut StarSystem, body: u32, commodity: C, mult: f64, dt: f64)
     };
     let amount = (crate::explore::natural_extraction_rate(b, &b.deposits[i], s.trait_)
         * crate::production::ore_bulk_ratio(commodity)
+        * crate::production::OUTPUT_SCALE
         * mult
         * dt)
         .min(room)
@@ -1401,6 +1430,7 @@ fn extract_site(s: &mut StarSystem, body: u32, commodity: C, mult: f64, dt: f64)
         *reserves -= amount;
     }
     *s.stockpile.entry(commodity).or_default() += amount;
+    s.tally_made(commodity, amount);
     amount
 }
 
@@ -1480,6 +1510,60 @@ mod tests {
             panic!("route lost")
         };
         run
+    }
+
+    /// §route-edit (Peter, Nov 5 2026: "I tried to modify the return items
+    /// when the freighter was still traveling to the hub but I couldn't save
+    /// the changes"): an edit with the same ports keeps the run's place; a
+    /// new itinerary starts over.
+    #[test]
+    fn an_edit_under_way_keeps_its_place_and_a_new_itinerary_starts_over() {
+        let (mut w, owner, home, id) = scene();
+        w.fleets.get_mut(&id).unwrap().add_cargo(C::MetallicOre, 10);
+        let mut r = route(home);
+        w.set_freight_route(owner, id, Some(r.clone()), &mut vec![]);
+        // Bound for the Hub with the ore aboard.
+        if let Some(FleetIndustry::Route { run }) = &mut w.fleets.get_mut(&id).unwrap().industry {
+            run.stop = 1;
+            run.phase = RoutePhase::Travelling;
+            run.visits = 1;
+        }
+        r.stops[1].load = [(C::Alloys, 4), (C::Machinery, 3)].into();
+        w.assign_freight_route(owner, id, Some(r.clone()), true, &mut vec![]);
+        let kept = run(&w, id);
+        assert_eq!((kept.stop, kept.phase, kept.visits), (1, RoutePhase::Travelling, 1), "still bound for the Hub");
+        assert_eq!(kept.route, r, "with the new return goods");
+        // At work there: what is already moved never moves twice.
+        if let Some(FleetIndustry::Route { run }) = &mut w.fleets.get_mut(&id).unwrap().industry {
+            run.phase = RoutePhase::Loading;
+            run.remaining_unload.clear();
+            run.remaining_load = [(C::Alloys, 1), (C::Machinery, 3)].into();
+        }
+        r.stops[1].load = [(C::Alloys, 6), (C::Machinery, 1)].into();
+        w.assign_freight_route(owner, id, Some(r.clone()), true, &mut vec![]);
+        let kept = run(&w, id);
+        assert_eq!(kept.remaining_load, [(C::Alloys, 3), (C::Machinery, 1)].into(),
+            "3 of 4 Alloys loaded, so 3 more for 6; none of the Machinery yet, so 1");
+        assert_eq!(kept.phase, RoutePhase::Loading);
+        // Done there, more to load sends it back to loading.
+        if let Some(FleetIndustry::Route { run }) = &mut w.fleets.get_mut(&id).unwrap().industry {
+            run.phase = RoutePhase::Fuel;
+            run.remaining_load.clear();
+        }
+        r.stops[1].load = [(C::Alloys, 8), (C::Machinery, 1)].into();
+        w.assign_freight_route(owner, id, Some(r.clone()), true, &mut vec![]);
+        assert_eq!((run(&w, id).phase, run(&w, id).remaining_load.clone()), (RoutePhase::Loading, [(C::Alloys, 2)].into()));
+        // A plain assignment (a bot's replan) starts over, and so does a new
+        // itinerary.
+        w.set_freight_route(owner, id, Some(r.clone()), &mut vec![]);
+        assert_eq!((run(&w, id).stop, run(&w, id).phase), (0, RoutePhase::Dispatch), "bots replan from the first stop");
+        if let Some(FleetIndustry::Route { run }) = &mut w.fleets.get_mut(&id).unwrap().industry {
+            run.stop = 1;
+            run.phase = RoutePhase::Travelling;
+        }
+        r.stops[1].port = FreightPort::System { id: w.systems.iter().find(|s| s.id != home).unwrap().id };
+        w.assign_freight_route(owner, id, Some(r), true, &mut vec![]);
+        assert_eq!((run(&w, id).stop, run(&w, id).phase), (0, RoutePhase::Dispatch), "a new itinerary");
     }
 
     #[test]
@@ -1737,6 +1821,7 @@ mod tests {
                 player_id: owner,
                 fleet_id: id,
                 route: Some(route(home)),
+                revise: false,
             },
             &mut vec![],
         );
@@ -1857,7 +1942,7 @@ mod tests {
             .insert(C::PrecisionComponents, 20.0);
         pump(&mut w, 30);
         let s = site(&w, home);
-        assert!(s.stockpile[&C::HullSections] > 0.0 && s.stockpile[&C::WarpCore] > 0.0);
+        assert!(s.stockpile[&C::HullSections] > 0.0 && s.stockpile[&C::FissionReactor] > 0.0);
         assert_eq!(
             s.stockpile.get(&C::Alloys),
             None,
@@ -2027,16 +2112,25 @@ mod tests {
         pump(&mut w, 30);
         assert_eq!(w.fleets[&id].fuel, before, "no remote fuel creation");
         w.park_at_system(id, home);
-        // 18 s on station: 3 Helium-3, all cargo before Fusion Reactors.
-        pump(&mut w, 540);
+        // 18 s on station: 3 Helium-3, all cargo before Fusion Reactors
+        // (§progression: at the output scale, twenty times as long).
+        let scaled = |ticks: f64| (ticks / crate::production::OUTPUT_SCALE) as u32;
+        pump(&mut w, scaled(540.0));
         let f = &w.fleets[&id];
         assert_eq!(f.fuel, before, "no Helium-3 in the tank before Fusion Reactors");
-        assert_eq!(f.cargo_amount(C::Helium3), 2, "harvested Helium-3 is physical cargo");
-        w.players.get_mut(&owner).unwrap().research.completed.insert(crate::power::FUSION_RESEARCH.into());
-        w.refresh_fleet_fuel_research();
-        pump(&mut w, 120);
+        assert_eq!(f.cargo_amount(C::Helium3), 3, "harvested Helium-3 is physical cargo");
+        // §shipbuilding-overhaul: a hull on Helium Cores tops up its own tank.
+        {
+            let f = w.fleets.get_mut(&id).unwrap();
+            for ship in &mut f.ships { ship.reactor = crate::fuel::ReactorGrade::Helium; }
+            f.launch_empty();
+        }
+        // An Advanced Fusion tank is dense (26 units on a Medium Freighter,
+        // §reactors-drives: four times the energy aboard): a few minutes on
+        // station fill it.
+        pump(&mut w, scaled(6000.0));
         let f = &w.fleets[&id];
-        assert!(f.helium3 > 0.0 && f.fusion_room() < 1e-9, "the tank fills first once it can burn Helium-3");
+        assert!(f.helium3 > 0.0 && f.room(C::Helium3) < 1e-9, "the tank fills first once a Helium Core burns it");
         let mut restored: World =
             serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
         pump(&mut restored, 30);
@@ -2079,6 +2173,7 @@ mod tests {
         let d = b.deposits.iter().find(|d| d.resource == ore).unwrap();
         let natural = crate::explore::natural_extraction_rate(b, d, s.trait_);
         (barges * BARGE_ORE_PER_S).min(SHIP_YIELD_MULT * natural) * crate::production::ore_bulk_ratio(ore)
+            * crate::production::OUTPUT_SCALE
     }
     fn mine_job(w: &World, fleet: EntityId) -> (f64, String) {
         match &w.fleets[&fleet].industry {
@@ -2179,10 +2274,11 @@ mod tests {
         assert!(stocked > 0.0 && (stocked - mine_job(&w, fleet).0).abs() < 1e-9, "your own belt fills your stockpile");
         assert_eq!(w.fleets[&fleet].cargo_units(), 0);
 
-        site_mut(&mut w, home).bodies.iter_mut().find(|b| b.id == belt).unwrap().deposits[0].reserves = Some(0.5);
+        site_mut(&mut w, home).bodies.iter_mut().find(|b| b.id == belt).unwrap().deposits[0].reserves =
+            Some(0.5 * crate::production::OUTPUT_SCALE);
         pump(&mut w, seconds(30.0));
         assert_eq!(mine_job(&w, fleet).1, "depleted");
-        assert_eq!(site(&w, home).bodies.iter().find(|b| b.id == belt).unwrap().deposits[0].reserves, Some(0.0));
+        assert!(site(&w, home).bodies.iter().find(|b| b.id == belt).unwrap().deposits[0].reserves.is_some_and(|r| r.abs() < 1e-9));
     }
 
     /// §pockets: an unowned belt with base ore and at least one hidden pocket,

@@ -78,13 +78,14 @@ deps["../core/derive/format"] = deps["../../core/derive/format"] = compile("core
 deps["../../core/derive/geo"] = { systemName: () => "Freya" };
 deps["./format"] = deps["../core/derive/format"];
 deps["../../core/derive/season"] = compile("core/derive/season.ts");
+deps["./fleet"] = { goodKnown: () => true, ...(deps["./fleet"] ?? {}) }; // §reactors-drives: every good known in this fixture
 const market = deps["../../core/derive/market"] = compile("core/derive/market.ts");
 deps["../transactions"] = compile("shell/transactions.ts");
 deps["../signature"] = { sheetFingerprint: JSON.stringify };
 deps["../dom"] = { renderDeferred: () => false, setHtml: (root, html) => root.innerHTML = html };
 const berthed = [{ id: "freighter", kind: "convoy", own: true, composition: [{ kind: "convoy", count: 1 }],
   cargo_manifest: [{ commodity: "alloys", units: 65 }], count_class: "single" }];
-deps["../../core/derive/fleet"] = { hubDockedFleets: () => berthed, shipKindLabel: () => "Freighter" };
+deps["../../core/derive/fleet"] = { goodKnown: () => true, hubDockedFleets: () => berthed, shipKindLabel: () => "Freighter" };
 Object.assign(state, {
   playerId: "1", link: "online", simTime: 100,
   galaxy: { specialist_hire_cost: 800, systems: [{ id: "home", name: "Freya" }],
@@ -100,6 +101,10 @@ Object.assign(state, {
 });
 class Input { constructor(dataset, value, checked = false) { Object.assign(this, { dataset, value, checked }); } }
 const marketDocument = { activeElement: null };
+// §goods-tabs: the shared Resources · Parts · Modules split and its desktop strip.
+deps["./fleet"].lightBase = (c) => c.replace(/^(heavy|capital)_/, "");
+const goods = deps["../../core/derive/goods"] = compile("core/derive/goods.ts");
+deps["./goods-tabs"] = compile("shell/deck/goods-tabs.ts");
 const { DeckMarketRoutes } = compile("shell/deck/market.ts", { document: marketDocument, HTMLInputElement: Input, HTMLSelectElement: Input });
 const root = { id: "fixture", innerHTML: "", contains: element => element === marketDocument.activeElement }, sent = [], intents = [], opened = [];
 const ctx = { state, send: message => sent.push(message), intent: { beginFleetCommand: command => intents.push(command) } };
@@ -136,11 +141,30 @@ click("market-hub-unload", { fleet: "freighter" });
 assert.equal(intents.at(-1).type, "HubUnload", "unloading still arms an explicit fleet-order confirmation");
 click("market-hub-fleet", { fleet: "freighter" });
 assert.equal(opened.at(-1).name, "fleet");
-for (const tab of ["specialists", "modules", "transactions", "exchange"]) {
+for (const tab of ["specialists", "transactions", "exchange"]) {
   click("market-tab", { tab });
   assert.match(root.innerHTML, new RegExp(`data-tab="${tab}" aria-selected="true"`));
-  if (tab === "specialists" || tab === "modules") assert.match(root.innerHTML, /deck-market-services/);
+  if (tab === "specialists") assert.match(root.innerHTML, /deck-market-services/);
 }
+// §modules-as-goods: no module shop; modules trade on the Exchange's Modules tab.
+assert.doesNotMatch(root.innerHTML, /data-tab="modules"/);
+// §goods-tabs: the board in Resources · Parts · Modules.
+assert.match(root.innerHTML, /data-deck-act="market-goods-tab" data-goods-tab="resources" aria-selected="true">Resources<\/button>/);
+assert.match(root.innerHTML, />Parts<\/button>/);
+assert.match(root.innerHTML, /data-commodity="metallic_ore"/);
+assert.doesNotMatch(root.innerHTML, /data-commodity="torpedo_rack"/, "modules wait on their tab");
+click("market-goods-tab", { goodsTab: "modules" });
+assert.match(root.innerHTML, /data-goods-tab="modules" aria-selected="true"/);
+assert.match(root.innerHTML, /data-commodity="torpedo_rack"/);
+assert.doesNotMatch(root.innerHTML, /data-commodity="metallic_ore"/);
+click("market-goods-tab", { goodsTab: "parts" });
+assert.match(root.innerHTML, /data-commodity="fission_reactor"/);
+assert.match(root.innerHTML, /data-commodity="pulse_laser"/, "the guns are parts while they are built in");
+assert.equal(goods.goodsTab("hull_sections"), "parts");
+assert.equal(goods.goodsTab("heavy_zephyr_drive"), "parts");
+assert.equal(goods.goodsTab("torpedoes"), "resources", "munitions are supplies");
+assert.equal(goods.goodsTab("lance_array"), "modules");
+click("market-goods-tab", { goodsTab: "resources" });
 assert.equal(controller.handleAction({ dataset: { deckAct: "close" } }, route), false, "Close remains owned by the router");
 assert.equal(controller.handleAction({ dataset: { deckAct: "back" } }, route), false);
 
@@ -169,9 +193,6 @@ for (const pendingWallet of [null, { ...arrivedWallet, report_pending: true }]) 
   assert.match(root.innerHTML, /Available specialists/);
   assert.match(root.innerHTML, /data-specialist="geologist" disabled/);
   click("market-hire", { specialist: "geologist" });
-  click("market-tab", { tab: "modules" });
-  assert.match(root.innerHTML, /Combat modules/);
-  click("market-module-buy", { module: "mass_driver" });
   assert.equal(sent.length, before, "UI guards and action handlers both wait for the account report");
   click("market-tab", { tab: "exchange" });
 }
@@ -194,7 +215,7 @@ assert.match(css, /\.deck-build-workbench, \.deck-workspace:is\(\[data-route="ma
   "Market, the merchant, the Shipyard and Build share the same floating size rule (Stores is a workbench, so it rides the first selector)");
 assert.match(css, /\.deck-workspace:is\(\[data-route="logistics"\], \[data-route="signals"\]\) \{ width: min\(var\(--deck-workspace-wide\)/,
   "Logistics (and Signals) float in the same frame, wider for the route planner");
-assert.match(src("shell/deck/workspace.ts"), /POPOUTS: ReadonlySet<DeckRoute\["name"\]> = new Set\(\["market", "logistics", "merchant", "signals", "shipyard"\]\)/,
+assert.match(src("shell/deck/workspace.ts"), /POPOUTS: ReadonlySet<DeckRoute\["name"\]> = new Set\(\["market", "logistics", "merchant", "signals", "shipyard", "research"\]\)/,
   "pop-out routes never reserve a right rail from the map camera");
 const deckMarkup = src("shell/deck/markup.ts");
 assert.match(deckMarkup, /<aside id="deck-workspace"[^>]*>\n\s*<div class="deck-workspace__scene" aria-hidden="true"><img src="\/art\/derived\/hub-visit\/hub-visit-v1\.webp"/,
@@ -205,8 +226,8 @@ assert.match(css, /\.deck-workspace__scene \{ display: none; \}/, "no other rout
 assert.match(deckMarkup, /navButton\("fleets", "Fleets"\)\}\n\s*\$\{navButton\("logistics", "Logistics"\)\}/, "Logistics sits beside Fleets in the top bar");
 assert.match(deckMarkup, /<kbd>M V T R P<\/kbd><span>Market · Fleets · Logistics · Research · Officers<\/span>/, "the shortcut is listed");
 assert.match(src("shell/deck/index.ts"), /t: "logistics"/, "T opens Logistics");
-assert.match(deckMarkup, /const NAV_FOLD_ORDER = \["faction", "comms", "syndicate", "operations", "officers", "log", "research"\]/,
-  "the top bar folds its least-used destinations into More instead of clipping them");
+assert.match(deckMarkup, /const NAV_FOLD_ORDER = \["faction", "comms", "syndicate", "operations", "officers", "research", "log"\]/,
+  "the top bar folds its least-used destinations into More instead of clipping them, Log and its count last");
 console.log("PASS: centered Market layout, tabs, incoming trades, pending-account isolation, action guards and automatic report arrival while editing.");
 
 if (process.argv.includes("--serve")) {

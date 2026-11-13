@@ -271,6 +271,8 @@ pub enum ModKey {
     ModuleBuildTime,
     ModuleCost,
     RefitTime,
+    /// §shipbuilding-overhaul Phase 5: a fleet's torpedo and slug magazines.
+    MagazineCapacity,
     // Weapons (damage + counter constants — law 5)
     BeamDmg,
     DriverDmg,
@@ -799,11 +801,15 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 1,
         name: "Bunkerage",
-        blurb: "+25% fuel capacity.",
+        // §reactors-drives: rung 2 — the Fusion Reactor, the Gale Drive and
+        // Deuterium — becomes known here (`fuel::rung_programme`), and with it
+        // the Deuterium Fusion Plants III–IV.
+        blurb: "+25% fuel capacity. Deuterium: Fusion Reactors, Gale Drives, Fusion Plants III–IV, the Volatile Harvester and Fuel Refinery.",
         effects: &[
             Effect::Mods(&[(ModKey::FuelCapacity, 1.25)]),
             Effect::UnlockStructureTier(StructureKind::VolatileHarvester, 1),
             Effect::UnlockStructureTier(StructureKind::FuelRefinery, 1),
+            Effect::UnlockStructureTier(StructureKind::PowerPlant, 3),
         ],
         hidden: false,
     },
@@ -1000,10 +1006,9 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 1,
         name: "Enrichment",
-        blurb: "Unlocks Smelters and Chemical Works; +15% processing speed.",
+        blurb: "Unlocks Chemical Works; +15% processing speed.",
         effects: &[
             Effect::Mods(&[(ModKey::ProcessingYield, 1.15)]),
-            Effect::UnlockStructureTier(StructureKind::Smelter, 1),
             Effect::UnlockStructureTier(StructureKind::ChemicalWorks, 1),
         ],
         hidden: false,
@@ -1050,12 +1055,13 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Autoforges",
-        blurb: "Machinery recipe −20% inputs. Unlocks Orbital Shipyards for large freighters and warships.",
+        blurb: "Machinery recipe −20% inputs. Unlocks Orbital Shipyards for large freighters and warships, and the Drive Works for your own Fission Reactors and Zephyr Drives.",
         effects: &[
             Effect::Mods(&[(ModKey::MachineryInputs, 0.80)]),
             Effect::UnlockStructureTier(StructureKind::MachineWorks, 1),
             Effect::UnlockStructureTier(StructureKind::PrecisionWorks, 1),
             Effect::UnlockStructureTier(StructureKind::NavalDrydock, 1),
+            Effect::UnlockStructureTier(StructureKind::DriveWorks, 1),
         ],
         hidden: false,
     },
@@ -1185,11 +1191,10 @@ pub const CATALOG: &[Programme] = &[
         field: Field::Materials,
         school: Some(School::Foundry),
         tier: 4,
-        name: "Fusion Reactors",
-        blurb: "Fusion Plant V–VI and ships burn Helium-3. Drive Works: your own Warp and Fusion Cores.",
+        name: "Helium-3 Cycle",
+        blurb: "Helium-3: Advanced Fusion Reactors, Tempest Drives and Fusion Plants V–VI, six times the energy a unit. Drive Works: both parts.",
         effects: &[
             Effect::UnlockStructureTier(StructureKind::PowerPlant, 4),
-            Effect::UnlockStructureTier(StructureKind::DriveWorks, 1),
         ],
         hidden: false,
     },
@@ -1221,10 +1226,9 @@ pub const CATALOG: &[Programme] = &[
         school: Some(School::Foundry),
         tier: 6,
         name: "Antimatter Synthesis",
-        blurb: "Antimatter Plant: Deuterium and power into Antimatter. Jump Drive module for any hull but ships of the line.",
+        blurb: "Antimatter Plant: Deuterium and power into Antimatter. Drive Works: Antimatter Reactors and Maelstrom Drives, which jump, for any hull but ships of the line.",
         effects: &[
             Effect::UnlockStructureTier(StructureKind::AntimatterPlant, 1),
-            Effect::UnlockModule(ModuleKind::JumpDrive),
         ],
         hidden: false,
     },
@@ -1472,8 +1476,8 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 2,
         name: "Hardened Magazines",
-        blurb: "Warship Armaments cost −15%.",
-        effects: &[Effect::Mods(&[(ModKey::WarshipCost, 0.85)])],
+        blurb: "Warship Weapon Mounts cost −15%. Torpedo and slug magazines +25%.",
+        effects: &[Effect::Mods(&[(ModKey::WarshipCost, 0.85), (ModKey::MagazineCapacity, 1.25)])],
         hidden: false,
     },
     Programme {
@@ -1591,6 +1595,27 @@ pub const CATALOG: &[Programme] = &[
         effects: &[Effect::UnlockStructureTier(StructureKind::OrbitalDefense, 4)],
         hidden: false,
     },
+    // §veil (docs/veil.md): the ionised sky. Level I at III, II–III at IV.
+    Programme {
+        id: "weap_cm_iii_ionospheric_veil",
+        field: Field::Weapons,
+        school: Some(School::Countermeasures),
+        tier: 3,
+        name: "Ionospheric Veil",
+        blurb: "Build a Veil Projector: under a held blockade it ionises the sky — guns above pin nothing, prize crews load nothing, only Troop Transports land (−10%). Runs off the Fusion Plant.",
+        effects: &[Effect::UnlockStructureTier(StructureKind::VeilProjector, 1)],
+        hidden: false,
+    },
+    Programme {
+        id: "weap_cm_iv_deep_veil",
+        field: Field::Weapons,
+        school: Some(School::Countermeasures),
+        tier: 4,
+        name: "Deep Veil",
+        blurb: "Veil Projector II–III: landings lose 15% then 20% in the descent. The projector draws more of the reactor at each level.",
+        effects: &[Effect::UnlockStructureTier(StructureKind::VeilProjector, 3)],
+        hidden: false,
+    },
     Programme {
         id: "weap_cm_iv_platform_netfire",
         field: Field::Weapons,
@@ -1652,7 +1677,10 @@ pub const CATALOG: &[Programme] = &[
         tier: 1,
         name: "Escort Datalink",
         blurb: "Corvette + Point-Defense Screen: protect the guarded fleet, with an extra intercept at twice PD reach. Build at a staffed Shipyard I.",
-        effects: &[Effect::UnlockModule(ModuleKind::EscortDatalink)],
+        // §research-locked (Peter, Nov 11 2026: "Shouldn't the corvette ...
+        // not show up in the shipyard until they have been unlocked by
+        // research?"): the card that always named it now unlocks the hull.
+        effects: &[Effect::UnlockHull(ShipKind::Corvette), Effect::UnlockModule(ModuleKind::EscortDatalink)],
         hidden: false,
     },
     Programme {
@@ -2081,7 +2109,7 @@ pub const CATALOG: &[Programme] = &[
         school: None,
         tier: 1,
         name: "Ore Recovery",
-        blurb: "+15% Smelter recovery from the same ore, including byproducts. Enrichment unlocks the Smelter.",
+        blurb: "+15% Smelter recovery from the same ore, including byproducts.",
         effects: &[Effect::Mods(&[(ModKey::OreRecovery, 1.15)])],
         hidden: false,
     },
@@ -2354,11 +2382,12 @@ mod tests {
         // + the Line capital ladder (VI/VII/VIII), Cargo Pods, Ore Recovery,
         // + three station levels (Orbital Batteries, Defense Stations, Star
         // Fortress) + Belt Stations (§belts) + Fusion Reactors (§power)
-        // + Antimatter Synthesis (§fuel-overhaul) = 119.
+        // + Antimatter Synthesis (§fuel-overhaul) + the two Veil programmes
+        // (§veil) = 121.
         assert_eq!(
             CATALOG.len(),
-            119,
-            "the v6 tree (108) + the 3 Line capital tiers + Cargo Pods + Ore Recovery + 3 station levels + Belt Stations + Fusion Reactors + Antimatter Synthesis"
+            121,
+            "the v6 tree (108) + the 3 Line capital tiers + Cargo Pods + Ore Recovery + 3 station levels + Belt Stations + Fusion Reactors + Antimatter Synthesis + 2 Veil"
         );
         for field in [
             Field::Propulsion,
@@ -2369,9 +2398,10 @@ mod tests {
             Field::Life,
         ] {
             let of_field: Vec<&Programme> = CATALOG.iter().filter(|p| p.field == field).collect();
-            // Weapons also carries the three station levels (§orbital-defense).
+            // Weapons also carries the three station levels (§orbital-defense)
+            // and the two Veil programmes (§veil).
             let expect = if field == Field::Hulls { 22 } else if field == Field::Materials { 22 }
-                else if field == Field::Weapons { 21 } else { 18 };
+                else if field == Field::Weapons { 23 } else { 18 };
             assert_eq!(of_field.len(), expect, "{field:?} programme count");
             // Exactly two schools, each a III/IV/V ladder of 2+2+2.
             let schools: BTreeSet<School> = of_field.iter().filter_map(|p| p.school).collect();
@@ -2383,9 +2413,11 @@ mod tests {
                         .filter(|p| p.school == Some(s) && p.tier == t)
                         .count();
                     let promoted = (matches!(s, School::Expedition | School::Line) && t == 3) || (s == School::Shadow && t == 4);
-                    let station = s == School::Countermeasures && (t == 3 || t == 5);
+                    // Countermeasures carries the station levels (III, V) and
+                    // the two Veil programmes (III, IV) on top of its pairs.
+                    let cm_extra = if s == School::Countermeasures { match t { 3 => 2, 4 | 5 => 1, _ => 0 } } else { 0 };
                     let fusion = s == School::Foundry && t == 4;
-                    assert_eq!(n, if promoted { 1 } else if station || fusion { 3 } else { 2 }, "{s:?} tier {t}");
+                    assert_eq!(n, if promoted { 1 } else if fusion { 3 } else { 2 + cm_extra }, "{s:?} tier {t}");
                 }
             }
             // Three shared programmes per tier, plus equipment and recovery picks.
@@ -2416,7 +2448,7 @@ mod tests {
         // has its gameplay (the reader test guards the effects).
         let hidden: Vec<&str> = CATALOG.iter().filter(|p| p.hidden).map(|p| p.id).collect();
         assert!(hidden.is_empty(), "{hidden:?}");
-        assert_eq!(visible_ids().count(), 119);
+        assert_eq!(visible_ids().count(), 121);
         let capstone = programme("mat_foundry_vi_antimatter_synthesis").unwrap();
         assert_eq!((capstone.tier, capstone.school), (6, Some(School::Foundry)));
         assert_eq!(tier_gate(Field::Materials, Some(School::Foundry), 6),

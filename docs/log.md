@@ -27,7 +27,8 @@ Two tabs, the same in both shells.
 - A fresh open shows the Inbox when it has rows, else History.
 - **Badge**: new Inbox rows plus unread warn-or-worse History news, one per
   episode. Opening a tab reads it; rows stay marked new while you look.
-- The Command page's Decision digest is the Inbox's top four.
+- The desktop has no Command page since Oct 31 2026; the Inbox is the one list
+  of what needs you, and Log folds last in the top bar so its count stays in view.
 
 ## Server (protocol v71)
 

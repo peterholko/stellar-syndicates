@@ -44,6 +44,12 @@ export function liveProgressAttr(line: ProgressLine | null): string {
   return line ? ` data-live-progress="${line.at} ${line.base} ${line.slope}"` : "";
 }
 
+/** §yard-build: a hull under construction on the planet's yard pad carries
+ * its line the same way; the frame tick sets its `--build` (0–1) and tag. */
+export function liveBuildAttr(line: ProgressLine | null): string {
+  return line ? ` data-live-build="${line.at} ${line.base} ${line.slope}"` : "";
+}
+
 /** A bar's line back from its `data-live-progress` value. */
 export function readLiveProgress(value: string | undefined): ProgressLine | null {
   const [at, base, slope] = (value ?? "").split(" ").map(Number);

@@ -11,7 +11,7 @@ the game server gets one subdomain carrying the game socket, `/status` and
 | `stellarsyndicates.com` | The front page, sign-in, register, the game client and its art, the admin page | Cloudflare: static files attached to the `stellar-syndicates-gateway` Worker |
 | `stellarsyndicates.com/api/*` | Accounts, notifications, admin data | Worker → tunnel → VPS `127.0.0.1:18080` |
 | `play.stellarsyndicates.com` | `/ws`, `/status`, `/healthz` only. `/` redirects to the front page; anything else is 404 | `stellar-syndicates-play` Worker → same tunnel → VPS |
-| `www.stellarsyndicates.com`, `stellar-syndicates.surviveperilous.com` | 308 to the front page, keeping path and query | `stellar-syndicates-play` Worker |
+| `www.stellarsyndicates.com` | 308 to the front page, keeping path and query | `stellar-syndicates-play` Worker |
 
 The page stays on `stellarsyndicates.com`. After sign-in it opens the game
 socket on `play.stellarsyndicates.com`; players never see play. in the address
@@ -64,6 +64,11 @@ client is about 3,100 files.
 
 ## Deploying
 
+- **Since Nov 11 2026:** `deploy/release.sh` does both in order: the client
+  build, the server build on the box, the switch and restart, then the client
+  upload straight after, then checks (`--client-only`, `--server-only`,
+  `--reset-galaxy`, `--dry-run`). How open tabs pick up a new client:
+  [client-updates.md](client-updates.md). The steps it runs:
 - **Client change:**
   1. In `client/`, run `npm run build`.
   2. In `deploy/cloudflare-proxy`, run `npm run deploy`. Only changed files
@@ -71,7 +76,7 @@ client is about 3,100 files.
 - **Server change:** as before. Upload a new VPS release, build it, switch
   `current`, then run `bin/stop-app.sh` and `bin/start-app.sh`.
   - When the protocol version changes, deploy the server first and the client
-    straight after. The client's version check forces a reload.
+    straight after. Open tabs on the old client are told to reload.
 - **Game-host Worker:** `npm run deploy:play`. This is rarely needed.
 - **Health check:** `https://play.stellarsyndicates.com/healthz`.
 

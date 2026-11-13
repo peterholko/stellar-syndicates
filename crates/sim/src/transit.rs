@@ -43,6 +43,38 @@ pub const JUMP_FUEL_FACTOR: f64 = 10.0;
 /// Radius of a gravity well. Warp and jump drives cannot operate inside it.
 pub const HYPERLIMIT: f64 = 900.0;
 
+/// The length of the straight leg `from` → `to` that runs inside the wells
+/// centred on `wells` (overlaps counted once), and how many separate stretches
+/// of well it crosses. Shared by the fuel estimate and the liner timetable.
+pub fn well_legs(from: Vec2, to: Vec2, wells: impl IntoIterator<Item = Vec2>) -> (f64, u32) {
+    let distance = from.distance(to);
+    if distance < 1.0 {
+        return (0.0, 0);
+    }
+    let direction = (to - from) / distance;
+    let radius = HYPERLIMIT;
+    let mut intervals = Vec::new();
+    for center in wells {
+        let offset = center - from;
+        let along = offset.dot(direction);
+        let across = (offset.length_sq() - along * along).max(0.0);
+        if across < radius * radius {
+            let half = (radius * radius - across).sqrt();
+            let a = (along - half).max(0.0);
+            let b = (along + half).min(distance);
+            if b > a { intervals.push((a, b)); }
+        }
+    }
+    intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let (mut inside, mut end, mut crossings) = (0.0, -1.0_f64, 0);
+    for (a, b) in intervals {
+        if a > end { crossings += 1; }
+        inside += (b - a.max(end)).max(0.0);
+        end = end.max(b);
+    }
+    (inside, crossings)
+}
+
 /// Which drive is carrying a fleet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

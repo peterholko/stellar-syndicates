@@ -57,7 +57,7 @@ impl Weave {
         let accel = ACCEL_CAL / c.max_hp.max(1.0).sqrt();
         let mut rate = WEAVE_TURN * accel / speed.max(1e-9);
         // v9 hulls heavier than a destroyer come about slowly: a wider circle.
-        if matches!(state.rules, Rules::V9 { .. } | Rules::V10 { .. } | Rules::V11 { .. } | Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. }) && let Some(cap) = super::v9::turn_rate(c.kind) {
+        if matches!(state.rules, Rules::V9 { .. } | Rules::V10 { .. } | Rules::V11 { .. } | Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. } | Rules::V17 { .. }) && let Some(cap) = super::v9::turn_rate(c.kind) {
             rate = rate.min(0.8 * cap);
         }
         let mut rng = Rng::new(seed ^ WEAVE_SALT ^ u64::from(c.cid).wrapping_mul(0x9E37_79B9_7F4A_7C15));

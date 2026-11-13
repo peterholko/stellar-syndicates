@@ -13,7 +13,7 @@ breadbasket that feeds its own people and exports the surplus.
 |---|---|
 | Where | Gaia worlds only (refused elsewhere with "Living Terraces grow only on Gaia worlds") |
 | Slot | Infrastructure, beside the Habitat, Agroplex, Warehouse and the rest |
-| Housing | 20,000 people per level × world size × environment (Gaia 1.5×), in addition to any Habitat |
+| Housing | 6,400 people per level × world size × environment (Gaia 1.5×), in addition to any Habitat (20,000 until the Nov 1 2026 habitat rebase) |
 | Food | 1.2 Provisions/s at level I with a full crew; higher levels follow the standard curve (2.2×, 3.8×, 6×, 8.6×, 11.5×). No Biomass or other input |
 | Crew | One per level, like every producer ("nothing produces unstaffed") |
 | Cost per level | 30 Alloys, 25 Polymers, 20 Biomass, 10 Machinery; 30 s |

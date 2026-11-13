@@ -63,7 +63,9 @@ pub fn attack_weight(kind: ShipKind) -> f64 {
     match kind {
         ShipKind::Raider => 3.0,
         ShipKind::Corvette => 1.0,
-        ShipKind::Destroyer => 2.4,
+        // §shipbuilding-overhaul (Nov 6 2026): the kit guns' sum — a Beam
+        // Battery and a Pulse Laser (`ShipKind::guns`); was 2.4.
+        ShipKind::Destroyer => 2.5,
         ShipKind::Cruiser => 4.5,
         ShipKind::Battleship => 8.0,
         ShipKind::Dreadnought => 12.0,

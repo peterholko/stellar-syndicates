@@ -17,11 +17,11 @@ fn order(value: Value) -> Frame {
 // compiled into the production server.
 fn transport_app(handle: GameHandle) -> Router {
     let (session, revoke) = crate::auth::transport_test_session();
-    Router::new().route("/ws", get(move |ws: WebSocketUpgrade| {
+    Router::new().route("/ws", get(move |ws: WebSocketUpgrade, headers: HeaderMap| {
         let session = AuthSession { account: session.account.clone(), expires_at: session.expires_at, revoked: session.revoked.clone() };
         let handle = handle.clone();
         let revoke = revoke.clone();
-        async move { ws.protocols([wire::SUBPROTOCOL]).on_upgrade(move |socket| async move {
+        async move { ws.protocols([accepted_protocol(&headers)]).on_upgrade(move |socket| async move {
             let _keep_auth_live = revoke;
             handle_socket(socket, handle, session, None).await;
         }) }
@@ -114,3 +114,44 @@ async fn legacy_text_client_is_closed_before_joining_the_game() {
     .await
     .expect("legacy rejection test timed out");
 }
+
+/// §client-updates (Nov 11 2026): a tab left open across a protocol bump
+/// offers its old protocol. The handshake names it, so every browser opens the
+/// socket, and the server closes it at once with the reload code.
+#[tokio::test]
+async fn an_old_tab_is_told_to_reload_instead_of_failing_its_handshake() {
+    timeout(Duration::from_secs(5), async {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let app = transport_app(GameHandle::new(tx));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}/ws", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        let old = format!("stellar.msgpack.v{}", crate::protocol::PROTOCOL_VERSION - 1);
+        let mut req = url.into_client_request().unwrap();
+        req.headers_mut().insert("Sec-WebSocket-Protocol", old.parse().unwrap());
+        let (mut socket, response) = connect_async(req).await.unwrap();
+        assert_eq!(response.headers()["Sec-WebSocket-Protocol"], old.as_str(), "its own protocol, so the browser opens the socket");
+        let Frame::Close(Some(close)) = socket.next().await.unwrap().unwrap() else { panic!("an old tab must be closed") };
+        assert_eq!(u16::from(close.code), wire::PROTOCOL_CLOSE_CODE);
+        assert!(close.reason.contains("reload"), "{}", close.reason);
+        assert!(rx.try_recv().is_err(), "an old tab never joins the game");
+        server.abort();
+    }).await.expect("old tab test timed out");
+}
+
+#[test]
+fn the_handshake_names_the_current_protocol_or_an_old_tab_s_own() {
+    let offer = |value: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert("Sec-WebSocket-Protocol", value.parse().unwrap());
+        accepted_protocol(&headers).into_owned()
+    };
+    assert_eq!(accepted_protocol(&HeaderMap::new()), wire::SUBPROTOCOL, "no offer: the current one, which no client named");
+    assert_eq!(offer(wire::SUBPROTOCOL), wire::SUBPROTOCOL);
+    assert_eq!(offer(&format!("stellar.msgpack.v12, {}", wire::SUBPROTOCOL)), wire::SUBPROTOCOL, "the current one wins");
+    assert_eq!(offer("stellar.msgpack.v90"), "stellar.msgpack.v90");
+    for foreign in ["chat", "stellar.msgpack.v", "stellar.msgpack.v9x", "stellar.msgpack.v123456", "stellar.json.v90"] {
+        assert_eq!(offer(foreign), wire::SUBPROTOCOL, "{foreign}: never echoed");
+    }
+}
+

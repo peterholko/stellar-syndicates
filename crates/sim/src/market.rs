@@ -110,7 +110,15 @@ pub fn liquidity(c: Commodity) -> Liquidity {
             THIN_LIQUIDITY
         }
         Commodity::Antimatter => ANTIMATTER_LIQUIDITY,
-        Commodity::WarpCore | Commodity::FusionCore => CORE_LIQUIDITY,
+        // §modules-as-goods (Nov 8 2026): modules trade on the thin book —
+        // dear, low-volume goods; a bottomless one would buy every module a
+        // corporation can make at its margin.
+        c if c.is_module() => THIN_LIQUIDITY,
+        // §hull-ladder: engines and the heavy and capital parts trade on the
+        // Authority's book; light Hull Sections are colony goods (a bottomless
+        // book for a Hull Fabricator's frames would be a credit faucet).
+        c if c.is_engine_part()
+            || crate::fuel::sized_part(c).is_some_and(|(size, _)| size != crate::fuel::EngineSize::Light) => CORE_LIQUIDITY,
         _ => BULK_LIQUIDITY,
     }
 }
@@ -139,6 +147,19 @@ pub fn liquidity(c: Commodity) -> Liquidity {
 /// raw haul is real income. The dear refined goods are needed in TENTHS of a
 /// unit downstream, which is what keeps every end product at its old reference.
 pub fn base_price(c: Commodity) -> f64 {
+    // §modules-as-goods (Nov 8 2026): a module is priced like a kit part, a
+    // fifth over its recipe at base prices (`MODULE_VALUE_ADDED`).
+    if let Some(m) = c.module() {
+        let basket: f64 = crate::build::module_recipe(m).costs.iter().map(|(g, n)| n * base_price(*g)).sum();
+        return (basket * MODULE_VALUE_ADDED).round();
+    }
+    // §hull-ladder: a heavy part is 25 light ones and the assembly's two
+    // percent, a capital part 625 and the fee twice.
+    if let Some((size, base)) = crate::fuel::sized_part(c) {
+        if size != crate::fuel::EngineSize::Light {
+            return base_price(base) * size.price_factor();
+        }
+    }
     match c {
         // Raw
         Commodity::Biomass => 5.0,
@@ -195,11 +216,79 @@ pub fn base_price(c: Commodity) -> f64 {
         Commodity::Composites => 50.0,
         Commodity::HullSections => 128.0,
         Commodity::PrecisionComponents => 92.0,
-        Commodity::WarpCore => 215.0,
-        // §fuel-overhaul: one per Fusion Plant tier from III.
-        Commodity::FusionCore => 300.0,
+        // §hull-ladder (Nov 7 2026): a light engine — reactor + drive — is
+        // 1,000 at rung 1, half an Interceptor; the rungs keep the old
+        // 215 : 430 : 650 : 900 proportions. Heavy and capital sizes are ×25
+        // and ×625 (above). Priced ~20–25% over each Drive Works basket.
+        Commodity::FissionReactor => 650.0,
+        Commodity::FusionReactor => 1_300.0,
+        Commodity::AdvancedFusionReactor => 1_960.0,
+        Commodity::AntimatterReactor => 2_720.0,
+        Commodity::ZephyrDrive => 350.0,
+        Commodity::GaleDrive => 700.0,
+        Commodity::TempestDrive => 1_060.0,
+        Commodity::MaelstromDrive => 1_470.0,
+        // Sized parts are priced from their light base above.
+        Commodity::HeavyFissionReactor
+        | Commodity::HeavyFusionReactor
+        | Commodity::HeavyAdvancedFusionReactor
+        | Commodity::HeavyAntimatterReactor
+        | Commodity::HeavyZephyrDrive
+        | Commodity::HeavyGaleDrive
+        | Commodity::HeavyTempestDrive
+        | Commodity::HeavyMaelstromDrive
+        | Commodity::HeavyHullSections
+        | Commodity::CapitalFissionReactor
+        | Commodity::CapitalFusionReactor
+        | Commodity::CapitalAdvancedFusionReactor
+        | Commodity::CapitalAntimatterReactor
+        | Commodity::CapitalZephyrDrive
+        | Commodity::CapitalGaleDrive
+        | Commodity::CapitalTempestDrive
+        | Commodity::CapitalMaelstromDrive
+        | Commodity::CapitalHullSections => 0.0,
+        // §shipbuilding-overhaul: the kit parts, ~20% over their baskets.
+        Commodity::NavComputer => 215.0,
+        Commodity::CargoBay => 150.0,
+        Commodity::PulseLaser => 110.0,
+        Commodity::BeamBattery => 520.0,
+        // §shipbuilding-overhaul Phase 5: the munitions, cheap per unit so a
+        // home raid still takes cores, guns and modules first.
+        Commodity::Torpedoes => 72.0,
+        Commodity::Slugs => 30.0,
+        Commodity::BeamCrystals => 22.0,
+        // Priced from their recipes (above).
+        Commodity::MassDriver
+        | Commodity::TorpedoRack
+        | Commodity::PointDefenseScreen
+        | Commodity::ReflectivePlating
+        | Commodity::WhippleArmor
+        | Commodity::ExtendedTanks
+        | Commodity::ReconSuite
+        | Commodity::CargoPods
+        | Commodity::EscortDatalink
+        | Commodity::FuelTransferRig
+        | Commodity::SurveyDrive
+        | Commodity::NebulaSpectrometer
+        | Commodity::PrismaticLance
+        | Commodity::StasisWeb
+        | Commodity::WarpStabilizer
+        | Commodity::InterdictionField
+        | Commodity::LanceArray => 0.0,
     }
 }
+
+/// §modules-as-goods (Nov 8 2026): the Authority never sells the found-only
+/// modules (Survey Booster, Nebula Spectrometer, Prismatic Lance): they are
+/// made from an arrived blueprint, or bought from another corporation through
+/// the limit book. The Hub still buys them.
+pub fn hub_sells(c: Commodity) -> bool {
+    !c.module().is_some_and(|m| m.blueprint_only())
+}
+
+/// §modules-as-goods: a module's price over its recipe at base prices, the
+/// kit parts' margin, so making one and selling it clears its goods. Tunable.
+pub const MODULE_VALUE_ADDED: f64 = 1.2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Market {
@@ -301,6 +390,9 @@ impl Market {
     /// state, not a guarantee at a delayed command center: the server serves it
     /// through the same lagged ticker as price.
     pub fn available_to_buy(&self, c: Commodity) -> u32 {
+        if !hub_sells(c) {
+            return 0;
+        }
         self.external_supply
             .get(&c)
             .copied()
@@ -591,7 +683,7 @@ mod economy_price_tests {
         let old_price = market.price(Commodity::Alloys);
         let old_supply = market.available_to_buy(Commodity::Alloys);
         let goods = [Commodity::Composites, Commodity::HullSections,
-            Commodity::PrecisionComponents, Commodity::WarpCore];
+            Commodity::PrecisionComponents, Commodity::FissionReactor];
         for good in goods {
             market.base.remove(&good);
             market.prices.remove(&good);
@@ -606,7 +698,7 @@ mod economy_price_tests {
             assert_eq!(loaded.price(good), base_price(good));
             assert!(loaded.available_to_buy(good) > 0);
         }
-        loaded.execute_buy(Commodity::WarpCore, 10);
+        loaded.execute_buy(Commodity::FissionReactor, 10);
         let before = serde_json::to_string(&loaded).unwrap();
         loaded.ensure_catalog();
         assert_eq!(serde_json::to_string(&loaded).unwrap(), before, "migration is idempotent");
@@ -619,9 +711,7 @@ mod economy_price_tests {
     #[test]
     fn processed_prices_clear_their_input_baskets() {
         let mut covered = std::collections::BTreeSet::new();
-        for conv in crate::production::CONVERTERS.iter().chain(crate::production::ORE_REFINING.iter())
-            .chain(std::iter::once(&crate::production::FUSION_CORE_CONVERTER))
-        {
+        for conv in crate::production::all_converters() {
             let input_cost: f64 = conv
                 .inputs
                 .iter()
@@ -635,9 +725,14 @@ mod economy_price_tests {
             );
             covered.extend(conv.outputs().map(|(c, _)| c));
         }
-        // Every non-raw commodity must be REACHABLE by some converter.
+        // Every non-raw commodity must be REACHABLE by some converter — but
+        // §modules-as-goods, a module is made by a one-off order
+        // (`BuildKind::Module`), and its price clears its recipe instead.
         for c in Commodity::ALL {
-            if !Commodity::RAW.contains(&c) {
+            if let Some(m) = c.module() {
+                let recipe: f64 = crate::build::module_recipe(m).costs.iter().map(|(g, n)| base_price(*g) * n).sum();
+                assert!(base_price(c) > recipe, "{c:?} base {} must clear its recipe {recipe:.2}", base_price(c));
+            } else if !Commodity::RAW.contains(&c) {
                 assert!(covered.contains(&c), "{c:?} has no converter producing it");
             }
         }

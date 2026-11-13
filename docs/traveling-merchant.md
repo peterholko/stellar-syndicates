@@ -3,6 +3,30 @@
 Status: phase 1 built Oct 14 2026 (uncommitted), protocol v50: the client and
 server deploy together. See **As built** at the end.
 
+**Sells Alloys (Nov 11 2026):** Peter: "we should just change the sell ore
+to sell alloy". The trader buys Alloys, not Ferrite Ore: up to 10 a visit at
+half the Hub (`merchant::BUYS`, `BUY_CAP`, `BUY_PRICE_SHARE`;
+`MerchantVisit::bought`, `room()`). The server sends `buys`, `buy_price` and
+`buy_room` (was `ore_price`, `ore_room`), and both shells' "You give" row,
+Max, "Sell N Alloys" and the four traders' lines follow `buys`. Charter step
+9 is "Sell Alloys to the trader" (`FoundingProgram::alloys_sold`); the guide's
+errand is `merchant-sell`. The ore floor the old sale needed is gone, and the
+Landfall crate carries the 10 Alloys. Ore figures below are history.
+
+**Twice the Hub (Nov 6 2026):** Peter: "I think the trader should charge more
+like 100% because of the cost/time for the player", and "I want the free
+trader available during the tutorial so the player can buy the more value
+items but the free trader will only take so much low value ore before not
+buying anymore". The founding markup is +100% (`FOUNDING_MARKUP`, +50%
+before) and the trader takes up to 400 Ferrite Ore a visit (`ORE_CAP`, 300
+before), still at half the Hub. The charter's stipends were rebuilt around it
+(three, 2,000 Cr each: [founding-charter.md](founding-charter.md),
+**Stipends**). A deal short of credits offers the ore sale that pays for it
+("Sell N ore", `merchantBlock`), as a deal short of room does. Later that
+day (§smelt-from-landing) the colony smelts its own Alloys from step 10, so
+the trader sells none: Machinery, Semiconductors, Armaments, Polymers,
+Provisions and fuel. The +50% figures and the Alloys rows below are history.
+
 **Charter v5 (Oct 16 2026, protocol v53,
 [founding-charter.md](founding-charter.md)):** the trader is called when the
 report of the privateer's raid reaches command (charter step 5), not by the
@@ -13,6 +37,16 @@ there, about 40 seconds after the call). It carries 100
 semiconductors (was 60), enough for every charter build, and since v5 the 15
 Armaments the raid took; it takes up to 300 Ferrite Ore a visit (was 150), so
 a founder who spent the stipends elsewhere can still raise the buy-back.
+§trader-call (Nov 5 2026): it is called once the colony has lost sight of the
+privateer after its raid (`raid_lost_at`), not on the report. §trader-battery
+(Nov 9 2026, Peter: "the free trader shouldn't start flying to the player's
+home planet until the laser defense is under construction"): and not before
+the home's Laser Battery is under construction (a started
+`Upgrade { OrbitalDefense }` job at home) or standing
+(`World::laser_battery_started`). It docks 9–15 s after the call, before the
+battery's 20 s build ends; the battery's 25 Alloys and 10 Machinery come from
+the Landfall kit, which the raid leaves alone. Bots meet the same rule at
+charter step 8.
 Step 6 is "Sell ore to the trader" (`FoundingProgram::ore_sold`). The guide's
 "Fill for" targets add the Solar Array and the Interceptor, and two errands:
 `merchant-ore` (sell all the ore it will take) and `merchant-fuel` (Deuterium
@@ -44,6 +78,16 @@ the light version of negotiation: Teo talks, the prices stay the sim's.
   the server's own line ("Free trader: trade refused — …") says otherwise
   (`traderResult`). Mobile updates Teo's line in place as you type, so typing
   is never re-rendered over.
+- **A blocked deal says why** (Peter, Nov 3 2026: "make it more clear to the
+  player that their storage is full"): Teo's word stays in character, and a
+  strip over the terms says it plainly (`merchantBlock`, both shells).
+  Storage: "Storage full · 999/1,000" in red (within a unit of the cap, the
+  guide's "full"), else "Storage 990/1,000 · room for 10" in amber, with
+  **Sell N ore**: the ore sale, in all, that makes room in the same deal (the
+  sim nets the deal's units against free storage), offered when the ore at
+  home and the trader's ore cap allow it; the terms' "storage +N" turns red.
+  Other refusals give the reason ("Not enough credits", "Teo hasn't that
+  much"). Trade's tooltip names it.
 - **The portrait:** delivered Oct 16 2026 in
   `client/art-src/free-trader-portrait-v1/`: neutral (holds up a
   semiconductor), pleased (laughs, open palm) and scoff (strokes a beard
@@ -57,34 +101,37 @@ the light version of negotiation: Teo talks, the prices stay the sim's.
   colony…"), and so does the top-bar chip's tooltip. Preview:
   `/scripts/merchant-fixture.html` on the vite dev server.
 
-**The last call (Oct 16 2026,** Peter: "Teo should leave while the player is
-eliminating the pirates"**):** once the privateer's kill is reported, with
-its bounty, Teo stays 3 minutes more (`merchant::LAST_CALL_S`), less if the
-den falls first, so charter step 12 ("Export your ore") sells at the Market
-Hub. The stall's clock counts it down.
-- The guide's card during it reads "Stock up before the trader leaves · 65
-  Semiconductors, 15 Armaments for the builds and research ahead. [Buy from trader]"
-  (`merchant-ahead`), with the den's own card beside it and a "Trader leaves
-  in m:ss" line.
-- The prefill is what the builds after the den lack (the Academy, the
-  expansion's Solar Array and Mining Complex, the Survey Probe and the Mining
-  Barge, as whole recipes). Since Oct 26 2026 it adds a 20-semiconductor
-  reserve for research, which draws them from home stock
-  (`RESEARCH_RESERVE`). Since Oct 29 2026 it adds the vendetta's second
-  Interceptor (12 semiconductors, 15 Armaments). Home stock is subtracted,
-  and the total is bounded by the trader's stock: 65 semiconductors and 15
-  Armaments on a kit nobody touched.
-- The founding stock covers it: 115 semiconductors (35 for the buyback after
-  the raid plus these 65 makes 100) and 30 Armaments (the first
-  Interceptor's buyback and the second's).
-- Teo's greeting: "Last call, friend! I'm off before the shooting starts."
-  (after a deal: "Anything else? The clock's ticking.").
-- The departure line: "Teo Brannick's Long Odds left {home}."
-- Bots buy the same goods, semiconductors first, plus Deuterium for the
-  Interceptor (`charter_stock_up`). From then on their optional works leave
+**It stays for the charter (Nov 5 2026,** Peter: "The free trader doesn't
+leave after building your own freighter that way the player can buy the
+necessary parts from free trader"**):** docked until the charter is
+fulfilled, then it leaves at once. `MAX_STAY_S` is a week (3 hours before),
+a safety net for a colony left mid-charter. No countdown: the stall reads
+"Docked", the top-bar chip "Free trader".
+- Every charter build after the den buys its parts when it comes up (the
+  guide's "Buy the {build} parts" cards: Academy, Smelter, the expansion's
+  Solar Array and Mining Complex or Asteroid Quarry, Survey Probe, Mining
+  Barge, the uncle's Interceptors), and step 13 "Buy the repair parts" for
+  the den-mauled Interceptor (`merchant-repair`: its lost hull points at
+  `build::REPAIR_COST_PER_HP`).
+- With no Expansion crate (§den-stores, Nov 5) it sells the Tiny Freighter's
+  parts and fuel too (it stocks 60 Uranium and 80 Deuterium).
+- The founding stock still covers the charter: 127 semiconductors and 45
+  Armaments for every build, three Interceptors included, with research's
+  draw.
+- Bots still buy ahead after the kill, semiconductors first, plus Deuterium
+  for the Interceptor (`charter_stock_up`), and their optional works leave
   the builds ahead their goods (`charter_reserve`).
-- Why (measured with a bot): leaving on the bounty with no stock-up pushed
-  research from 21.7 to 46 game-minutes, and mining had not expanded by 70.
+- The departure line: "Teo Brannick's Long Odds left {home}."
+- **History.** Oct 16 2026 (Peter: "Teo should leave while the player is
+  eliminating the pirates"): it left 3 minutes after the privateer's kill
+  report (`LAST_CALL_S`), less if the den fell first, and the guide's
+  "Stock up before the trader leaves" card (`merchant-ahead`) had the bounty
+  buy what the builds after the den lacked, with a 20-semiconductor research
+  reserve (`RESEARCH_RESERVE`, Oct 26), and Teo said "Last call, friend!
+  I'm off before the shooting starts." Why then (measured with a bot):
+  leaving on the bounty with no stock-up pushed research from 21.7 to 46
+  game-minutes. Nov 5 (§den-stores) the last call moved to 3 minutes after
+  the Tiny Freighter was built; later that day it went.
 
 **Four traders (Oct 27 2026,** Peter: "shouldn't we have like 3 different
 merchant characters at least, that way not all the players see the same
@@ -172,7 +219,8 @@ schedule (phase 2).
   (phase 2 covers them).
 
 **Stay**
-- Until the charter is fulfilled, at most 3 hours. Then it leaves with a
+- Until the charter is fulfilled, at most 3 hours (a week since Nov 5 2026,
+  so it stays for the whole charter). Then it leaves with a
   timeline line ("The merchant leaves for … · back in about 6 h" once phase 2
   exists).
 
@@ -313,16 +361,19 @@ charter is fulfilled (3 hours at most), Authority-protected, phase 2 later.
   - It calls the merchant once the "Mine online" milestone is stamped
     (`FoundingProgram.merchant_called` makes it once per charter). §charter-v4:
     once the fakes are revealed instead; §charter-v5: once the raid's report
-    arrives (`raid_report_at`).
+    arrives (`raid_report_at`); §trader-call (Nov 5 2026): once the colony
+    loses sight of the privateer (`raid_lost_at`); §trader-battery (Nov 9
+    2026): and its Laser Battery is under construction or standing
+    (`laser_battery_started`).
   - It drops in 5,000 su out on the Hub side (§charter-v4: 2,500 su). It
     docks as it crosses the home's hyperlimit (Oct 27 2026, Peter: the long
     gap between its arrival in orbit and the pop-up). It comes to rest at the
     star, and the next tick's movement berths it at the home world. Until
     then it docked only when idle at the star, after a ~28 s crawl across
     the well.
-  - It leaves when the charter is fulfilled, its 3 hours are up or the home
-    changes, and vanishes 6,000 su out. §charter-v5: also when its last call
-    ends (3 minutes after the privateer's kill report, or the den's fall).
+  - It leaves when the charter is fulfilled, its week is up or the home
+    changes, and vanishes 6,000 su out. (§charter-v5 to Nov 5 2026: also when
+    a 3-minute last call ended.)
 - `merchant_trade` handles `Command::MerchantTrade`: one atomic exchange, or a
   refusal naming the first thing that doesn't fit (stock, ore cap, home ore,
   storage room, credits, charter sanctions).
@@ -387,7 +438,7 @@ charter is fulfilled (3 hours at most), Authority-protected, phase 2 later.
 
 **Tests**
 - **Sim:** pricing and the ore cap; arrival on the mine, once only; leaving on
-  fulfilment and on time-out; the last call and the den cutting it short; whole-or-refused trades with each reason; only
+  fulfilment and on time-out; staying through the hunt, the den and the Tiny Freighter; whole-or-refused trades with each reason; only
   its customer, only while docked.
 - **Server:** a bot buys only its project's shortfall; the wire round-trips
   `MerchantTrade`.

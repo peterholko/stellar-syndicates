@@ -87,14 +87,16 @@ function stationHtml(st: ViewState, system: SystemInfo, report: SystemStateView,
     }
     const error = mountFitError(editing.fit, lances);
     const crates = refitCrates(m.modules, editing.fit);
-    const short = Object.entries(crates).filter(([k, n]) => (report.modules?.[k] ?? 0) < (n ?? 0))
-      .map(([k, n]) => `${n}× ${name(k as ModuleKind)} (have ${report.modules?.[k] ?? 0})`);
+    // §modules-as-goods: modules on hand are the stockpile's.
+    const have = (k: string): number => Math.floor(report.stockpile?.find((line) => line.commodity === k)?.units ?? 0);
+    const short = Object.entries(crates).filter(([k, n]) => have(k) < (n ?? 0))
+      .map(([k, n]) => `${n}× ${name(k as ModuleKind)} (have ${have(k)})`);
     const chips = editing.fit.map((mod, k) => button("refit-remove", `${name(mod)} ✕`, ` data-mount="${i}" data-index="${k}"`)).join("")
       || `<span class="${muted}">Stock beam battery</span>`;
     const palette = MOUNT_MODULES.filter((mod) => mod !== "prismatic_lance" || lances).map((mod) =>
-      button("refit-add", `+ ${name(mod)}${mod === "prismatic_lance" ? "" : ` · ${report.modules?.[mod] ?? 0} crates`}`,
+      button("refit-add", `+ ${name(mod)}${mod === "prismatic_lance" ? "" : ` · ${have(mod)} in stock`}`,
         ` data-mount="${i}" data-module="${mod}"`, editing.fit.length >= 3 ? "Three slots" : "")).join("");
-    const blocked = error || (short.length ? `Not enough crates here: ${short.join(", ")}.` : "");
+    const blocked = error || (short.length ? `Not enough modules here: ${short.join(", ")}.` : "");
     return `<div class="system-defense-row system-station-mount is-editing">${head}
       <div class="system-defense-actions">${chips}</div><div class="system-defense-actions">${palette}</div>
       ${blocked ? `<small>${esc(blocked)}</small>` : ""}

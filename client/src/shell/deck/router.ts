@@ -1,5 +1,4 @@
 export type DeckRouteName =
-  | "command"
   | "system"
   | "world"
   | "build"
@@ -40,7 +39,6 @@ export interface DeckCrumb {
 }
 
 export const DECK_ROUTES: Record<DeckRouteName, DeckRouteMeta> = {
-  command: { title: "Command", width: "standard" },
   system: { title: "System", width: "standard" },
   world: { title: "World", width: "standard" },
   build: { title: "Build", width: "standard" },
@@ -91,9 +89,17 @@ export class DeckRouter {
     return this.entries.at(-1) ?? null;
   }
 
+  /** The entry the current one was opened over. */
+  get beneath(): DeckRoute | null {
+    return this.entries.at(-2) ?? null;
+  }
+
   go(route: DeckRoute): void {
     const next = cloneRoute(route);
-    if (this.current && routeKey(this.current) === routeKey(next)) {
+    // §merchant (Peter, Nov 9 2026): the trader's stall asked for again (the
+    // next build's shortfall) is the same stall: it takes the open one's
+    // place, and the planet it was opened over stays beneath.
+    if (this.current && (routeKey(this.current) === routeKey(next) || (next.name === "merchant" && this.current.name === "merchant"))) {
       this.entries[this.entries.length - 1] = next;
       this.replaceMarker();
       this.emit();
@@ -148,8 +154,6 @@ export class DeckRouter {
 
   breadcrumbs(route = this.current): DeckCrumb[] {
     if (!route) return [];
-    const command: DeckCrumb = { label: "Command", route: { name: "command" } };
-    if (route.name === "command") return [command];
     if (route.name === "system" || route.name === "world" || route.name === "build") {
       const systemId = route.params?.systemId ?? route.params?.id ?? "system";
       const systemLabel = route.params?.systemLabel ?? route.params?.systemName ?? "System";
@@ -164,13 +168,12 @@ export class DeckRouter {
     }
     if (route.name === "fleet") {
       return [
-        command,
         { label: "Fleets", route: { name: "fleets" } },
         { label: route.params?.fleetLabel ?? route.params?.id ?? "Fleet", route },
       ];
     }
     if (route.name === "logistics" || route.name === "doctrine") {
-      return [command, { label: "Fleets", route: { name: "fleets" } }, { label: DECK_ROUTES[route.name].title, route }];
+      return [{ label: "Fleets", route: { name: "fleets" } }, { label: DECK_ROUTES[route.name].title, route }];
     }
     // Global destinations already name themselves in the workspace title;
     // unlike fleet/system drill-downs they have no useful parent crumb.

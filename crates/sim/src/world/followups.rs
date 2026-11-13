@@ -117,7 +117,8 @@ impl World {
                     "First specialist export", "Low", "1 Freighter · 40 free cargo",
                     format!("Home opportunity: {chain}. Deliver 40 to the Market Hub; selling is separate.")),
                 FollowUpKind::Depot | FollowUpKind::Stronghold | FollowUpKind::CounterRaidTrace
-                | FollowUpKind::CounterRaidAssault | FollowUpKind::CounterRaidRecovery | FollowUpKind::SiteRecovery | FollowUpKind::CombatPreparation =>
+                | FollowUpKind::CounterRaidAssault | FollowUpKind::CounterRaidRecovery | FollowUpKind::SiteRecovery | FollowUpKind::CombatPreparation
+                | FollowUpKind::FounderDen | FollowUpKind::FounderPrivateer =>
                     unreachable!("discovered-site offers are separate"),
             };
             let lifetime = if onboarding {
@@ -410,7 +411,8 @@ mod tests {
         assert_eq!(w.operations[&id].progress, 0);
         w.fleets.get_mut(&cargo).unwrap().pos = pos;
         let cap = w.fleets[&cargo].cargo_capacity();
-        w.fleets.get_mut(&cargo).unwrap().add_cargo(Commodity::Provisions, cap);
+        // §hold-room: ore fills a whole room unit a unit.
+        w.fleets.get_mut(&cargo).unwrap().add_cargo(Commodity::MetallicOre, cap);
         w.tick_operations(&mut events);
         assert_eq!(w.operations[&id].progress, 0, "a full hold cannot recover wreck cargo");
         let pirate = w.operations[&id].encounter.as_ref().unwrap().pirates[0];

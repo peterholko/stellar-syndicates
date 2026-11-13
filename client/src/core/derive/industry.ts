@@ -1,6 +1,6 @@
 import type { ColonyProjectKind, Commodity, EntityId, FreightRoute, GhostView, Manifest, ProjectTarget, SystemStateView, TransitMode } from "../../protocol";
 import type { ViewState } from "../../state";
-import { slowCapable, fleetBaseSpeed, fleetFuelCapacity, fleetTradeCapacity, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
+import { basketRoom, slowCapable, fleetBaseSpeed, fleetFuelCapacity, fleetTradeCapacity, ROOM_SCALE, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
 import { assignedRecipe, marketAverageQuote } from "./market";
 
 export const projectName = (target: ProjectTarget): string => target.kind === "development"
@@ -40,10 +40,10 @@ export const routePortPosition = (st: ViewState, port: FreightRoute["stops"][num
     : port.kind === "station" ? st.ghosts.find(g => g.own && g.id === port.id)?.pos
     : st.galaxy?.systems.find(s => s.id === port.id)?.pos;
 
-/** §logistics: the charter's first shipment as one route. It loads home ore,
- * sells it at the Hub and buys the return basket within the cap, then unloads
- * the basket at home. Stop 1 also unloads whatever is already aboard, to make
- * room for the ore. */
+/** §logistics: the charter's first shipment as one route. It loads the home's
+ * Alloys (§charter-v6; ore until Nov 7 2026), sells them at the Hub and buys
+ * the return basket within the cap, then unloads the basket at home. Stop 1
+ * also unloads whatever is already aboard, to make room for the cargo. */
 export function firstShipmentRoute(home: SystemStateView, freighter: GhostView, escort: EntityId | null, basket: Manifest, cap: number): FreightRoute {
   const ore = Math.min(50, fleetTradeCapacity(freighter));
   const goods: Manifest = Object.fromEntries(Object.entries(basket).filter(([,n]) => (n ?? 0) > 0));
@@ -51,8 +51,8 @@ export function firstShipmentRoute(home: SystemStateView, freighter: GhostView, 
   return { name: "First shipment", transit: "slow", repeat: false, shopping_budget: cap, escort,
     fuel_reserve: Math.min(2, fleetFuelCapacity(freighter) * .1),
     stops: [
-      { port: { kind: "system", id: home.id }, load: { metallic_ore: ore }, unload: Object.fromEntries(aboard.map(c => [c.commodity, c.units])), sell: false },
-      { port: { kind: "hub" }, load: goods, unload: { metallic_ore: ore }, sell: true },
+      { port: { kind: "system", id: home.id }, load: { alloys: ore }, unload: Object.fromEntries(aboard.map(c => [c.commodity, c.units])), sell: false },
+      { port: { kind: "hub" }, load: goods, unload: { alloys: ore }, sell: true },
       { port: { kind: "system", id: home.id }, load: {}, unload: { ...goods }, sell: false },
     ] };
 }
@@ -97,17 +97,41 @@ export function routeHubEstimate(st: ViewState, route: FreightRoute): { sold: nu
 
 /** Units aboard as the Freighter leaves each stop, from `start`: unloads take
  * what is aboard, loads take their whole manifest. */
+/** The ROOM aboard after each stop, in room units (§hold-room: each good
+ * fills its own room a unit, so 50 Alloys are 25). */
 export function routeAboard(route: FreightRoute, start: Manifest = {}): number[] {
   const hold: Manifest = { ...start };
   return route.stops.map(stop => {
     for (const [c, n] of Object.entries(stop.unload)) hold[c as Commodity] = Math.max(0, (hold[c as Commodity] ?? 0) - (n ?? 0));
     for (const [c, n] of Object.entries(stop.load)) hold[c as Commodity] = (hold[c as Commodity] ?? 0) + (n ?? 0);
-    return Object.values(hold).reduce((total: number, n) => total + (n ?? 0), 0);
+    return basketRoom(hold) / ROOM_SCALE;
   });
+}
+type RouteRun = Extract<NonNullable<GhostView["industry"]>, { kind: "route" }>["run"];
+/** §route-edit (Peter, Nov 5 2026: "I tried to modify the return items when
+ * the freighter was still traveling to the hub but I couldn't save the
+ * changes"): where a revised route picks up a run under way with its ports
+ * unchanged (sim `FreightRun::revised`): its stop, and that stop's transfers
+ * still to come. Null when the draft starts over. */
+export function routeResume(run: RouteRun | null | undefined, draft: FreightRoute): { stop: number; unload: Manifest; load: Manifest } | null {
+  if (!run || run.phase === "complete" || run.route.stops.length !== draft.stops.length
+    || run.route.stops.some((s, i) => routePortId(s.port) !== routePortId(draft.stops[i].port))) return null;
+  const was = run.route.stops[run.stop], now = draft.stops[run.stop];
+  if (!["unloading", "loading", "fuel", "escort"].includes(run.phase)) return { stop: run.stop, unload: now.unload, load: now.load };
+  const shift = (left: Manifest, before: Manifest, after: Manifest): Manifest => Object.fromEntries([...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .map(c => [c, Math.max(0, (left[c as Commodity] ?? 0) + (after[c as Commodity] ?? 0) - (before[c as Commodity] ?? 0))]));
+  return { stop: run.stop, unload: shift(run.remaining_unload, was.unload, now.unload), load: shift(run.remaining_load, was.load, now.load) };
+}
+/** What the hold carries after each stop, from `start` aboard. Resuming a run
+ * under way, the stops it has done this trip are null. */
+export function routeAboardFrom(route: FreightRoute, start: Manifest, resume: ReturnType<typeof routeResume>): (number | null)[] {
+  if (!resume) return routeAboard(route, start);
+  const rest = { ...route, stops: route.stops.map((s, i) => i === resume.stop ? { ...s, unload: resume.unload, load: resume.load } : s).slice(resume.stop) };
+  return [...Array<null>(resume.stop).fill(null), ...routeAboard(rest, start)];
 }
 export function freightRouteReason(st: ViewState, g: GhostView, r: FreightRoute): string | null {
   if (!g.own || g.tca || fleetTradeCapacity(g) <= 0) return "Choose an owned Freighter.";
-  if (r.transit === "slow" && !slowCapable(g)) return "Ships of the line cannot fly Slow.";
+  if (r.transit === "slow" && !slowCapable(g)) return "This fleet cannot fly Slow.";
   if (!r.name.trim() || r.name.length > 48) return "Name the route (up to 48 characters).";
   if (r.stops.length < 2 || r.stops.length > 8) return "Use 2–8 stops.";
   const returnTrip = !r.repeat && r.stops.length === 3 && routePortId(r.stops[0].port) === routePortId(r.stops[2].port);
@@ -120,7 +144,7 @@ export function freightRouteReason(st: ViewState, g: GhostView, r: FreightRoute)
     if (stop.port.kind === "station" && Object.values(stop.unload).some(n => (n ?? 0) > 0)) return `Stop ${i + 1}: a station stop only loads.`;
     for (const manifest of [stop.load, stop.unload]) {
       if (Object.values(manifest).some(n => !Number.isInteger(n) || n! < 0)) return "Cargo quantities must be whole units.";
-      if (Object.values(manifest).reduce((sum, n) => sum + (n ?? 0), 0) > fleetTradeCapacity(g)) return `Stop ${i + 1} exceeds cargo capacity.`;
+      if (basketRoom(manifest) > fleetTradeCapacity(g) * ROOM_SCALE) return `Stop ${i + 1} exceeds cargo capacity.`;
     }
   }
   return null;

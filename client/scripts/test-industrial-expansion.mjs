@@ -16,7 +16,7 @@ const fleets={mineCapable:g=>g.composition?g.composition.some(c=>c.kind==="minin
   fleetTradeCapacity:g=>g.kind==="convoy"?250:g.kind==="mining_belt_station"?3000:0,
   slowCapable:g=>g.kind==="convoy",transitSpeedMultiplier:g=>g.transit==="slow"?.5:g.transit==="stealth"?.5:1,
   transitLabel:(m="full")=>m==="slow"?"Slow":m==="stealth"?"Stealth":"Full speed",
-  regimeStore:g=>({fuel:g.transit==="slow"?"uranium":"deuterium",have:g.fuel??0,capacity:160}),
+  regimeStore:g=>({grade:"fission",fuel:"uranium",have:g.fuel??0,capacity:160,served:g.fuel??0}),REACTOR_ENERGY:{fission:1,fusion:4,helium:24,antimatter:96},
   guardCapable:g=>g.own&&g.kind==="raider",shipKindLabel:k=>k==="convoy"?"Freighter":"Interceptor",WARP_FACTOR:5,
   prospectCapable:g=>(g.composition??[{kind:g.kind,count:1}]).some(c=>(c.kind==="scout"||c.kind==="mining_barge")&&c.count>0),PROSPECT_SECS:60,
   estimatedFuelForLeg:()=>3};
@@ -24,11 +24,20 @@ const market=compile("core/derive/market.ts");
 const derive=compile("core/derive/industry.ts",{"./fleet":fleets,"./market":market});
 const icons=compile("icons.ts");
 const protocol=compile("protocol.ts");
+// §hold-room: the real room rule (fleet.ts) on the stubbed fleet module.
+const realFleet=compile("core/derive/fleet.ts",{"../../protocol":protocol,"./equipment":compile("core/derive/equipment.ts"),
+  "./geo":{HYPERLIMIT_SU:900},"../../state":{state:{},liveSimTime:()=>0}});
+for(const k of ["ROOM_SCALE","commodityRoom","manifestRoom","basketRoom","roomFits","fmtRoom","HOLD_ROOM_TIP"]) fleets[k]=realFleet[k];
+fleets.fleetHoldUsed=g=>realFleet.manifestRoom(protocol.fleetCargoManifest(g));
+fleets.tradeRoomFits=(g,c)=>realFleet.roomFits(c,fleets.fleetTradeCapacity(g),fleets.fleetHoldUsed(g));
 const shell=compile("shell/industry.ts",{"../core/derive/fleet":fleets,"../core/derive/industry":derive,"../icons":icons,
   "../core/derive/founding":compile("core/derive/founding.ts"),
   "../core/derive/geo":{foundingHomeSystemId:()=>"home"},"../planetart":{planetArtwork:()=>({}),planetArtUrl:k=>`/planet/${k}.png`},
   "../hub-model.generated":{HUB_MODEL:{hero:"/hub.webp"}},
-  "../protocol":protocol,"../core/derive/market":{COMMODITIES:["metallic_ore","deuterium","alloys","biomass","uranium"],MINERAL_DEPOSITS:["metallic_ore"]}});
+  "../protocol":protocol,"../core/derive/market":{COMMODITIES:["metallic_ore","deuterium","alloys","biomass","uranium"],MINERAL_DEPOSITS:["metallic_ore"],
+    // §route-picker: the goods research has opened, one of each tab.
+    knownCommodities:()=>["metallic_ore","deuterium","alloys","biomass","uranium","machinery","fission_reactor","cargo_pods"]},
+  "../core/derive/goods":compile("core/derive/goods.ts",{"./equipment":compile("core/derive/equipment.ts"),"./fleet":{lightBase:c=>c.replace(/^(heavy|capital)_/,"")}})});
 const beltsDerive=compile("core/derive/belts.ts",{"../../icons":icons,"./fleet":fleets,"../../protocol":protocol});
 const commands=compile("core/fleetorders.ts",{"./derive/industry":derive,"./derive/fleet":fleets,"../icons":icons,
   "./derive/format":{fmtDur:n=>`${Math.round(n)}s`},"./derive/belts":beltsDerive});
@@ -178,17 +187,19 @@ let card=shell.industryHtml(state);
 assert.match(card,/Send your first shipment/);
 assert.match(card,/data-coach="send-shipment"/,"the guide's coach ring has a target");
 assert.match(card,/Covers all 35 Academy goods you lack/,"coverage counts the home deficit for the Academy, which comes next");
-assert.match(card,/Charter · step 13/,"the guide's own step number");
+assert.match(card,/Charter · step 18/,"the guide's own step number");
 assert.match(card,/<dt>Escort<\/dt><dd><img/,"the Interceptor rides along when one is ready");
-assert.match(card,/Waits for 50 ore · 0 in stock/,"the load waits for ore it does not have yet");
+assert.match(card,/Waits for 50 Alloys · 40 in stock/,"the load waits for Alloys it does not have yet (§charter-v6)");
 assert.match(card,/Prices arrive with the next Hub report/,"no money estimate before a price report");
 const basketBefore=plain(derive.openingImportPlan(state,site,"transport").manifest);
 assert.match(card,/data-good="uranium"/,"the basket offers Uranium for the home stockpile");
 shell.handleIndustryAction({dataset:{industryAct:"basket",good:"uranium",step:"1"}},ctx);
 assert.equal(shell.industryUiSignature(state).basket.uranium,(basketBefore.uranium??0)+1,"steppers edit the return basket");
 const holdOf=fleets.fleetTradeCapacity;fleets.fleetTradeCapacity=g=>g.kind==="convoy"?47:0;
-for(let i=0;i<15;i++)shell.handleIndustryAction({dataset:{industryAct:"basket",good:"machinery",step:"1"}},ctx);
-assert.equal(Object.values(shell.industryUiSignature(state).basket).reduce((n,v)=>n+v,0),47,"the basket never outgrows the hold");
+for(let i=0;i<120;i++)shell.handleIndustryAction({dataset:{industryAct:"basket",good:"machinery",step:"1"}},ctx);
+// §hold-room: room, not units: Machinery fills half a room unit.
+{const room=realFleet.basketRoom(shell.industryUiSignature(state).basket);
+assert.ok(room<=47*4&&room+realFleet.commodityRoom("machinery")>47*4,`the basket never outgrows the hold (${room} quarters)`);}
 fleets.fleetTradeCapacity=holdOf;
 const shipped=staged.length;
 shell.handleIndustryAction({dataset:{industryAct:"send-shipment"}},ctx);
@@ -198,16 +209,110 @@ assert.deepEqual(plain(staged.at(-1).map(c=>c.type)),["SetFreightRoute","GuardFl
 const shipment=staged.at(-1)[0].route;
 assert.deepEqual(plain(shipment.stops[1].load),plain(shell.industryUiSignature(state).basket),"the Hub stop buys the edited basket");
 assert.deepEqual(plain(shipment.stops[2].unload),plain(shipment.stops[1].load),"home unloads what the Hub loaded");
-assert.equal(shipment.stops[0].load.metallic_ore,50);assert.equal(shipment.escort,"e");
+assert.equal(shipment.stops[0].load.alloys,50,"§charter-v6: the first cargo is Alloys");assert.equal(shipment.escort,"e");
 state.market={staleness:0,prices:[["metallic_ore",27],["alloys",33],["machinery",41],["electronics",64],["uranium",6]].map(([commodity,price])=>({commodity,price,available_buy:999,available_sell:999,depth:1600}))};
 const estimate=derive.routeHubEstimate(state,shipment);
-assert.ok(estimate.sold>1300&&estimate.sold<1350,"50 ore sells for about 27 each, walking the book");
+assert.ok(estimate.sold>1580&&estimate.sold<=1650,`50 Alloys sell for about 33 each, walking the book (${estimate.sold})`);
 assert.ok(estimate.bought>0);
 state.wallet={warehouse:[{commodity:"machinery",units:100}]};
 assert.ok(derive.routeHubEstimate(state,shipment).bought<estimate.bought,"warehouse stock loads before anything is bought");
-assert.deepEqual(derive.routeAboard(shipment),[50,shipment.stops[1].load ? Object.values(shipment.stops[1].load).reduce((n,v)=>n+v,0) : 0,0]);
+// §hold-room: aboard counts room: 50 Alloys are 25.
+assert.deepEqual(derive.routeAboard(shipment),[25,realFleet.basketRoom(shipment.stops[1].load ?? {})/4,0]);
 assert.equal(shipment.transit,"slow","the first shipment flies Slow on Uranium");
 assert.deepEqual(plain(derive.routeLegSeconds(state,state.ghosts[0],shipment)),[100,100],"10,000 su at Slow (40 × 5 × ½ su/s)");
+// §route-edit (Peter, Nov 5 2026: "I tried to modify the return items when the
+// freighter was still traveling to the hub but I couldn't save the changes"):
+// mid-trip the editor counts from where the trip is, not from the first stop
+// again on top of the ore already aboard, and the edit keeps the trip's place.
+{
+  const f=state.ghosts.find(g=>g.id==="f"), kept={industry:f.industry,cargo:f.cargo_manifest};
+  const capOf=fleets.fleetTradeCapacity;fleets.fleetTradeCapacity=g=>g.kind==="convoy"?50:0;
+  f.industry={kind:"route",run:{route:structuredClone(shipment),stop:1,phase:"travelling",remaining_load:{},remaining_unload:{},visits:1}};
+  f.cargo_manifest=[{commodity:"metallic_ore",units:50}];
+  shell.handleIndustryAction({dataset:{industryAct:"pick-fleet",fleet:"f"}},ctx);
+  shell.handleIndustryAction({dataset:{industryAct:"edit-route"}},ctx);
+  shell.industryUiSignature(state).route.stops[1].load={machinery:12,uranium:8};
+  shell.industryUiSignature(state).route.stops[2].unload={machinery:12,uranium:8};
+  let html=shell.industryHtml(state);
+  assert.match(html,/Done this trip/,"the home stop is behind it");
+  assert.doesNotMatch(html,/the hold would carry 100/,"the ore aboard isn't loaded twice");
+  assert.doesNotMatch(html,/data-industry-act="assign"[^>]*disabled/,"the edit can be assigned");
+  shell.handleIndustryAction({dataset:{industryAct:"assign"}},ctx);
+  assert.deepEqual(plain(staged.at(-1)[0]),{type:"SetFreightRoute",fleet_id:"f",route:plain(shell.industryUiSignature(state).route),revise:true},
+    "it keeps its place on the way to the Hub");
+  // The edit arrived; at work at the Hub, 5 of 12 Machinery bought: an edit
+  // to 8 has 3 to go.
+  Object.assign(f.industry.run,{route:plain(shell.industryUiSignature(state).route),phase:"loading",remaining_load:{machinery:7,uranium:8}});
+  const next=structuredClone(f.industry.run.route);next.stops[1].load={machinery:8,uranium:8};
+  assert.deepEqual(plain(derive.routeResume(f.industry.run,next)),{stop:1,unload:{alloys:0},load:{machinery:3,uranium:8}});
+  f.industry.run.phase="complete";
+  assert.equal(derive.routeResume(f.industry.run,shipment),null,"a finished trip starts over");
+  shell.handleIndustryAction({dataset:{industryAct:"close-editor"}},ctx);
+  fleets.fleetTradeCapacity=capOf;Object.assign(f,{industry:kept.industry,cargo_manifest:kept.cargo});
+}
+// Peter (Nov 11 2026): the money row names what the trip sells, not "Ore sale".
+assert.match(shell.industryHtml(state),/<div class="lx-money" aria-label="Expected money"><span>Alloys sale<\/span><span class="is-good">\+/);
+// §route-picker (Peter, Nov 11 2026: "the drop down should just be for the
+// item and not include the price, calculate the price after the player has
+// picked the item"; then "can we have the dropdown styled in the stellar
+// syndicate game style instead of a native html dropdown?"): the game's own
+// picker, names only, unchanged by a report; the price or stock beside it.
+{
+  shell.handleIndustryAction({dataset:{industryAct:"customize"}},ctx);
+  const list=html=>/<div class="lx-goodpick__list" role="listbox" aria-label="Commodity">([\s\S]*?)<\/div>/.exec(html)?.[1];
+  const tabs=html=>/<nav class="lx-goodpick__tabs" aria-label="Goods">([\s\S]*?)<\/nav>/.exec(html)?.[1];
+  const button=html=>/<button type="button" class="lx-goodpick__button"[^>]*>[\s\S]*?<\/button>/.exec(html)?.[0];
+  const quote=html=>/<small class="lx-picker__quote" aria-live="polite">([^<]*)<\/small>/.exec(html)?.[1];
+  const act=(industryAct,extra={})=>shell.handleIndustryAction({dataset:{industryAct,...extra}},ctx);
+  act("open-pick",{stop:"1",side:"load"});
+  act("pick-good",{good:"alloys"});
+  shell.handleIndustryInput(new Input({industryInput:"qty"},"10"),state);
+  let html=shell.industryHtml(state);
+  assert.doesNotMatch(html,/<select aria-label="Commodity"/,"no native dropdown");
+  assert.match(button(html),/aria-haspopup="listbox" aria-expanded="false"[\s\S]*<span>Alloys<\/span><i aria-hidden="true">▾<\/i>/,"closed: the picked good, icon and name");
+  assert.equal(list(html),undefined,"the list opens on demand");
+  const cost=()=>`≈ −${Math.round(derive.hubQuote(state,"alloys",10,"buy")).toLocaleString()} cr`;
+  assert.equal(quote(html),cost(),"10 Alloys at the Hub's price, beside it");
+  act("goods-menu");
+  html=shell.industryHtml(state);
+  assert.match(button(html),/aria-expanded="true"/);
+  assert.match(tabs(html),/aria-selected="true"[^>]*>Resources<\/button>[\s\S]*>Parts<\/button>[\s\S]*>Modules<\/button>/,"opens on the picked good's tab");
+  const rows=list(html);
+  assert.match(rows,/role="option" aria-selected="true" class="lx-goodpick__item"[^>]*data-good="alloys"[^>]*><img[^>]*><span>Alloys<\/span><\/button>/,"the picked row, icon and name");
+  assert.doesNotMatch(rows,/fission_reactor|cargo_pods/,"parts and modules on their own tabs");
+  assert.doesNotMatch(rows,/ cr<| here<| · /,"no price or stock in the list");
+  // A report: the open list stays as it was; only the price beside it moves.
+  const before=quote(html);
+  state.market.prices.find(p=>p.commodity==="alloys").price=55;
+  site.stockpile[0].units+=7;
+  html=shell.industryHtml(state);
+  assert.equal(list(html),rows,"a new report leaves the open list as it was");
+  assert.equal(quote(html),cost());
+  assert.notEqual(quote(html),before);
+  act("goods-tab",{goodsTab:"parts"});
+  assert.match(list(shell.industryHtml(state)),/data-good="fission_reactor"/,"the Parts tab");
+  act("pick-good",{good:"antimatter"});
+  html=shell.industryHtml(state);
+  assert.match(button(html),/aria-expanded="false"[\s\S]*<span>Alloys<\/span>/,"a good research hasn't opened is refused; the list closes");
+  act("goods-menu");
+  act("pick-good",{good:"uranium"});
+  html=shell.industryHtml(state);
+  assert.match(button(html),/<span>Uranium<\/span>/,"a pick closes the list on it");
+  assert.equal(list(html),undefined);
+  act("goods-menu");
+  assert.equal(shell.closeIndustryMenu(state),true,"Escape closes the open list first");
+  assert.equal(shell.closeIndustryMenu(state),false,"then has nothing to close");
+  // Not buying at the Hub: the load comes from the warehouse, at no cost.
+  const budget=shell.industryUiSignature(state).route.shopping_budget;
+  shell.industryUiSignature(state).route.shopping_budget=null;
+  act("open-pick",{stop:"1",side:"load"});act("pick-good",{good:"machinery"});
+  assert.equal(quote(shell.industryHtml(state)),"100 in the warehouse","no buying: what the warehouse holds");
+  shell.industryUiSignature(state).route.shopping_budget=budget;
+  act("open-pick",{stop:"0",side:"load"});
+  assert.match(quote(shell.industryHtml(state)),/^[\d,]+ here$/,"at a world: what it holds");
+  act("close-editor");
+  state.market.prices.find(p=>p.commodity==="alloys").price=33;
+}
 // §charter-v5: once the privateer's bounty is paid nothing hunts the lane, so
 // the export goes alone; an escort would hold it until it was home and fuelled.
 state.founding.bounty_received=true;
@@ -300,7 +405,8 @@ assert.equal(belts.anchorStatus(station.anchor, 118.2), "Anchoring · 42 s");
 assert.equal(belts.anchorStatus({ ...station.anchor, phase: "anchored" }, 500), "Anchored");
 acts = belts.beltActions(state.ghosts, "1", beltSite, beltBody);
 assert.equal(acts.anchor.length, 0, "a belt with your station offers no second anchor");
-assert.deepEqual(plain([acts.station.fleet, acts.station.held, acts.station.capacity]), ["st", 900, 3000]);
+// §hold-room: held in quarters of a room unit (900 ore = 900 room).
+assert.deepEqual(plain([acts.station.fleet, acts.station.held, acts.station.capacity]), ["st", 900 * 4, 3000]);
 assert.equal(commands.fleetCommandsValid([{ type: "UnanchorStation", fleet_id: "st" }], state), true);
 const hauler = state.ghosts.find(g => g.id === "f");
 const loadOrder = { type: "StationLoad", fleet_id: "f", station_id: "st", commodity: "metallic_ore", units: 250 };

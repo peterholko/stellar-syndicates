@@ -64,7 +64,61 @@
 .story-transmission strong { display: block; color: #e8965a; font-size: 18px; margin-bottom: 4px; }
 .story-transmission q { display: block; font-size: 17px; line-height: 1.4; color: #dce0e8; }
 .story-transmission + p { color: #a0a8b6; font-size: 14px; }
+/* §charter-advisor: the Charter Advisor speaks under the Authority's gold. */
+.story-transmission.is-authority img { border-color: #c9a85e; }
+.story-transmission.is-authority strong { color: #e2c886; }
+.story-transmission.is-authority q { quotes: none; }
+/* §charter-advisor (Peter, Nov 9 2026: "a large Charter Advisor panel"): the advisor alone, face large beside their line. */
+.story-event.is-advisor { width: min(720px, calc(100vw - 32px)); }
+.story-event.is-advisor .story-transmission { gap: 24px; margin: 6px 0 20px; }
+.story-event.is-advisor .story-transmission img { width: 220px; height: 220px; border-radius: 16px; }
+.story-event.is-advisor .story-transmission strong { font-size: 15px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 10px; }
+.story-event.is-advisor .story-transmission q { font-size: 22px; line-height: 1.4; }
+@media (max-width: 560px) {
+  .story-event.is-advisor .story-transmission { flex-direction: column; align-items: flex-start; gap: 14px; }
+  .story-event.is-advisor .story-transmission img { width: 150px; height: 150px; }
+  .story-event.is-advisor .story-transmission q { font-size: 18px; }
+}
 @media (max-width: 560px) {
   .story-transmission img, .story-transmission.is-alone img { width: 80px; height: 80px; }
   .story-transmission q { font-size: 15px; }
+}
+/* §laser-battery-card: the step's reason and recipe, under its title. */
+.story-facts { display: grid; gap: 2px; margin: 0 0 12px; }
+.story-facts span { color: #dce0e8; font-size: 16px; }
+.story-facts span + span { color: #a0a8b6; font-size: 14px; }
+/* §signal-report: the report's notes under its tiles: experience, an injury,
+   what waits at the site. */
+.story-notes { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; margin: 0 0 4px; color: #a0a8b6; font-size: 13px; }
+.story-notes .is-warn { color: #f0b35a; }
+/* §crate-panel: a charter crate's goods on show, to accept. */
+.story-event.is-crate { width: min(560px, calc(100vw - 32px)); }
+.story-panel { padding: 28px 20px 18px; background: radial-gradient(ellipse at 50% 38%, #173a50 0, #0a1722 58%, #050b12 100%); }
+.crate-goods { display: grid; grid-template-columns: repeat(var(--cols, 3), minmax(0, 116px)); justify-content: center; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.crate-goods li { display: grid; justify-items: center; gap: 2px; padding: 14px 6px 10px; border: 1px solid #2f4a5d; border-radius: 12px; background: linear-gradient(#152635, #0c1823); animation: crate-good .5s cubic-bezier(.2, .9, .3, 1.25) both; animation-delay: calc(var(--i, 0) * 80ms + 150ms); }
+.crate-goods .icon { width: 56px; height: 56px; object-fit: contain; margin-bottom: 6px; }
+.crate-goods b { font-size: 22px; color: #eaf6fb; font-variant-numeric: tabular-nums; }
+.crate-goods small { font-size: 12px; text-align: center; }
+/* §raid-losses: the raid's take, the crate's grid in reverse, under the caption. */
+.crate-goods.is-loss { margin: 4px 0 12px; }
+/* §den-loot: the den's goods under its painting, then its line. */
+.crate-goods.is-loot, .crate-goods.is-reward { margin: 4px 0 12px; }
+.crate-goods.is-loss li { border-color: #5d2f37; background: linear-gradient(#2c1418, #1a0b0e); }
+.crate-goods.is-loss b { color: #ff8f86; }
+.crate-storage { margin: 16px 0 0; text-align: center; font-size: 13px; color: #9fb4c3; font-variant-numeric: tabular-nums; }
+.crate-storage.is-over { color: #f0b46a; }
+.story-event.is-crate .settlement-story-caption { text-align: center; }
+.story-event.is-crate .settlement-story-caption h1 { margin-bottom: 4px; }
+.story-event.is-crate .settlement-story-caption footer { justify-content: center; }
+.story-event.is-crate .settlement-primary { min-width: 160px; }
+/* §charter-advisor: the advisor speaks a crate's line; the goods stay the show. */
+.story-event.is-crate .story-transmission { justify-content: center; margin-top: 10px; text-align: left; }
+.story-event.is-crate .story-transmission img { width: 72px; height: 72px; }
+.story-event.is-crate .story-transmission q { font-size: 16px; }
+@keyframes crate-good { from { opacity: 0; transform: translateY(10px) scale(.85); } }
+@media (max-width: 560px) {
+  .story-panel { padding: 20px 12px 14px; }
+  .crate-goods { gap: 8px; }
+  .crate-goods .icon { width: 44px; height: 44px; }
+  .crate-goods b { font-size: 18px; }
 }

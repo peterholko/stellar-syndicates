@@ -49,6 +49,9 @@ const action = (act, fleet = "scout") => surface.handleExplorationAction({ datas
 } }, ctx);
 
 assert.equal(exploration.siteArt(contact), null);
+// §ops-compact (Oct 31 2026): desktop Operations shows one row; the list opens on its own.
+assert.match(surface.explorationLinkHtml(st), new RegExp(`data-explore-act="tab-contacts">Contacts · ${st.explorationSites.length}</button>`));
+assert.doesNotMatch(surface.explorationLinkHtml(st), /Unknown contact|exploration-panel/);
 assert.match(surface.explorationHtml(st), /Unknown contact 810/);
 assert.doesNotMatch(surface.explorationHtml(st), /art\/exploration|alloys|whipple|Drifting/);
 action("open");
@@ -64,11 +67,13 @@ action("investigate");
 assert.equal(sent.length, 0, "Dispatch opens Confirm/Cancel; it does not send an order");
 assert.deepEqual(plain(st.pendingIntent.dest), contact.pos);
 const readiness = load("core/derive/readiness.ts", { "./fleet": fleets, "../../protocol": protocol });
-st.ghosts[0].fuel = 0;
-assert.match(readiness.intentReadinessWarnings(st, st.pendingIntent).join(" "), /Deuterium short/,
+// §reactors-drives: a Raider rides an Antimatter Reactor; its one tank is the bottle.
+st.ghosts[0].antimatter = 0;
+st.ghosts[0].antimatter_capacity = 10;
+assert.match(readiness.intentReadinessWarnings(st, st.pendingIntent).join(" "), /Antimatter short/,
   "expeditions inherit the normal inline dispatch fuel warning");
 // §founding R5: one preview grammar: the destination by name, then distance, ETA and fuel.
-assert.match(commands.fleetCommandSummary(st.pendingIntent, st), /Move → Unknown contact 810 · [\d,]+ su · ETA ~\d+s · Deuterium ~\d+/);
+assert.match(commands.fleetCommandSummary(st.pendingIntent, st), /Move → Unknown contact 810 · [\d,]+ su · ETA ~\d+s · Antimatter ~\d+/);
 intent.clearPendingIntent();
 assert.equal(sent.length, 0);
 action("investigate"); intent.confirmPendingIntent(); intent.confirmPendingIntent();
@@ -208,7 +213,8 @@ st.founding = { stage: "survey_candidates", local_opening: true, survey_candidat
 const barge = st.ghosts.pop();
 let plan = guide.foundingPlan(st, yardHome);
 assert.equal(plan.chapter.name, "Expansion");
-assert.deepEqual(plain(plan.checklist.map(item => item.done)), [true, true, true, true, false], "export, research, Smelter and mining done");
+assert.deepEqual(plain(plan.checklist.map(item => item.done)), [true, true, true, true, true, true, true, true, true, false],
+  "repair, freighter, full speed, loot, export, research, signal, Smelter and mining done");
 assert.equal(plan.primary.action, "build-probe");
 st.ghosts.push({ id: "probe", kind: "survey_probe", own: true, pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 },
   composition: [{ kind: "survey_probe", count: 1 }] });
@@ -250,6 +256,14 @@ const sifBelt = st.systems.find(sys => sys.id === "sif").bodies[0];
 sifBelt.pockets = [{ resource: "titanium_ore", richness: 0.3, reserves: 600 }];
 st.founding.stage = "mine_belt";
 assert.match(guide.foundingPlan(st, yardHome).primary.copy, /Titanium.* pocket$/i);
+// Peter (Nov 4 2026): still there after its pass, the card says mine, not send.
+{
+  const barge = st.ghosts.at(-1), away = { ...barge.pos };
+  barge.pos = { ...st.galaxy.systems.find(sys => sys.id === "sif").pos };
+  const card = guide.foundingPlan(st, yardHome).primary;
+  assert.deepEqual([card.title, card.label, card.action], ["Mine the Titanium Ore pocket", "Mine", "mine-belt"]);
+  barge.pos = away;
+}
 assert.deepEqual(plain(guide.foundingCommands("mine-belt", st, yardHome)),
   [{ type: "MineBelt", fleet_id: "barge", system_id: "sif", body_id: 2, ore: "titanium_ore", pocket: true }]);
 delete sifBelt.pockets;
@@ -377,7 +391,7 @@ assert.equal(surface.explorationFocused(st), true);
 surface.handleExplorationAction({ dataset: { exploreAct: "tab-blueprints" } }, ctx);
 html = surface.explorationHtml(st);
 assert.match(html, /Nebula Spectrometer/); assert.match(html, /Licensed/);
-assert.match(html, /Survey Drive/); assert.match(html, /Undiscovered/);
+assert.match(html, /Survey Booster/); assert.match(html, /Undiscovered/);
 assert.equal(sent.length, count + 1, "journal and blueprint browsing never dispatch a ship");
 st.playerId = "another-owner"; st.explorationJournal = []; st.explorationSites = [];
 assert.doesNotMatch(surface.explorationHtml(st), /onerror|★ Unknown/);
@@ -402,7 +416,8 @@ const extraction = { ...contact, details: { ...details, opportunity: { task: "ex
   costs: { deuterium: 6 }, cargo: { volatiles: 300 }, seconds: 45 } } };
 const hauler = ghost("cargo", "convoy");
 assert.match(exploration.deepExpeditionReason(extraction, hauler), /supplies/);
-hauler.cargo_manifest = [{ commodity: "deuterium", units: 6 }, { commodity: "alloys", units: 400 }];
+// §hold-room: ore fills a whole room unit a unit; Alloys only half.
+hauler.cargo_manifest = [{ commodity: "deuterium", units: 6 }, { commodity: "metallic_ore", units: 400 }];
 assert.match(exploration.deepExpeditionReason(extraction, hauler), /room/);
 hauler.cargo_manifest[1].units = 390;
 assert.equal(exploration.deepExpeditionReason(extraction, hauler), "");

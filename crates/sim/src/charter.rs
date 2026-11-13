@@ -87,9 +87,6 @@ pub const LEDGER: &[LedgerGoal] = &[
     goal("storage_700", "Store 700 goods at home",
         "Expand the camp storehouse or upgrade a Warehouse.",
         M::Storage, 700.0, 300.0),
-    goal("population_4k", "House 4,000 people",
-        "Build permanent quarters and keep food, jobs and migrants flowing.",
-        M::Population, 4_000.0, 300.0),
     goal("refining", "Run a Smelter",
         "Research Enrichment, then build, staff and supply a Smelter.",
         M::Refining, 1.0, 500.0),
@@ -254,9 +251,9 @@ mod tests {
     #[test]
     fn goals_complete_in_any_order_and_the_next_three_skip_finished_rungs() {
         let mut ledger = CharterLedger::default();
-        let snapshot = LedgerSnapshot { population: 4_500.0, storage: 700.0, ..Default::default() };
+        let snapshot = LedgerSnapshot { population: 8_500.0, storage: 700.0, ..Default::default() };
         let met: Vec<_> = ledger.newly_met(&snapshot).iter().map(|g| g.id).collect();
-        assert_eq!(met, ["storage_700", "population_4k"]);
+        assert_eq!(met, ["storage_700", "population_8k"]);
         for id in met {
             ledger.completed.insert(id.into(), 1.0);
         }

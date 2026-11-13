@@ -26,7 +26,8 @@ pub const ESCORT_RADIUS: f64 = 1_200.0;
 pub const CONTROL_HOLD_S: f64 = 3.0 * 60.0;
 /// Optional beginner jobs repeat, but never flood the founding checklist.
 pub const FOLLOW_UP_COOLDOWN_S: f64 = 10.0 * 60.0;
-pub const FOLLOW_UP_PIRATE_SPEED_MULT: f64 = 0.50;
+/// §reactors-drives: 0.50 / 1.6 — the pirates fly Maelstrom Drives.
+pub const FOLLOW_UP_PIRATE_SPEED_MULT: f64 = 0.50 / 1.6;
 
 // ─── §contract-board (Oct 19 2026, Peter): Travian's daily quests, without
 // the trap. Once its charter is fulfilled, a corporation gets a day's
@@ -65,7 +66,14 @@ pub const FOLLOW_UP_PIRATE_DAMAGE_MULT: f64 = 0.10;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FollowUpKind { Escort, Salvage, Production, Patrol, DangerousFreight, GuardedSalvage, Depot, Stronghold,
-    CounterRaidTrace, CounterRaidAssault, CounterRaidRecovery, SiteRecovery, CombatPreparation }
+    CounterRaidTrace, CounterRaidAssault, CounterRaidRecovery, SiteRecovery, CombatPreparation,
+    /// §den-contract: the Authority's contract on a founder's privateer den,
+    /// posted as the hunt begins since §den-retreat (Nov 12 2026), with the
+    /// privateer's kill before (`World::post_founding_den_contract`).
+    FounderDen,
+    /// §privateer-contract: the Authority's contract on a founder's privateer,
+    /// offered as the hunt begins (`World::post_founding_privateer_contract`).
+    FounderPrivateer }
 
 /// Private linkage, not a new intelligence channel. Each stage publishes an
 /// immutable offer only through its own report from the physical event site.
@@ -295,6 +303,23 @@ pub struct Operation {
 }
 
 impl Operation {
+    /// §den-contract: the Authority's contract on a founder's privateer den.
+    pub fn is_founder_den(&self) -> bool {
+        self.briefing.as_ref().is_some_and(|b| b.follow_up == FollowUpKind::FounderDen)
+    }
+
+    /// §privateer-contract: the Authority's contract on a founder's privateer.
+    pub fn is_founder_privateer(&self) -> bool {
+        self.briefing.as_ref().is_some_and(|b| b.follow_up == FollowUpKind::FounderPrivateer)
+    }
+
+    /// The charter's own contracts (the privateer's and his den's): they
+    /// never lapse, can't be dropped, and pay as the charter's reward moments.
+    pub fn founder_contract(&self) -> Option<FollowUpKind> {
+        self.briefing.as_ref().map(|b| b.follow_up)
+            .filter(|k| matches!(k, FollowUpKind::FounderDen | FollowUpKind::FounderPrivateer))
+    }
+
     pub fn is_visible_to(&self, player: PlayerId) -> bool {
         self.known.contains_key(&player)
     }

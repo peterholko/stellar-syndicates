@@ -1,0 +1,55 @@
+{
+  "name": "weapons-04",
+  "mode": "built-in image_gen",
+  "source_brief": "docs/research-emblem-sheets.md",
+  "prompt": "Use case: stylized-concept. Asset type: a sheet of three transparent research emblems for Stellar Syndicates, a premium dark sci-fi strategy game. They join an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw THREE new emblems. Do not copy any of Image 1's six motifs, and ignore Image 1's grey backdrop.\nField: Weapons. Colour, all three badges: silver metal with a signal-red accent and a small orange-yellow flash. Everything else stays in the family's navy, charcoal and silver.\nLayout: landscape 1536 x 1024 canvas, one row of three. Three identical hexagon badges, each about 450 px tall, centred in its own 512 x 512 cell, with clear empty space between badges and around the sheet. Badges never touch or overlap.\nBadge (every one the same): a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. Each motif sits inside its rim, centred, about 70% of the face's width. Nothing crosses a rim.\nMotifs, reading left to right, top row then bottom row:\n1. Left: The Citadel from Image 2 bristling with its heavy gun turrets, red lights along its walls.\n2. Centre: The Star Fortress from Image 3, its heavy battery arms radiating from its core, red lights at each gun.\n3. Right: A warship hull silhouette with an armoured vault-like citadel core glowing faintly red at its heart.\nImage 2 is the game's own art of the Citadel station: use it ONLY for that design's silhouette and details, drawn once, in an elevated three-quarter view, as motif 1, in Image 1's emblem rendering. Ignore its own lighting and background.\nImage 3 is the game's own art of the Star Fortress station: use it ONLY for that design's silhouette and details, drawn once, in an elevated three-quarter view, as motif 2, in Image 1's emblem rendering. Ignore its own lighting and background.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. Each motif is one clear subject that still reads at 48 px: a few large forms, restrained small detail. The three must look clearly different from each other at a glance: vary silhouette, scale and composition, never the same object twice.\nBackground: genuinely transparent PNG with real alpha everywhere outside the hexagons. No drop shadow, outer glow, grey backdrop, panel, vignette, cell borders or grid lines.\nConstraints: exactly three badges. No text, letters, numbers, Roman numerals, captions, labels, logos, watermark, frames or UI.",
+  "keys": [
+    "weap_cm_v_grand_batteries",
+    "weap_cm_v_star_fortress",
+    "weap_cm_v_citadel_compartments"
+  ],
+  "references": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png",
+      "sha256": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+    },
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/public/art/derived/stations/v2/level-5-512.webp",
+      "sha256": "ed28b2a775d390d864189218ff24d0f5af51891adb0abfe1b6dd5fac605c4859"
+    },
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/public/art/derived/stations/v2/level-6-512.webp",
+      "sha256": "d6ff8a78f622034cc7bfdb8afe8256e4c1638fdd1732e7ae559d0895b6bb1452"
+    }
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-b1fa7254-224e-4734-8c75-ca950ef9116a.png",
+  "edits": [],
+  "verification": {
+    "width": 1536,
+    "height": 1024,
+    "hasAlpha": true,
+    "badges": [
+      {
+        "left": 47,
+        "top": 256,
+        "width": 451,
+        "height": 513
+      },
+      {
+        "left": 542,
+        "top": 256,
+        "width": 452,
+        "height": 514
+      },
+      {
+        "left": 1038,
+        "top": 256,
+        "width": 452,
+        "height": 514
+      }
+    ],
+    "sha256": "62b8936d6176582f58ee71562c44e13b12297736a6b29c611d85efae24a94eea",
+    "nativeBytesPreserved": true
+  }
+}

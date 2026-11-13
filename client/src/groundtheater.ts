@@ -354,5 +354,6 @@ function noteCaption(notes: GroundNote[], r: GroundRecordView, isLive: boolean):
   if (notes.includes("garrison_starved")) return "THE GARRISON IS OUT OF PROVISIONS — it has stopped counting";
   if (isLive) return "LANDING IN PROGRESS — later rounds are still outside your light cone";
   const who = r.attacking ? "Your landing" : "A landing on your ground";
-  return `${who} at ${Math.round(r.suppression_at_drop * 100)}% suppression, against ${r.garrison_tiers} garrison tier${r.garrison_tiers === 1 ? "" : "s"}`;
+  const veil = r.descent_losses ? `, ${r.descent_losses} lost to the Veil in the descent` : "";
+  return `${who} at ${Math.round(r.suppression_at_drop * 100)}% suppression, against ${r.garrison_tiers} garrison tier${r.garrison_tiers === 1 ? "" : "s"}${veil}`;
 }

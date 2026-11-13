@@ -1,0 +1,10 @@
+{
+  "mode": "built-in image_gen",
+  "assets": [
+    {
+      "key": "hull_sections",
+      "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A curved armoured hull section: a riveted grey steel plate segment with internal ribbing visible along its open edge.\nDelivery: exactly one 1254 × 1254 RGBA PNG. Keep the complete object centred with its longest silhouette dimension approximately 1000 pixels (80% of the canvas), with generous transparent margins on all sides and completely clear corners. Show one curved, thick steel hull segment with broad readable plating and the internal structural ribs visible at its open edge. The riveting and panel detail are restrained so the silhouette reads at 32 px. No lettering, badge, diagram or scene.",
+      "references": []
+    }
+  ]
+}

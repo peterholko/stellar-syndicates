@@ -47,3 +47,6 @@ client/art-src/promo-slideshow-v1/output/
 client/art-src/promo-slideshow-v1/index.html
 client/art-src/season-art-v1/*.zip
 client/tmp/
+
+# The Mac login key staged for deploy/vps/debian-setup-root.sh
+deploy/vps/mac.pub

@@ -249,7 +249,9 @@ function buildSystemDemo(ctx: CoreContext, systemId: string): { picture: SystemP
     food_state: "well_supplied",
     blockade: { by: rival, by_name: "Vesper Combine", since: now - 900, by_me: false, held_since: now - 700,
       siege_since: now - 0.43 * (state.galaxy.siege_secs || 600), siege_secs: state.galaxy.siege_secs || 600, capturable: true },
-    ground: { garrison_tier: 2, garrison_fed: true, suppression: 0.37, marines_needed: 40 },
+    // §veil: the demo world's sky is up, so the aurora shell can be checked.
+    ground: { garrison_tier: 2, garrison_fed: true, suppression: 0.37, marines_needed: 40,
+      veil: { level: 2, up: true, descent_loss: 0.15, burn_per_s: 0.05, fuel: "deuterium", raise: true } },
   };
   const star = system.pos;
   const at = (dx: number, dy: number) => ({ x: star.x + dx, y: star.y + dy });

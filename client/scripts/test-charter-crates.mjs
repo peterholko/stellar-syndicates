@@ -1,6 +1,7 @@
 // §charter-crates (Peter, Oct 31 2026): the charter's supplies come in
-// crates released a chapter at a time; the guide puts a released crate first,
-// step 22 secures the stores, and the trader's stock-up counts sealed crates.
+// crates released a chapter at a time; a released crate pops up instead of a
+// guide card, step 22 secures the stores, and the trader's stock-up counts
+// sealed crates.
 // No game socket.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -23,13 +24,15 @@ const options = [
   { key: "vault", costs: [{ commodity: "alloys", units: 40 }, { commodity: "machinery", units: 10 }] },
   { key: "academy", costs: [{ commodity: "alloys", units: 25 }, { commodity: "electronics", units: 15 }] },
 ];
-const raid = { id: "raid", released: true, step: 6, goods: { alloys: 95, machinery: 42 } };
-const expansion = { id: "expansion", released: false, step: 13, goods: { alloys: 176, machinery: 47 } };
+// Any released crate (Peter, Nov 4 2026: none comes after the raid now;
+// Nov 5: none at step 10 or 13 either).
+const released = { id: "vendetta", released: true, step: 27, goods: { alloys: 70, machinery: 18 } };
+const reach = { id: "reach", released: false, step: 23, goods: { alloys: 60, machinery: 28 } };
 const st = { playerId: "1", simTime: 100, commandCenter: { x: 0, y: 0 },
   galaxy: { c: 400, systems: [{ id: "home", name: "Alphard", pos: { x: 0, y: 0 } }], hyperlimit: 900, build_options: options },
   systems: [], ghosts: [], battles: [], pendingOrders: new Map(), storyTold: new Set(), captains: [], explorationSites: [],
   founding: { stage: "build_gun_platform", local_opening: true, pirates: cast, vendetta: null, stipends: [], survey_candidates: [],
-    crates: [raid, expansion] } };
+    crates: [released, reach] } };
 
 const protocol = load("protocol.ts");
 const vendetta = load("core/derive/vendetta.ts");
@@ -48,19 +51,19 @@ const home = { id: "home", owner: "1", builds: [], assignments: [], storage_used
     { id: 2, name: "Alphard III", kind: "terrestrial", structures: { mining_complex: 1 }, free: 2 }] };
 st.systems = [home];
 
-// A released crate comes first; the step's own card waits behind it.
-assert.equal(guide.crateLine(raid), "95 Alloys · 42 Machinery");
+// §crate-panel (Peter, Nov 3 2026): a released crate is no step: it pops up
+// to be accepted (test-story-events). The guide keeps to the step's card.
 let plan = guide.foundingPlan(st, home);
-assert.equal(plan.primary.title, "Charter crate");
-assert.equal(plan.primary.copy, "95 Alloys · 42 Machinery");
-assert.equal(plan.primary.action, "collect-crate");
-assert.equal(plan.primary.label, "Collect");
-assert.equal(plan.waiting[0].title, "Build a Gun Platform", "the build waits behind its crate");
+assert.equal(plan.primary.title, "Build a Laser Battery");
+assert.ok(![plan.primary, ...plan.waiting].some(card => /crate/i.test(`${card.title} ${card.action}`)), "no crate card");
+for (const file of ["core/derive/founding.ts", "shell/deck/founding-guide.ts", "shell/mobile/surfaces.ts"]) {
+  assert.doesNotMatch(source(file), /collect-crate|CollectCharterCrate/, `${file}: the panel collects crates, not the guide`);
+}
 
-// Collected, the step's own card is back; a sealed crate ahead shows nothing.
-st.founding.crates = [expansion];
+// A sealed crate ahead shows nothing either.
+st.founding.crates = [reach];
 plan = guide.foundingPlan(st, home);
-assert.equal(plan.primary.title, "Build a Gun Platform");
+assert.equal(plan.primary.title, "Build a Laser Battery");
 
 // Step 22: a Warehouse (on a world with a free site, the landing world last),
 // then a Vault under the Command Center.
@@ -71,7 +74,7 @@ assert.deepEqual(JSON.parse(JSON.stringify(plan.checklist)),
   [{ title: "Secure your stores", done: false }, { title: "Defeat Mordecai Marrow", done: false }]);
 assert.equal(plan.primary.title, "Build a Warehouse");
 assert.equal(plan.primary.action, "build-store-warehouse");
-assert.equal(plan.primary.reason, "+700 storage.");
+assert.equal(plan.primary.why, "+700 storage.");
 assert.equal(guide.foundingBuildTarget("build-store-warehouse", st, home).body.id, 2, "keeps the landing world's site");
 assert.equal(guide.bestStoreBody({ bodies: [home.bodies[0]] }).id, 0, "the landing world when it is the only one");
 home.bodies[1].structures.warehouse = 1;
@@ -81,12 +84,17 @@ assert.equal(plan.primary.action, "build-vault");
 assert.equal(guide.foundingBuildTarget("build-vault", st, home).body.id, 0, "under the Command Center");
 assert.ok(plan.waiting.some(card => card.action === "build-interceptor"), "the uncle's oath still stands");
 
-// The trader's stock-up counts what the sealed crates will bring.
+// A build counts only a crate already released (Peter, Nov 5 2026: no
+// Pirates crate, so the first Interceptor buys its Alloys from the trader).
 const trader = { goods: [{ commodity: "alloys", stock: 120 }, { commodity: "electronics", stock: 127 }] };
 st.founding.crates = [];
 const plain = value => JSON.parse(JSON.stringify(value));
 assert.deepEqual(plain(merchants.merchantShortfall(st, home, "academy", trader)), { alloys: 25, electronics: 15 });
-st.founding.crates = [expansion];
-assert.deepEqual(plain(merchants.merchantShortfall(st, home, "academy", trader)), { electronics: 15 }, "no Alloys: a crate brings them");
+st.founding.crates = [reach];
+assert.deepEqual(plain(merchants.merchantShortfall(st, home, "academy", trader)), { alloys: 25, electronics: 15 },
+  "a crate still sealed is no help to a build now");
+st.founding.crates = [{ ...reach, released: true }];
+assert.deepEqual(plain(merchants.merchantShortfall(st, home, "academy", trader)), { electronics: 15 },
+  "no Alloys: a released crate brings them");
 
 console.log("charter crates ok");

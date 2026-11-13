@@ -86,8 +86,8 @@ impl World {
                 || fleet.pos.distance(post.station) > crate::transit::HYPERLIMIT { continue; }
             // Remain berthed for normal refuelling/resupply instead of installing
             // a dry Intercept at the dock, which would make the berth ineligible.
-            if !fleet.supplied || fleet.fuel < crate::fuel::fuel_tick(fleet.mass(), fleet.transit_speed(), DT)
-                * fleet.propulsion_fuel_mult() { continue; }
+            if !fleet.supplied || !fleet.can_pay(&fleet.burn_units(
+                crate::fuel::fuel_tick(fleet.mass(), fleet.transit_speed(), DT), fleet.flies_slow())) { continue; }
             let target = self.fleets.iter().filter_map(|(&target, other)| {
                 if target == id || !hostile(other) { return None; }
                 visible(other).map(|seen| (target, seen.distance(post.station)))
@@ -293,10 +293,10 @@ mod tests {
         let (mut w, owner, post) = scene();
         let id = ship(&mut w, owner, post.station, ShipKind::Raider, 1, post.order());
         let enemy = ship(&mut w, PlayerId::PIRATE, post.station + Vec2::new(4_000.0, 0.0), ShipKind::Raider, 1, FleetOrder::Idle);
-        w.fleets.get_mut(&id).unwrap().fuel = 0.0;
+        w.fleets.get_mut(&id).unwrap().launch_empty();
         w.autonomous_system_defense();
         assert_eq!(w.dock_of(id), Some(DockSite::System(post.system)));
-        w.fleets.get_mut(&id).unwrap().refuel(10.0);
+        w.fleets.get_mut(&id).unwrap().fill_stores();
         w.autonomous_system_defense();
         assert!(matches!(w.fleets[&id].order, FleetOrder::Intercept { target } if target == enemy));
     }

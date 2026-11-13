@@ -77,7 +77,8 @@ impl FoodState {
 /// the internal "millions" unit: a 2,000-person home still eats 0.08/s and the
 /// food chain remains an opening concern instead of disappearing in rounding.
 /// Tunable.
-pub const PROVISIONS_PER_MILLION_PER_S: f64 = 40.0;
+/// §progression: scaled with production (`production::OUTPUT_SCALE`).
+pub const PROVISIONS_PER_MILLION_PER_S: f64 = 40.0 * crate::production::OUTPUT_SCALE;
 
 /// The same baseline ration for one person, including people aboard ships.
 /// Colony environment/research modifiers remain local to colony consumption;
@@ -86,18 +87,24 @@ pub const PROVISIONS_PER_PERSON_PER_S: f64 = PROVISIONS_PER_MILLION_PER_S / 1_00
 
 // --- CAPACITY ---------------------------------------------------------------
 
-/// Population capacity (millions) per Habitat tier. One tier houses 25,000
-/// people; the value remains expressed in millions on the simulation wire.
-pub const POP_CAP_PER_HABITAT_TIER: f64 = 0.025;
+/// Population capacity (millions) per Habitat tier. One tier houses 8,000
+/// people before the world's size and environment multipliers; the value
+/// remains expressed in millions on the simulation wire. §habitat-rebase
+/// (Peter, Nov 1 2026: 25,000 made every upgrade pointless): a level houses
+/// about one more round of crews, so a Large Terran home's Habitat I holds
+/// 12,500 (the charter's 7,000 and Developed at 10,000) and Major's 50,000
+/// takes Habitat IV.
+pub const POP_CAP_PER_HABITAT_TIER: f64 = 0.008;
 
 /// Retained on the rolling wire for old clients. Population no longer grows in
 /// the production tick; physical migrant liners are the sole post-founding
 /// inflow, so the honest legacy rate is zero.
 pub const POP_GROWTH_PER_S: f64 = 0.0;
 
-/// §gaia: Living Terraces house fewer people per tier than a Habitat (20,000
-/// before the world's size and environment multipliers); their job is food.
-pub const TERRACE_POP_PER_TIER: f64 = 0.020;
+/// §gaia: Living Terraces house fewer people per tier than a Habitat (6,400,
+/// 80% of a Habitat level, before the world's size and environment
+/// multipliers); their job is food.
+pub const TERRACE_POP_PER_TIER: f64 = 0.0064;
 
 /// A colony ship plants one 1,000-person workforce cohort.
 pub const COLONY_FOUNDING_POP: f64 = 0.001;

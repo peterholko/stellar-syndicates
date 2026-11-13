@@ -33,7 +33,7 @@ const ship = (id, kind = "raider", more = {}) => ({ id, kind, x: 500, y: 340,
   angle: 0, canvasPx: 80, alpha: .7, eligible: true, ...more });
 const burst = (id = "death:0", more = {}) => ({ id, seed: 1234, type: "death", x: 500, y: 340,
   radius: 46, age: .18, life: .68, color: 0xff8136, cls: 3, ...more });
-const frame = (ships = [], bursts = [], more = {}) => ({ width: 1068, height: 672, ships, bursts, tier: 0, reducedMotion: false, ...more });
+const frame = (ships = [], bursts = [], more = {}) => ({ width: 1068, height: 672, ships, bursts, tier: 0, ...more });
 const kinds = Object.keys(catalog.SHIP_MODELS);
 
 // Admission at both viewport sizes, deterministic ordering, no hidden hulls.
@@ -53,12 +53,11 @@ for (const more of [{ x: -1000 }, { y: NaN }, { alpha: 0 }, { eligible: false },
 assert.equal(policy.pickBattleModels(frame([ship(1, "raider", { x: -10 })]), false).length, 1);
 assert.equal(policy.pickBattleBursts(frame([], Array.from({ length: 200 }, (_, i) => burst(`b${i}`))), false).length, 16);
 assert.equal(policy.pickBattleBursts(frame([], [burst("a", { age: -.01 }), burst("b", { age: .68 })]), false).length, 0);
-const particlesAt = (age, reduced = false) => { const output = []; effects.visitBattleBurst(burst("death", { age }), reduced, p => output.push(plain(p))); return output; };
+const particlesAt = (age) => { const output = []; effects.visitBattleBurst(burst("death", { age }), p => output.push(plain(p))); return output; };
 const sampled = particlesAt(.18); particlesAt(.45); particlesAt(.01);
 assert.deepEqual(particlesAt(.18), sampled, "seeking back does not accumulate movement or random state");
 assert.ok(sampled.some(p => p.kind === "shard") && sampled.some(p => p.kind === "fire") && sampled.some(p => p.kind === "ring"));
 assert.ok(sampled.every(p => Object.values(p).every(v => typeof v !== "number" || Number.isFinite(v))));
-assert.ok(particlesAt(.18, true).filter(p => p.kind === "shard").length < sampled.filter(p => p.kind === "shard").length);
 assert.equal(particlesAt(.45).filter(p => p.kind === "shard").length, 0, "hot shrapnel goes out as it cools (cold metal is the hull's own debris)");
 assert.equal(particlesAt(-.01).length, 0); assert.equal(particlesAt(.68).length, 0);
 
@@ -349,6 +348,22 @@ const theater = compile("battletheater", theaterDeps, {}, `
     const p = typeof point === "function" ? point(at) : point;
     pickAt(p[0], p[1]);
     return { cid: followCid, following, info: theaterSelection() };
+  }
+  /// §follow-zoom: a click on a hull from the overview, then a second of
+  /// frames: the camera closes in and tracks it.
+  export function closeInProbe(rec, round, frac, point) {
+    layers = { ships: new Container(), ui: new Container(), wrecks: new Container() } as any;
+    shipPool = []; viewAngled = false; tiltY = 1; camX = camY = 0;
+    st = { rec, pirateId: null, round, frac, live: false, ships: [], fx: null, withdrawFrom: [Infinity, Infinity], windowKey: "" };
+    battleModels = { render() { return { ships: new Set(), bursts: new Set() }; }, debug() {} } as any;
+    followCid = null; resetCamera();
+    frame(1 / 60);
+    const at = (cid) => { const v = st.ships.find((s) => s.inUse && s.cid === cid); return v ? [v.root.position.x, v.root.position.y] : null; };
+    pickAt(...point(at));
+    for (let i = 0; i < 60; i++) frame(1 / 60);
+    const v = st.ships.find((s) => s.inUse && s.cid === followCid);
+    const m = v ? trackMotion(v, st.frac) : null;
+    return { cid: followCid, zoom: camZoom, overview: overviewZoom(), cam: [camX, camY], at: m ? [m.x, m.y] : null };
   }
   /// Drive the frame-rate ladder with a run of frame times (s), from a warm
   /// stage at \`preferred\`: each frame's [cap, effects tier, scene time].
@@ -650,6 +665,13 @@ assert.deepEqual([topDown.input.pitch, topDown.input.ringTilt, topDown.input.dep
   assert.ok(Math.hypot(late.cam[0] - late.at[0], late.cam[1] - late.at[1]) < 1e-6, "…reached within the glide");
   const watched = theater.followProbe({ ...fight, own_side: null }, 0, .5, 9);
   assert.equal(watched.cid, null, "a battle the player only watches follows no one");
+  // §follow-zoom (Peter, Nov 5 2026: "The Camera Following didn't appear to
+  // work"): the overview can't move, so a hull clicked from it is closed in
+  // on and tracked.
+  const picked = theater.closeInProbe(fight, 0, .5, (at) => at(9));
+  assert.equal(picked.cid, 9, "the clicked hull");
+  assert.ok(Math.abs(picked.zoom - picked.overview * 2.4) < 1e-6, "closed in from the overview");
+  assert.ok(Math.hypot(picked.cam[0] - picked.at[0], picked.cam[1] - picked.at[1]) < 1e-6, "and centred on it");
 }
 
 // Picking: a click selects the nearest hull within reach (22 px, or its own
@@ -778,6 +800,24 @@ assert.ok(Math.cos(station[0]) > 0.99, "…facing the enemy it first saw");
   assert.ok(shown.every((v) => !v.eligible), "no hull model for a hardpoint");
   const blow = theater.afterProbe(fort, 1, .01).timeline.find((e) => e.cid === 11);
   assert.ok(blow && blow.cls === 1 && blow.pieces === 0 && blow.px === 6, "a hardpoint goes up like a heavy hull, in one piece");
+}
+
+// §laser-battery: level 1 stands on the ground, so the theater draws it on its
+// world's face toward the fight (the engine keeps it at the station's spot).
+{
+  const world = { x: 1300, y: 0, r: 260, side: 1 };
+  const gun = { cid: 20, side: 1, kind: "corvette", plat: true, station: 1, x: 400, y: 0, hp: 1 };
+  const raider = { cid: 1, side: 0, kind: "raider", x: -300, y: 0, hp: 1 };
+  const counts = [[{ kind: "raider", exact: 1 }], []];
+  const frame = (x) => ({ ships: [{ ...raider, x }, gun], gunfire: [], deaths: [], torpedoes: [], world });
+  const rec = { id: "laser-battery", sides: [{ corp: "own", loadouts: [] }, { corp: "foe", loadouts: [] }], own_side: 0, rounds: [
+    { tick: 1, dealt: [0, 0], counts, notes: [], frame: frame(-300) },
+    { tick: 2, dealt: [0, 0], counts, notes: [], frame: frame(-200) }] };
+  const [battery] = theater.trackProbe(rec, 0, .5).filter((v) => v.cid === 20);
+  assert.ok(Math.abs(battery.x - (1300 - 260 * 0.9)) < 1e-6 && Math.abs(battery.y) < 1e-6, "on the world's face toward the fight");
+  const away = { ...rec, id: "laser-battery-away", rounds: rec.rounds.map((r) => ({ ...r, frame: { ...r.frame, world: { ...world, side: 0 } } })) };
+  const [kept] = theater.trackProbe(away, 0, .5).filter((v) => v.cid === 20);
+  assert.ok(Math.abs(kept.x - 400) < 1e-6, "not its side's world: it stays where it fights");
 }
 
 // Deaths: the blast is where the hull is seen to die; debris follows and

@@ -82,7 +82,7 @@ pub fn topic_of(payload: &EventPayload) -> Option<(Topic, Option<EntityId>)> {
         E::ResearchCompleted { .. } | E::TierUnlocked { .. } | E::ResearchStalled { .. } => (Topic::Research, None),
         E::ShipLaunched { system, .. } => (Topic::Launch, Some(*system)),
         E::SystemUpgraded { system, .. } | E::SettlementDeveloped { system, .. } => (Topic::Built, Some(*system)),
-        E::SpecialistsDelivered { system, .. } | E::ModulesDelivered { system, .. }
+        E::SpecialistsDelivered { system, .. }
         | E::MerchantArrived { system, .. } => (Topic::Arrival, Some(*system)),
         E::FuelRescueCompleted { .. } => (Topic::Arrival, None),
         E::Trade(TradeEvent::Delivered { system, .. }) => (Topic::Arrival, *system),

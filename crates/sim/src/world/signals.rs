@@ -140,17 +140,21 @@ impl World {
                 SignalReward::Cargo { goods } => {
                     let mut loaded = Vec::new();
                     for &(commodity, units) in goods {
-                        let room = fleet.cargo_capacity().saturating_sub(fleet.cargo_units());
-                        let taken = units.min(room);
+                        let taken = units.min(fleet.cargo_room().fits(commodity));
                         if taken > 0 { fleet.add_cargo(commodity, taken); loaded.push((commodity, taken)); }
                         if units > taken { left.push((commodity, units - taken)); }
                     }
                     if !loaded.is_empty() { aboard.push(SignalFind::CargoAboard { goods: loaded }); }
                 }
-                // A crate rides in any hull.
+                // §modules-as-goods: a module rides in the hold like cargo; a
+                // hull with no room leaves it at the signal for a freighter.
                 SignalReward::Module { module } => {
-                    *fleet.modules.entry(*module).or_insert(0) += 1;
-                    aboard.push(SignalFind::ModuleAboard { module: *module });
+                    if fleet.cargo_room().fits(module.good()) > 0 {
+                        fleet.add_cargo(module.good(), 1);
+                        aboard.push(SignalFind::ModuleAboard { module: *module });
+                    } else {
+                        left.push((module.good(), 1));
+                    }
                 }
                 _ => {}
             }
@@ -438,23 +442,20 @@ mod tests {
         assert_eq!(w.players[&owner].signals.first_ten_next(), Some("a captain"));
     }
 
+    /// §modules-as-goods (Nov 8 2026): a found module is cargo like any good,
+    /// so an Interceptor with no hold leaves it in a cache for a freighter.
     #[test]
-    fn a_crate_rides_home_in_any_hull() {
+    fn a_found_module_with_no_hold_room_waits_in_a_cache() {
         let (mut w, owner) = founder();
         opened(&mut w, owner);
         let fleet = interceptor(&mut w, owner);
         let signal = only(&mut w, owner, scripted(6));
         w.step(&[Command::AnswerSignal { player_id: owner, fleet_id: fleet, signal_id: signal }]);
         let events = report(&mut w, owner, signal);
-        assert_eq!(reported(&events), [SignalFind::ModuleAboard { module: ModuleKind::ExtendedTanks }]);
-        let home = w.players[&owner].home_system.unwrap();
-        for _ in 0..300 {
-            run(&mut w, 1.0);
-            if w.fleets[&fleet].modules.is_empty() { break; }
-        }
-        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!(sys.modules.get(&ModuleKind::ExtendedTanks), Some(&1), "landed at home with the fleet");
-        assert!(w.fleets[&fleet].mission.is_none());
+        let finds = reported(&events);
+        let [SignalFind::Cache { goods, .. }] = finds.as_slice() else { panic!("{finds:?}") };
+        assert_eq!(goods, &vec![(ModuleKind::ExtendedTanks.good(), 1)]);
+        assert_eq!(w.fleets[&fleet].cargo_amount(ModuleKind::ExtendedTanks.good()), 0);
     }
 
     #[test]

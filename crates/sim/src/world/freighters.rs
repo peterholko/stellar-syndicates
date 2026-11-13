@@ -31,12 +31,15 @@ fn slow_freighters_take_twice_as_long_on_uranium_and_burn_a_quarter_of_the_energ
         let mut results = Vec::new();
         for mode in [TransitMode::Full, TransitMode::Slow, TransitMode::Stealth] {
             let id = w.alloc_entity_id();
-            let mut f = Fleet::single(id, owner, kind, start, FleetOrder::MoveTo { dest }, None);
+            // §shipbuilding-overhaul: Full and Slow on a fission hull (one
+            // tank, one fuel); Stealth needs a Fusion Core.
+            let core = if mode == TransitMode::Stealth { (crate::fuel::ReactorGrade::Fusion, crate::fuel::Drive::Zephyr) } else { (crate::fuel::ReactorGrade::Fission, crate::fuel::Drive::Zephyr) };
+            let mut f = Fleet::single_on(id, owner, kind, core, start, FleetOrder::MoveTo { dest }, None);
             f.add_cargo(C::MetallicOre, kind.cargo_units());
             f.transit = mode;
             f.drive_state = DriveState::Cruising(crate::transit::Regime::Warp);
             f.vel = Vec2::new(f.transit_speed() * crate::transit::WARP_FACTOR, 0.0);
-            let (fuel0, uranium0) = (f.fuel, f.uranium);
+            let (fuel0, uranium0) = (f.energy_aboard(), f.uranium);
             let range = f.range_at(crate::transit::WARP_FACTOR);
             w.fleets.insert(id, f);
             let mut ticks = 0;
@@ -47,20 +50,21 @@ fn slow_freighters_take_twice_as_long_on_uranium_and_burn_a_quarter_of_the_energ
             }
             assert!(ticks < 1_000, "{kind:?} {mode:?} must reach the destination");
             let f = &w.fleets[&id];
-            results.push((ticks, fuel0 - f.fuel, uranium0 - f.uranium, range));
+            results.push((ticks, fuel0 - f.energy_aboard(), uranium0 - f.uranium, range));
             w.fleets.remove(&id);
         }
         let (full, slow, stealth) = (results[0], results[1], results[2]);
         assert!((slow.0 as i32 - 2 * full.0 as i32).abs() <= 2, "{kind:?}: {results:?}");
-        assert!(full.2.abs() < 1e-12 && slow.1.abs() < 1e-12, "{kind:?}: each regime burns its own store");
-        assert!((slow.2 / full.1 - 0.25).abs() < 0.001, "{kind:?}: {results:?}");
-        assert!((slow.3 / full.3 - 4.0).abs() < 1e-9, "the same-size store goes four times as far");
-        assert!((stealth.1 / full.1 - 1.0).abs() < 0.01, "Stealth's trip cost is unchanged");
+        assert!(full.2 > 0.0 && slow.2 > 0.0, "{kind:?}: a fission hull burns Uranium at either throttle");
+        assert!((slow.1 / full.1 - 0.25).abs() < 0.001, "{kind:?}: Slow burns a quarter of the energy: {results:?}");
+        assert!((slow.3 / full.3 - 4.0).abs() < 1e-9, "the same tank goes four times as far");
+        assert!((stealth.1 / full.1 - 1.0).abs() < 0.01, "Stealth's trip energy is Full's, on Deuterium");
+        assert!(stealth.2.abs() < 1e-12, "a fusion hull burns no Uranium");
     }
 }
 
 #[test]
-fn escorts_fly_their_charges_uranium_regime() {
+fn escorts_fly_their_charges_throttle() {
     use crate::ship::{DriveState, TransitMode};
     let (mut w, owner, _) = fixture();
     w.fleets.clear();
@@ -75,7 +79,9 @@ fn escorts_fly_their_charges_uranium_regime() {
         f.drive_state = DriveState::Cruising(crate::transit::Regime::Warp);
         f.vel = Vec2::new(f.transit_speed() * crate::transit::WARP_FACTOR, 0.0);
         let guard_pos = f.pos - f.vel.normalized() * GUARD_STANDOFF_SU;
-        let mut guard = Fleet::single(guard_id, owner, ShipKind::Raider, guard_pos,
+        // §shipbuilding-overhaul: a fission escort, so both throttles draw
+        // from the one Uranium tank.
+        let mut guard = Fleet::single_on(guard_id, owner, ShipKind::Raider, (crate::fuel::ReactorGrade::Fission, crate::fuel::Drive::Zephyr), guard_pos,
             FleetOrder::Guard { target: id }, None);
         guard.vel = f.vel;
         guard.drive_state = f.drive_state;
@@ -90,13 +96,13 @@ fn escorts_fly_their_charges_uranium_regime() {
         w.fleets.clear();
     }
     assert!((results[0].0 - results[1].0).abs() < 0.1, "{results:?}");
-    assert!(results[0].2.abs() < 1e-12 && results[1].1.abs() < 1e-12, "{results:?}");
-    assert!((results[1].2 / results[0].1 - 0.25).abs() < 1e-6,
-        "the escort burns its charge's Uranium regime over the same distance: {results:?}");
+    assert!(results[0].1.abs() < 1e-12 && results[1].1.abs() < 1e-12, "no Deuterium on a fission hull: {results:?}");
+    assert!((results[1].2 / results[0].2 - 0.25).abs() < 1e-6,
+        "the escort flies its charge's throttle over the same distance: {results:?}");
 }
 
 #[test]
-fn slow_commands_are_delayed_and_ships_of_the_line_cannot_fly_slow() {
+fn slow_commands_are_delayed_and_any_hull_throttles_back() {
     use crate::ship::TransitMode;
     let (mut w, owner, _) = fixture();
     w.fleets.clear();
@@ -111,28 +117,47 @@ fn slow_commands_are_delayed_and_ships_of_the_line_cannot_fly_slow() {
     assert_eq!(w.fleets[&id].transit, TransitMode::Slow);
     let restored: World = serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
     assert_eq!(restored.fleets[&id].transit, TransitMode::Slow);
-    let f = w.fleets.get_mut(&id).unwrap();
-    f.composition.insert(ShipKind::Raider, 1);
-    assert!(f.can_slow(), "an escort warship flies Slow with its charge");
-    f.composition.insert(ShipKind::Battleship, 1);
-    assert!(!f.can_slow(), "a ship of the line carries no fission store");
-    assert_eq!(f.cruise_fuel_mult(), 1.0);
-    assert_eq!(f.transit_speed(), f.max_speed());
+    // §shipbuilding-overhaul: any formation throttles back, a ship of the
+    // line included; Stealth needs fusion-class cores on every hull.
+    let bb = w.alloc_entity_id();
+    let mut line = Fleet::single(bb, owner, ShipKind::Battleship, pos, FleetOrder::Idle, None);
+    line.transit = TransitMode::Slow;
+    assert!(line.can_slow() && line.flies_slow(), "a ship of the line idles home on Slow");
+    assert_eq!(line.cruise_fuel_mult(), crate::fuel::SLOW_FUEL_MULT);
+    assert_eq!(line.transit_speed(), line.max_speed() * crate::fuel::SLOW_SPEED_FRACTION);
+    let fission = Fleet::single_on(bb, owner, ShipKind::Corvette, (crate::fuel::ReactorGrade::Fission, crate::fuel::Drive::Zephyr), pos, FleetOrder::Idle, None);
+    assert!(!fission.can_stealth(), "no Stealth on a Fission Core");
+    assert_eq!(line.effective_transit(), TransitMode::Slow);
 }
 
 #[test]
 fn freight_construction_starts_with_importable_basics_then_adds_industry() {
     // These are construction manifests, not a credit purchase or an automatic
     // hull replacement. Every unit must reach a yard through normal logistics.
+    // §shipbuilding-overhaul: a hull is a kit — engines, a Nav Computer, Hull
+    // Sections, a Cargo Bay per 50 units of hold. §hull-ladder (Nov 7 2026):
+    // engines are half the kit (×3 a freighter rung), the frame and engines
+    // come in the hull's size (heavy from the Heavy Freighter), and the skin
+    // is Composites plating.
     let manifests: [&[(C, f64)]; 6] = [
-        &[(C::Alloys, 20.0), (C::Machinery, 8.0), (C::Polymers, 8.0), (C::WarpCore, 1.0)],
-        &[(C::Alloys, 45.0), (C::Machinery, 16.0), (C::Polymers, 16.0), (C::WarpCore, 1.0)],
-        &[(C::Alloys, 90.0), (C::Machinery, 28.0), (C::Polymers, 20.0), (C::Electronics, 10.0), (C::WarpCore, 2.0)],
-        &[(C::Alloys, 180.0), (C::Machinery, 45.0), (C::Electronics, 25.0), (C::HullSections, 12.0), (C::WarpCore, 3.0)],
-        &[(C::Alloys, 320.0), (C::Machinery, 70.0), (C::HullSections, 30.0), (C::PrecisionComponents, 15.0), (C::WarpCore, 5.0)],
-        &[(C::Alloys, 520.0), (C::Machinery, 100.0), (C::HullSections, 60.0),
-            (C::PrecisionComponents, 25.0), (C::WarpCore, 16.0)],
+        &[(C::FissionReactor, 2.0), (C::ZephyrDrive, 2.0), (C::NavComputer, 1.0), (C::HullSections, 2.0), (C::CargoBay, 1.0),
+            (C::Composites, 4.0), (C::Electronics, 1.0), (C::Machinery, 1.0)],
+        &[(C::FissionReactor, 4.0), (C::ZephyrDrive, 4.0), (C::NavComputer, 1.0), (C::HullSections, 15.0), (C::CargoBay, 3.0),
+            (C::Composites, 30.0), (C::PrecisionComponents, 3.0), (C::Electronics, 8.0), (C::Machinery, 5.0)],
+        &[(C::FissionReactor, 13.0), (C::ZephyrDrive, 13.0), (C::NavComputer, 1.0), (C::HullSections, 44.0), (C::CargoBay, 8.0),
+            (C::Composites, 88.0), (C::PrecisionComponents, 9.0), (C::Electronics, 25.0), (C::Machinery, 14.0)],
+        &[(C::FissionReactor, 40.0), (C::ZephyrDrive, 40.0), (C::NavComputer, 1.0), (C::HullSections, 133.0), (C::CargoBay, 20.0),
+            (C::Composites, 264.0), (C::PrecisionComponents, 27.0), (C::Electronics, 74.0), (C::Machinery, 41.0)],
+        &[(C::HeavyFissionReactor, 5.0), (C::HeavyZephyrDrive, 5.0), (C::NavComputer, 1.0), (C::HeavyHullSections, 29.0), (C::CargoBay, 50.0),
+            (C::Composites, 110.0), (C::PrecisionComponents, 40.0), (C::Electronics, 108.0), (C::Machinery, 59.0)],
+        &[(C::HeavyFissionReactor, 15.0), (C::HeavyZephyrDrive, 15.0), (C::NavComputer, 1.0), (C::HeavyHullSections, 90.0), (C::CargoBay, 120.0),
+            (C::Composites, 336.0), (C::PrecisionComponents, 109.0), (C::Electronics, 294.0), (C::Machinery, 161.0)],
     ];
+    for (kind, expected) in PLAYER_FREIGHTERS.into_iter().zip(manifests) {
+        let reactor = kind.engine_size().reactor(crate::fuel::ReactorGrade::Fission);
+        assert_eq!(expected.iter().find(|(c, _)| *c == reactor).unwrap().1, kind.engines() as f64, "{kind:?} engines");
+        assert_eq!(expected.iter().find(|(c, _)| *c == C::CargoBay).unwrap().1, (kind.cargo_units() / 50) as f64, "{kind:?} bays");
+    }
     for (kind, expected) in PLAYER_FREIGHTERS.into_iter().zip(manifests) {
         let recipe = crate::build::recipe_for(BuildKind::Ship { ship: kind });
         assert_eq!(recipe.costs, expected, "{kind:?} construction manifest");
@@ -143,11 +168,16 @@ fn freight_construction_starts_with_importable_basics_then_adds_industry() {
 }
 
 #[test]
-fn medium_freight_introduces_electronics_before_heavy_components() {
-    let costs = crate::build::CONVOY_RECIPE.costs;
-    assert!(costs.contains(&(C::Electronics, 10.0)));
-    assert!(!costs.iter().any(|(c, _)| matches!(c,
-        C::HullSections | C::PrecisionComponents)));
+fn only_the_tiny_freighter_stays_on_the_opening_economy() {
+    // §hull-ladder: the Tiny's kit is the charter's (plating from its crate,
+    // no precision parts); every freighter from the Small up takes Precision
+    // Components, and the heavy sizes wait for the Cruiser's line.
+    let has = |recipe: &crate::build::Recipe, good| recipe.costs.iter().any(|(c, _)| *c == good);
+    assert!(!has(&crate::build::TINY_FREIGHTER_RECIPE, C::PrecisionComponents));
+    assert!(has(&crate::build::SMALL_FREIGHTER_RECIPE, C::PrecisionComponents));
+    assert!(crate::build::CONVOY_RECIPE.costs.contains(&(C::Electronics, 25.0)));
+    assert!(has(&crate::build::HEAVY_FREIGHTER_RECIPE, C::HeavyHullSections)
+        && !has(&crate::build::LARGE_FREIGHTER_RECIPE, C::HeavyHullSections));
 }
 
 #[test]
@@ -162,12 +192,15 @@ fn larger_freighters_trade_more_capital_at_risk_for_lower_full_load_costs() {
             .map(|(c, n)| crate::market::base_price(*c) * n).sum();
         let capacity = kind.cargo_units() as f64;
         let fuel_per_unit = crate::fuel::fuel_cost(1.0,
-            2.0 * kind.hull_mass() + capacity * crate::ship::CARGO_MASS_PER_UNIT) / capacity;
+            2.0 * kind.hull_mass() + capacity * crate::cargo::Commodity::MetallicOre.mass_per_unit()) / capacity;
         let upkeep_per_unit_distance = crate::ship::upkeep_per_sec(kind)
             / (capacity * kind.max_speed());
         if let Some((old_cost, old_cost_per_unit, old_fuel, old_upkeep, old_ticks)) = previous {
             assert!(investment > old_cost, "{kind:?}: more capital in one vulnerable hull");
-            assert!(investment / capacity < old_cost_per_unit, "{kind:?}: construction economies of scale");
+            // §hull-ladder (§2): ×3 a rung for a hold that grows ×2.4–3, so
+            // the steel per unit carried rises gently; the bigger hull buys
+            // fewer hulls to crew and fuel, not cheaper steel.
+            assert!(investment / capacity < 1.3 * old_cost_per_unit, "{kind:?}: capital per unit carried rises gently");
             assert!(fuel_per_unit < old_fuel, "{kind:?}: full-load fuel economies");
             assert!(upkeep_per_unit_distance < old_upkeep, "{kind:?}: even accounting for slower transit");
             assert!(recipe.build_ticks > old_ticks, "{kind:?}: replacement takes longer");
@@ -185,7 +218,7 @@ fn six_sizes_have_independent_holds_and_keep_civilian_rules() {
         let mut f = Fleet::single(EntityId(2), PlayerId(1), kind, Vec2::ZERO, FleetOrder::Idle, None);
         assert_eq!(f.cargo_capacity(), capacity);
         assert!(f.has_freighter() && kind.is_buildable());
-        assert!(!kind.is_combatant() && !kind.broadcasts() && !kind.has_jump_drive());
+        assert!(!kind.is_combatant() && !kind.broadcasts() && !kind.default_engine().1.jumps());
         assert_eq!(f.sensor_mult(), crate::ship::CONVOY_SENSOR_MULT);
         assert!(Loadout::new(vec![M::CargoPods]).validate(kind));
         assert!(Loadout::new(vec![M::FuelTransferRig]).validate(kind));
@@ -214,14 +247,16 @@ fn each_freighter_loads_mixed_cargo_up_to_its_own_capacity() {
         let pos = sys.pos;
         let id = w.alloc_entity_id();
         w.fleets.insert(id, Fleet::single(id, owner, kind, pos, FleetOrder::Idle, None));
+        // §hold-room: ten Provisions fill five room units, ore one a unit.
         let cap = kind.cargo_units();
         w.apply_logistics_load(owner, id, Some(home), C::Provisions, 10, &mut vec![]);
-        w.apply_logistics_load(owner, id, Some(home), C::MetallicOre, cap - 10, &mut vec![]);
-        assert_eq!(w.fleets[&id].cargo_units(), cap, "{kind:?}");
+        w.apply_logistics_load(owner, id, Some(home), C::MetallicOre, cap - 5, &mut vec![]);
+        assert_eq!(w.fleets[&id].cargo_units(), cap + 5, "{kind:?}");
+        assert_eq!(w.fleets[&id].hold_used(), cap as u64 * crate::cargo::ROOM_SCALE as u64, "{kind:?}: full");
         assert_eq!(w.fleets[&id].cargo_stacks().len(), 2);
         let before = w.systems.iter().find(|s| s.id == home).unwrap().stockpile.clone();
         w.apply_logistics_load(owner, id, Some(home), C::MetallicOre, 1, &mut vec![]);
-        assert_eq!(w.fleets[&id].cargo_units(), cap);
+        assert_eq!(w.fleets[&id].cargo_units(), cap + 5);
         assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().stockpile, before);
     }
 }
@@ -242,10 +277,19 @@ fn freight_unlocks_and_yard_tiers_are_enforced_at_receipt() {
             let mut events = Vec::new();
             w.apply_build(owner, home, None, what, None, Loadout::default(), &mut events);
             assert!(w.build_queue.is_empty(), "{kind:?}: no research means no hull");
+            // §hull-ladder: a heavy hull's parts are unknown too until the
+            // Cruiser's line, so either gate may answer first.
             assert!(events.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected {
-                reason: crate::event::BuildRejectReason::NeedsResearch, .. })));
+                reason: crate::event::BuildRejectReason::NeedsResearch | crate::event::BuildRejectReason::ResearchRequired, .. })));
             assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().stockpile, stock);
-            w.players.get_mut(&owner).unwrap().research.completed.insert(programme.into());
+            // §licences: an Orbital Shipyard freighter needs the Authority's
+            // licence too (world::licences tests the gate).
+            w.players.get_mut(&owner).unwrap().licences.insert(kind, 0.0);
+            let research = &mut w.players.get_mut(&owner).unwrap().research.completed;
+            research.insert(programme.into());
+            for (good, _) in crate::build::recipe_for(what).costs {
+                if let Some(size) = crate::fuel::size_known_after(*good) { research.insert(size.into()); }
+            }
         }
         w.systems.iter_mut().find(|s| s.id == home).unwrap().set_tier(yard, tier - 1);
         let mut events = Vec::new();

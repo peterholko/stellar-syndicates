@@ -1,12 +1,16 @@
 //! §merchant: the founding merchant's visit (`crate::merchant`,
-//! `docs/traveling-merchant.md`). §charter-v5: it is called when the report of
-//! the privateer's raid reaches command (`World::advance_founding_raid`), docks
-//! at the home, trades while docked and leaves when the charter is fulfilled
-//! or its stay runs out. Bots are corporations and play the same charter, so
-//! they get one too. §charter-v5 (Peter, Oct 16 2026): Teo leaves while the
-//! founder eliminates the pirates: a last call once the privateer's kill is
-//! reported (`merchant::LAST_CALL_S`), cut short when the den falls, so the
-//! ore goes to the Market Hub from "Export your ore" on.
+//! `docs/traveling-merchant.md`). §charter-v5: it is called after the
+//! privateer's raid; §trader-call (Nov 5 2026) once the colony has lost sight
+//! of the privateer (`FoundingProgram::raid_lost_at`), and §trader-battery
+//! (Peter, Nov 9 2026) not before its Laser Battery is under construction.
+//! It docks at the home 9–15 s later, trades while docked and leaves when the
+//! charter is fulfilled or its stay runs out. Bots are corporations and play the same charter, so
+//! they get one too. §charter-v5 (Peter, Oct 16 2026): Teo left while the
+//! founder eliminated the pirates. §den-contract (Peter, Nov 5 2026: "The
+//! free trader doesn't leave after building your own freighter that way the
+//! player can buy the necessary parts from free trader"): it stays until the
+//! charter is fulfilled, selling each build's parts as it comes up; the ore
+//! still goes to the Market Hub from "Export your ore" on.
 use super::*;
 use crate::cargo::Commodity;
 use crate::founding::FoundingStage;
@@ -23,8 +27,9 @@ impl World {
         let due: Vec<(PlayerId, EntityId)> = self.players.iter()
             .filter(|(_, c)| c.founding.enabled && c.founding.local_opening && !c.founding.merchant_called
                 && c.founding.stage != FoundingStage::Complete
-                && c.founding.raid_report_at.is_some_and(|at| at <= now))
+                && c.founding.raid_lost_at.is_some_and(|at| at <= now))
             .filter_map(|(&id, c)| c.home_system.map(|home| (id, home)))
+            .filter(|&(owner, home)| self.laser_battery_started(owner, home))
             .collect();
         for (owner, home) in due {
             let Some(pos) = self.systems.iter().find(|s| s.id == home).map(|s| s.pos) else { continue };
@@ -46,14 +51,6 @@ impl World {
                 self.merchants.remove(&ship);
                 continue;
             };
-            // §charter-v5: the last call, from the privateer's kill report
-            // until LAST_CALL_S later or the den's fall, whichever is first.
-            if let Some(c) = self.players.get(&self.merchants[&ship].customer).filter(|c| c.founding.reward_granted) {
-                let den_down = c.founding.den_report_at.is_some_and(|at| at <= self.time);
-                let last = if den_down { self.time } else { self.time + crate::merchant::LAST_CALL_S };
-                let v = self.merchants.get_mut(&ship).unwrap();
-                v.leave_by = v.leave_by.min(last);
-            }
             let visit = self.merchants[&ship].clone();
             let Some(host) = self.systems.iter().find(|s| s.id == visit.system).map(|s| s.pos) else {
                 self.retire_merchant(ship);
@@ -107,6 +104,17 @@ impl World {
                 }
             }
         }
+    }
+
+    /// §trader-battery (Peter, Nov 9 2026: "the free trader shouldn't start
+    /// flying to the player's home planet until the laser defense is under
+    /// construction"): the home's Laser Battery (the station's first level)
+    /// is under construction, or stands.
+    fn laser_battery_started(&self, owner: PlayerId, home: EntityId) -> bool {
+        use crate::build::{BuildKind, StructureKind};
+        self.systems.iter().find(|s| s.id == home).is_some_and(|s| s.station_level() >= 1)
+            || self.build_queue.iter().any(|j| j.owner == owner && j.system == home && j.started_tick.is_some()
+                && j.what == (BuildKind::Upgrade { upgrade: StructureKind::OrbitalDefense }))
     }
 
     /// §traders: the free trader this corporation deals with.
@@ -171,7 +179,7 @@ impl World {
         let Some(home) = self.systems.iter().find(|s| s.id == system) else { return };
         let credits = self.players.get(&owner).map_or(0.0, |c| c.credits);
         let refusal = if sells.iter().any(|(&c, &n)| home.free_stock(c) + 1e-9 < n as f64) {
-            Some("Not enough ore at home")
+            Some("Not enough Alloys at home")
         } else if quote.net_units > 0 && home.storage_headroom() + 1e-9 < quote.net_units as f64 {
             Some("Not enough storage room at home")
         } else if credits + quote.revenue + 1e-9 < quote.cost {
@@ -187,8 +195,10 @@ impl World {
         if let Some(visit) = self.merchants.get_mut(&ship) {
             for (&c, &n) in buys {
                 if let Some(left) = visit.stock.get_mut(&c) { *left -= n; }
+                // §shipbuilding-overhaul: the discount is for the first unit.
+                if n > 0 { visit.featured.remove(&c); }
             }
-            visit.ore_bought += sells.get(&Commodity::MetallicOre).copied().unwrap_or(0);
+            visit.bought += sells.get(&crate::merchant::BUYS).copied().unwrap_or(0);
         }
         if let Some(home) = self.systems.iter_mut().find(|s| s.id == system) {
             for (&c, &n) in buys { *home.stockpile.entry(c).or_insert(0.0) += n as f64; }
@@ -196,7 +206,7 @@ impl World {
         }
         if let Some(corp) = self.players.get_mut(&owner) {
             corp.credits += quote.revenue - quote.cost;
-            corp.founding.ore_sold += sells.get(&Commodity::MetallicOre).copied().unwrap_or(0);
+            corp.founding.alloys_sold += sells.get(&crate::merchant::BUYS).copied().unwrap_or(0);
         }
         let kept = |m: &BTreeMap<Commodity, u32>| m.iter().filter(|(_, n)| **n > 0).map(|(&c, &n)| (c, n)).collect();
         events.push(Event::new(self.time, EventPayload::MerchantTraded {
@@ -213,7 +223,7 @@ impl World {
 mod tests {
     use super::*;
     use crate::config::TICK_HZ;
-    use crate::merchant::{FOUNDING_MARKUP, MAX_STAY_S, ORE_CAP};
+    use crate::merchant::{BUY_CAP, FOUNDING_MARKUP, MAX_STAY_S};
     use crate::settlement::FoundingProfile;
 
     fn founder() -> (World, PlayerId, EntityId) {
@@ -231,11 +241,23 @@ mod tests {
         events
     }
 
-    /// §charter-v5: the report of the privateer's raid reaches command; the
-    /// trader is called.
+    /// §charter-v5: the report of the privateer's raid reaches command and
+    /// §trader-call the colony loses sight of it; §trader-battery its Laser
+    /// Battery stands; the trader is called.
     fn raided(w: &mut World, owner: PlayerId) {
         let now = w.time;
-        w.players.get_mut(&owner).unwrap().founding.raid_report_at = Some(now);
+        let f = &mut w.players.get_mut(&owner).unwrap().founding;
+        f.raid_report_at = Some(now);
+        f.raid_lost_at = Some(now);
+        battery(w, owner);
+    }
+
+    /// §trader-battery: a Laser Battery (the station's first level) at home.
+    fn battery(w: &mut World, owner: PlayerId) {
+        let home = w.players[&owner].home_system.unwrap();
+        let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+        let world = sys.main_world().unwrap();
+        sys.bodies.iter_mut().find(|b| b.id == world).unwrap().structures.insert(crate::build::StructureKind::OrbitalDefense, 1);
     }
 
     fn docked(w: &mut World, owner: PlayerId) -> EntityId {
@@ -258,9 +280,12 @@ mod tests {
         run(&mut w, 30.0);
         assert!(w.merchants.is_empty(), "no merchant before the raid");
         let later = w.time + 10.0;
-        w.players.get_mut(&owner).unwrap().founding.raid_report_at = Some(later);
+        w.players.get_mut(&owner).unwrap().founding.raid_report_at = Some(w.time);
+        w.players.get_mut(&owner).unwrap().founding.raid_lost_at = Some(later);
         run(&mut w, 5.0);
-        assert!(w.merchants.is_empty(), "nor before its report arrives");
+        assert!(w.merchants.is_empty(), "nor while the colony can still see the privateer");
+        run(&mut w, 10.0);
+        assert!(w.merchants.is_empty(), "§trader-battery: nor before its Laser Battery is under construction");
         let ship = docked(&mut w, owner);
         let visit = &w.merchants[&ship];
         assert_eq!((visit.system, visit.customer, visit.markup), (home, owner, FOUNDING_MARKUP));
@@ -285,6 +310,34 @@ mod tests {
         w.players.get_mut(&owner).unwrap().founding.stage = FoundingStage::PrepareExport;
         run(&mut w, 30.0);
         assert!(w.merchants.is_empty(), "one founding visit per corporation");
+    }
+
+    /// §trader-battery (Peter, Nov 9 2026: "the free trader shouldn't start
+    /// flying to the player's home planet until the laser defense is under
+    /// construction"): the battery's build under way calls it, before it stands.
+    #[test]
+    fn the_trader_sets_out_once_the_laser_battery_is_under_construction() {
+        use crate::build::StructureKind as K;
+        let (mut w, owner, home) = founder();
+        let now = w.time;
+        let f = &mut w.players.get_mut(&owner).unwrap().founding;
+        f.raid_report_at = Some(now);
+        f.raid_lost_at = Some(now);
+        f.set_stage(FoundingStage::BuildGunPlatform, now);
+        run(&mut w, 3.0);
+        assert!(w.merchants.is_empty(), "the privateer is gone, but no battery yet");
+        let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+        let body = sys.bodies.iter().find(|b| b.tier(K::CommandCenter) > 0).unwrap().id;
+        for (good, units) in [(Commodity::Alloys, 200.0), (Commodity::Machinery, 100.0)] {
+            *sys.stockpile.entry(good).or_default() += units;
+        }
+        let events = w.step(&[Command::DevelopSystem { player_id: owner, system_id: home, body_id: Some(body), upgrade: K::OrbitalDefense }]);
+        assert!(!events.iter().any(|e| matches!(&e.payload, EventPayload::IndustryRejected { owner: o, .. } if *o == owner)), "{events:?}");
+        assert!(w.build_queue.iter().any(|j| j.owner == owner && j.started_tick.is_some()
+            && j.what == (crate::build::BuildKind::Upgrade { upgrade: K::OrbitalDefense })), "the battery under construction");
+        assert!(w.systems.iter().find(|s| s.id == home).unwrap().station_level() == 0, "not standing yet");
+        run(&mut w, 2.0);
+        assert!(w.merchants.values().any(|v| v.customer == owner), "the trader sets out");
     }
 
     /// Peter (Oct 27 2026): "why is there such a large delay between Teo's ship
@@ -336,47 +389,44 @@ mod tests {
         assert_eq!(crate::signals::SignalKind::CargoPod.name_for(w.free_trader(owner)), "Cargo pod", "the rest keep theirs");
     }
 
-    /// §charter-v5 (Peter, Oct 16 2026): it leaves while the founder
-    /// eliminates the pirates: a last call once the privateer's kill is
-    /// reported, cut short when the den falls.
+    /// §den-contract (Peter, Nov 5 2026: "The free trader doesn't leave after
+    /// building your own freighter that way the player can buy the necessary
+    /// parts from free trader"): it stays through the hunt, the den's fall and
+    /// the Tiny Freighter, until the charter is fulfilled.
     #[test]
-    fn it_leaves_after_a_last_call_once_the_privateers_kill_is_reported() {
+    fn it_stays_until_the_charter_is_fulfilled() {
         let (mut w, owner, _) = founder();
         let ship = docked(&mut w, owner);
+        // A den with its stores, so the den's steps wait for a freighter.
+        w.ensure_founding_den(owner);
+        w.players.get_mut(&owner).unwrap().founding.stash = crate::founding::DEN_STORES.into_iter().collect();
         w.players.get_mut(&owner).unwrap().founding.set_stage(FoundingStage::DefeatPrivateer, w.time);
         run(&mut w, 1.0);
         assert_eq!(w.merchants[&ship].phase, MerchantPhase::Docked, "it stays through the hunt");
-        let paid = w.time;
         w.players.get_mut(&owner).unwrap().founding.reward_granted = true;
-        run(&mut w, crate::merchant::LAST_CALL_S - 5.0);
-        assert_eq!(w.merchants[&ship].phase, MerchantPhase::Docked, "a last call for the bounty's spending");
-        assert!((w.merchants[&ship].leave_by - (paid + crate::merchant::LAST_CALL_S)).abs() < 1.0, "the client's clock");
-        let events = run(&mut w, 10.0);
-        assert_eq!(w.merchants[&ship].phase, MerchantPhase::Leaving, "then it leaves");
+        let now = w.time;
+        w.players.get_mut(&owner).unwrap().founding.den_report_at = Some(now);
+        run(&mut w, 200.0);
+        assert_eq!(w.merchants[&ship].phase, MerchantPhase::Docked, "the bounty and the den's fall don't send it off");
+        w.players.get_mut(&owner).unwrap().founding.set_stage(FoundingStage::FullSpeed, w.time);
+        run(&mut w, 200.0);
+        assert_eq!(w.merchants[&ship].phase, MerchantPhase::Docked, "nor the Tiny Freighter");
+        assert!(w.merchants[&ship].leave_by - w.time > 24.0 * 3600.0, "a day's finale and more to go");
+        let now = w.time;
+        w.players.get_mut(&owner).unwrap().founding.set_stage(FoundingStage::Complete, now);
+        let events = run(&mut w, 1.0);
+        assert_eq!(w.merchants[&ship].phase, MerchantPhase::Leaving, "the charter fulfilled, it leaves");
         assert!(events.iter().any(|e| matches!(e.payload, EventPayload::MerchantDeparted { owner: o, .. } if o == owner)));
     }
 
     #[test]
-    fn the_dens_fall_cuts_the_last_call_short() {
-        let (mut w, owner, _) = founder();
-        let ship = docked(&mut w, owner);
-        w.players.get_mut(&owner).unwrap().founding.reward_granted = true;
-        run(&mut w, 30.0);
-        assert_eq!(w.merchants[&ship].phase, MerchantPhase::Docked);
-        let now = w.time;
-        w.players.get_mut(&owner).unwrap().founding.den_report_at = Some(now);
-        run(&mut w, 1.0);
-        assert_eq!(w.merchants[&ship].phase, MerchantPhase::Leaving, "gone by the export step");
-    }
-
-    #[test]
-    fn its_stay_runs_out_after_three_hours() {
+    fn its_stay_runs_out_after_a_week() {
         let (mut w, owner, _) = founder();
         let ship = docked(&mut w, owner);
         w.merchants.get_mut(&ship).unwrap().leave_by = w.time + 1.0;
         run(&mut w, 2.0);
         assert_eq!(w.merchants[&ship].phase, MerchantPhase::Leaving);
-        assert!(MAX_STAY_S >= 3.0 * 3600.0);
+        assert!(MAX_STAY_S >= 7.0 * 24.0 * 3600.0);
     }
 
     #[test]
@@ -393,9 +443,9 @@ mod tests {
 
         let events = w.step(&[trade(vec![(Commodity::Electronics, 15)], vec![])]);
         assert!(events.iter().any(|e| matches!(&e.payload, EventPayload::MerchantTraded { owner: o, paid, .. }
-            if *o == owner && (*paid - 15.0 * ec_mid * 1.5).abs() < 1e-6)), "{events:?}");
+            if *o == owner && (*paid - 15.0 * ec_mid * (1.0 + FOUNDING_MARKUP)).abs() < 1e-6)), "{events:?}");
         assert_eq!(stock(&w, home, Commodity::Electronics), before + 15.0);
-        assert!((w.players[&owner].credits - (credits - 15.0 * ec_mid * 1.5)).abs() < 1e-6);
+        assert!((w.players[&owner].credits - (credits - 15.0 * ec_mid * (1.0 + FOUNDING_MARKUP))).abs() < 1e-6);
         let left = w.merchants[&ship].stock[&Commodity::Electronics];
         assert_eq!(left, 127 - 15);
         assert!(ec_mid >= hub(Commodity::Electronics) * 0.5, "its prices come from the Hub");
@@ -406,24 +456,30 @@ mod tests {
         });
         assert_eq!(refused(&mut w, trade(vec![(Commodity::Electronics, left + 1)], vec![])).as_deref(),
             Some("The merchant hasn't that much"));
-        assert_eq!(refused(&mut w, trade(vec![], vec![(Commodity::MetallicOre, ORE_CAP + 1)])).as_deref(),
-            Some("The merchant won't take that much ore"));
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.insert(Commodity::MetallicOre, 10.0);
-        assert_eq!(refused(&mut w, trade(vec![], vec![(Commodity::MetallicOre, 20)])).as_deref(),
-            Some("Not enough ore at home"));
-        let ore = w.step(&[trade(vec![], vec![(Commodity::MetallicOre, 10)])]);
-        assert!(ore.iter().any(|e| matches!(e.payload, EventPayload::MerchantTraded { .. })), "selling ore pays");
-        assert_eq!(w.merchants[&ship].ore_bought, 10);
-        assert_eq!(w.players[&owner].founding.ore_sold, 10, "the charter hears of the sale");
+        // Peter (Nov 11 2026): the trader buys the Smelter's Alloys, a sample.
+        assert_eq!(refused(&mut w, trade(vec![], vec![(Commodity::Alloys, BUY_CAP + 1)])).as_deref(),
+            Some("The merchant won't take that many"));
+        assert_eq!(refused(&mut w, trade(vec![], vec![(Commodity::MetallicOre, 1)])).as_deref(),
+            Some("The merchant doesn't buy that"));
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.insert(Commodity::Alloys, 4.0);
+        assert_eq!(refused(&mut w, trade(vec![], vec![(Commodity::Alloys, 5)])).as_deref(),
+            Some("Not enough Alloys at home"));
+        let sold = w.step(&[trade(vec![], vec![(Commodity::Alloys, 4)])]);
+        assert!(sold.iter().any(|e| matches!(e.payload, EventPayload::MerchantTraded { .. })), "selling Alloys pays");
+        assert_eq!(w.merchants[&ship].bought, 4);
+        assert_eq!(w.players[&owner].founding.alloys_sold, 4, "the charter hears of the sale");
         w.players.get_mut(&owner).unwrap().credits = 10.0;
         assert_eq!(refused(&mut w, trade(vec![(Commodity::Machinery, 5)], vec![])).as_deref(), Some("Not enough credits"));
         w.players.get_mut(&owner).unwrap().credits = 1_000_000.0;
         let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
         let room = sys.storage_headroom();
         *sys.stockpile.entry(Commodity::Provisions).or_insert(0.0) += room;
-        assert_eq!(refused(&mut w, trade(vec![(Commodity::Alloys, 10)], vec![])).as_deref(),
+        assert_eq!(refused(&mut w, trade(vec![(Commodity::Machinery, 10)], vec![])).as_deref(),
             Some("Not enough storage room at home"));
-        assert_eq!(w.merchants[&ship].stock[&Commodity::Alloys], 120, "a refused trade changes nothing");
+        assert_eq!(w.merchants[&ship].stock[&Commodity::Machinery], 50, "a refused trade changes nothing");
+        // §smelt-from-landing (Nov 6 2026): the colony smelts its own Alloys.
+        assert_eq!(refused(&mut w, trade(vec![(Commodity::Alloys, 1)], vec![])).as_deref(),
+            Some("The merchant doesn't sell that"));
     }
 
     #[test]

@@ -1,0 +1,72 @@
+{
+  "name": "propulsion-03",
+  "mode": "built-in image_gen",
+  "source_brief": "docs/research-emblem-sheets.md",
+  "prompt": "Use case: stylized-concept. Asset type: a sheet of six transparent research emblems for Stellar Syndicates, a premium dark sci-fi strategy game. They join an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw SIX new emblems. Do not copy any of Image 1's six motifs, and ignore Image 1's grey backdrop.\nField: Propulsion. Colour, all six badges: silver-white metal with an icy electric-blue engine glow and trail. Everything else stays in the family's navy, charcoal and silver.\nLayout: landscape 1536 x 1024 canvas, three columns and two rows, exactly Image 1's arrangement. Six identical hexagon badges, each about 450 px tall, centred in its own 512 x 512 cell, with clear empty space between badges and around the sheet. Badges never touch or overlap.\nBadge (every one the same): a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. Each motif sits inside its rim, centred, about 70% of the face's width. Nothing crosses a rim.\nMotifs, reading left to right, top row then bottom row:\n1. Top left: A stubby tanker ship trailing a long flexible refuelling hose to a small warship following behind it, a blue fuel glow along the hose.\n2. Top centre: A lone small warship at the end of a long sweeping arc of faint blue trail that curves around a small dark planet.\n3. Top right: The Bulk Freighter from Image 2 following a dotted blue route line that loops around it through three small waypoint dots.\n4. Bottom left: Two small bright stars, upper left and lower right, joined by a broad glowing blue stream of light, three tiny freighter silhouettes riding along the stream.\n5. Bottom centre: A ship with a wide funnel-shaped ram scoop at its bow skimming low over the banded cloud tops of a gas giant's curve, a blue wake streaming behind it.\n6. Bottom right: A small tender ship gripping a damaged warship with two jointed robotic repair arms, bright blue welding sparks where the arms meet the hull.\nImage 2 is the game's own render of the Bulk Freighter: use it ONLY for that design's silhouette and details, drawn once, in an elevated three-quarter view, as motif 3, in Image 1's emblem rendering. Ignore its own lighting and background.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. Each motif is one clear subject that still reads at 48 px: a few large forms, restrained small detail. The six must look clearly different from each other at a glance: vary silhouette, scale and composition, never the same object twice.\nBackground: genuinely transparent PNG with real alpha everywhere outside the hexagons. No drop shadow, outer glow, grey backdrop, panel, vignette, cell borders or grid lines.\nConstraints: exactly six badges. No text, letters, numbers, Roman numerals, captions, labels, logos, watermark, frames or UI.",
+  "keys": [
+    "prop_expedition_iv_fleet_tenders",
+    "prop_expedition_iv_long_patrol",
+    "prop_line_autonomous_freight",
+    "prop_line_mass_streams",
+    "prop_expedition_v_ramscoop",
+    "prop_expedition_v_underway_refit"
+  ],
+  "references": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png",
+      "sha256": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+    },
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/bulk_freighter-768.webp",
+      "sha256": "3437016a06e273be7454bce9d6c105b9ece05075ae9f971c41cbd8b5a6bdbac1"
+    }
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-831d7452-cf61-4612-95ef-38647c61197d.png",
+  "edits": [],
+  "verification": {
+    "width": 1536,
+    "height": 1024,
+    "hasAlpha": true,
+    "badges": [
+      {
+        "left": 145,
+        "top": 98,
+        "width": 352,
+        "height": 396
+      },
+      {
+        "left": 590,
+        "top": 98,
+        "width": 353,
+        "height": 396
+      },
+      {
+        "left": 1036,
+        "top": 98,
+        "width": 353,
+        "height": 396
+      },
+      {
+        "left": 145,
+        "top": 533,
+        "width": 352,
+        "height": 400
+      },
+      {
+        "left": 591,
+        "top": 533,
+        "width": 354,
+        "height": 400
+      },
+      {
+        "left": 1034,
+        "top": 533,
+        "width": 354,
+        "height": 400
+      }
+    ],
+    "sha256": "d113be7cbb23f171ad5400087f4c77dafef2d0484bc8adb04c8a290144a7cd6a",
+    "nativeBytesPreserved": true
+  }
+}

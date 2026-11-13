@@ -11,14 +11,15 @@ set (`buildGoodsIcons` in `client/scripts/build-art-derivatives.mjs`).
 |---|---|---|
 | `ores-2026-09-16/` | 16 ores and materials | in use |
 | `fuel-goods-2026-10-12/` | Uranium, Antimatter, Fusion Core | made Oct 12, wired Oct 24 |
-| `goods-2026-10-24/` | the 15 below | **to generate** |
+| `goods-2026-10-24/` | the 13 below (Armaments was drawn Nov 7 as Weapon Mounts; the Warp Core is gone) | Hull Sections made and wired Nov 8; **12 to generate** |
 
 Until a good's new master exists, it keeps its old icon: the square tiles and
 the older, smaller cut-outs.
 
 ## What to generate
 
-Fifteen images, one per good, with the prompt below. Replace `[subject]` with
+Thirteen prompts, one per good, with the frame below. Hull Sections is in the
+game (Nov 8); the other twelve are still to generate. Replace `[subject]` with
 the line from the table.
 
 - **Save as:** `client/art-src/goods-2026-10-24/<file>.png`, with a
@@ -41,13 +42,11 @@ Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource 
 | `electronics.png` | Semiconductors | A polished silicon wafer with a fine grid of iridescent chip dies, tilted toward the viewer, with one packaged black microchip with gold pins resting against its edge. |
 | `polymers.png` | Polymers | Coiled lengths of pale green-white polymer tubing beside a small heap of polymer pellets. |
 | `machinery.png` | Machinery | A compact machinery assembly: two interlocking brass gears on a steel gearbox with a short drive shaft. |
-| `armaments.png` | Armaments | Two dark-grey missiles with red bands lying on a small steel launch cradle. |
 | `composites.png` | Composites | A stack of three layered composite panels: carbon-black and pale steel laminate sheets with visible layer edges and a thin blue edge trim. |
 | `silicates.png` | Silicates | A cluster of pale translucent silicate crystals, whitish quartz-like prisms rising from a rough grey stone base. |
 | `rare_elements.png` | Rare Elements | Three sealed glass ampoules held upright in a small steel rack, holding fine metallic powders in silver, gold and violet. |
 | `hull_sections.png` | Hull Sections | A curved armoured hull section: a riveted grey steel plate segment with internal ribbing visible along its open edge. |
 | `precision_components.png` | Precision Components | A small arrangement of precision-machined parts: a polished bearing, a fine gear and a threaded steel fitting. |
-| `warp_core.png` | Warp Core | An elongated warp-drive core: a sleek steel cylinder wrapped in copper conduits with a crisp pale-blue emitter ring at one end; lighter and sleeker than a fusion core. |
 
 Keep each subject distinct at 32 px: Volatiles (tall, violet) and Deuterium
 (squat, cyan) are both canisters, so their shapes differ on purpose.

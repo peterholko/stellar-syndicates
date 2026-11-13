@@ -8,7 +8,7 @@
   "workers_dev": false,
   "preview_urls": false,
   // §front-door (docs/front-door.md): the front page and the game client.
-  // www, the old address and play.stellarsyndicates.com are wrangler.play.jsonc's.
+  // www and play.stellarsyndicates.com are wrangler.play.jsonc's.
   "routes": [
     {
       "pattern": "stellarsyndicates.com",

@@ -1,0 +1,76 @@
+{
+  "name": "computation-02",
+  "mode": "built-in image_gen",
+  "source_brief": "docs/research-emblem-sheets.md",
+  "prompt": "Use case: stylized-concept. Asset type: a sheet of six transparent research emblems for Stellar Syndicates, a premium dark sci-fi strategy game. They join an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw SIX new emblems. Do not copy any of Image 1's six motifs, and ignore Image 1's grey backdrop.\nField: Computation. Colour, all six badges: pale silver-white line work with one small white star glint; no other colour. Everything else stays in the family's navy, charcoal and silver.\nLayout: landscape 1536 x 1024 canvas, three columns and two rows, exactly Image 1's arrangement. Six identical hexagon badges, each about 450 px tall, centred in its own 512 x 512 cell, with clear empty space between badges and around the sheet. Badges never touch or overlap.\nBadge (every one the same): a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. Each motif sits inside its rim, centred, about 70% of the face's width. Nothing crosses a rim.\nMotifs, reading left to right, top row then bottom row:\n1. Top left: A small star sinking into a fine square grid of space bent down into a well, ripples spreading outward across the grid.\n2. Top centre: Three small sensor buoys at the corners of a triangle, linked by thin glowing lines into a net.\n3. Top right: Two small dishes far apart at the two ends of a long straight baseline beam, both aimed at one distant white star.\n4. Bottom left: A ship silhouette dissolving at its rear into jagged horizontal bands of static noise.\n5. Bottom centre: A round scanning lens held over a freighter silhouette; inside the lens the freighter's cargo crates show through like an x-ray.\n6. Bottom right: A data tablet showing two facing rows of tiny ship silhouettes, several of them struck through with short lines.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. Each motif is one clear subject that still reads at 48 px: a few large forms, restrained small detail. The six must look clearly different from each other at a glance: vary silhouette, scale and composition, never the same object twice.\nBackground: genuinely transparent PNG with real alpha everywhere outside the hexagons. No drop shadow, outer glow, grey backdrop, panel, vignette, cell borders or grid lines.\nConstraints: exactly six badges. No text, letters, numbers, Roman numerals, captions, labels, logos, watermark, frames or UI.",
+  "keys": [
+    "comp_gravimetric_survey",
+    "comp_watch_iii_picket_networks",
+    "comp_watch_iii_long_baselines",
+    "comp_shadow_iii_ecm_emitters",
+    "comp_shadow_iii_traffic_analysis",
+    "comp_watch_iv_battle_archives"
+  ],
+  "references": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png",
+      "sha256": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+    }
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-72cc89ba-f4b9-488c-ab31-1e078b682c84.png",
+  "edits": [
+    {
+      "prompt": "Use case: precise-object-edit. Correct ONLY the layout and badge scale of this Computation research emblem sheet. Preserve all SIX existing motifs and their reading order: gravity well grid, triangular sensor buoy network, two dishes on a baseline, warship dissolving into static, scanning lens revealing cargo, battle archive tablet. Preserve the existing navy-black hexagon faces, thin charcoal rims, upper-left bevels, pale silver-white line work, white glints, and genuine transparent alpha. The badges are too small (343 pixels tall). On the SAME 1536 x 1024 landscape canvas, ENLARGE each complete badge and motif to about 450 pixels tall. Arrange three columns and two rows centered at (256,256), (768,256), (1280,256), (256,768), (768,768), (1280,768). Each badge about 410 px wide, top row from y=31 to 481, bottom row from y=543 to 993. Exactly six complete hexagons, with clear zero-alpha space between and around them. No touching, cropping, text, labels, grid, UI, backdrop, outer glow or shadow. Redraw at the larger scale; do not add any new content or change the badge motifs. Output a native 1536 x 1024 RGBA transparent PNG.",
+      "referenced_image_paths": [
+        "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-18aa44a9-a8c0-49dc-8849-95184c5e29dd.png"
+      ],
+      "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-72cc89ba-f4b9-488c-ab31-1e078b682c84.png"
+    }
+  ],
+  "verification": {
+    "width": 1536,
+    "height": 1024,
+    "hasAlpha": true,
+    "badges": [
+      {
+        "left": 99,
+        "top": 36,
+        "width": 396,
+        "height": 450
+      },
+      {
+        "left": 569,
+        "top": 36,
+        "width": 397,
+        "height": 450
+      },
+      {
+        "left": 1040,
+        "top": 36,
+        "width": 397,
+        "height": 450
+      },
+      {
+        "left": 99,
+        "top": 532,
+        "width": 396,
+        "height": 450
+      },
+      {
+        "left": 569,
+        "top": 531,
+        "width": 397,
+        "height": 451
+      },
+      {
+        "left": 1039,
+        "top": 532,
+        "width": 398,
+        "height": 450
+      }
+    ],
+    "sha256": "5f3423df4e09afb2932284d1eb803bb5acd4f6fb502a70c8e554e99922a101e5",
+    "nativeBytesPreserved": true
+  }
+}

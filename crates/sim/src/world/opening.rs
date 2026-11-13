@@ -81,28 +81,43 @@ impl World {
     }
 
     /// §charter-v5 (Peter, Oct 16 2026): "Export your ore", after the den. The
-    /// first Ferrite Ore to leave for the Market Hub, in an owned Freighter
-    /// past the home's gravity well or booked on Authority freight, stamped
-    /// with its light home. Noted whenever it happens in the charter, so an
-    /// early export completes the step as it is reached.
+    /// first Alloys to leave for the Market Hub (§charter-v6; Ferrite Ore
+    /// until Nov 7 2026), in an owned Freighter past the home's gravity well
+    /// or booked on Authority freight, stamped with its light home. Noted
+    /// whenever it happens in the charter, so an early export completes the
+    /// step as it is reached.
     pub(super) fn note_founding_export(&mut self, owner: PlayerId, events: &[Event]) {
         let corp = &self.players[&owner];
         if corp.founding.export_dispatched_at.is_some() || !corp.founding.local_opening {
             return;
         }
-        let (cc, home, hub) = (corp.command_center, corp.home, self.hub);
+        let (cc, home, hub, departed) = (corp.command_center, corp.home, self.hub, corp.founding.export_departed_at);
         let booked = events.iter().find_map(|e| match &e.payload {
-            EventPayload::Trade(TradeEvent::FreightBooked { player, commodity: crate::Commodity::MetallicOre,
+            EventPayload::Trade(TradeEvent::FreightBooked { player, commodity: crate::Commodity::Alloys,
                 direction: ShipmentDir::Inbound, .. }) if *player == owner => Some(e.time),
             _ => None,
         });
+        // A loaded freighter under way for the Hub: past the well it has
+        // sailed (on its light home); inside it, it has departed.
+        let bound = |f: &crate::ship::Fleet| f.owner == owner && f.has_freighter()
+            && f.cargo_amount(crate::Commodity::Alloys) > 0
+            && matches!(f.order, FleetOrder::MoveTo { dest } if dest.distance(hub) < crate::ship::DOCK_RADIUS);
         let sailed = self.fleets.values()
-            .filter(|f| f.owner == owner && f.has_freighter() && f.cargo_amount(crate::Commodity::MetallicOre) > 0
-                && matches!(f.order, FleetOrder::MoveTo { dest } if dest.distance(hub) < crate::ship::DOCK_RADIUS)
-                && f.pos.distance(home) > crate::transit::HYPERLIMIT)
+            .filter(|f| bound(f) && f.pos.distance(home) > crate::transit::HYPERLIMIT)
             .map(|f| self.time + crate::transit::delay(f.pos, cc, self.config.c))
             .reduce(f64::min);
-        if let Some(at) = booked.or(sailed) {
+        // §export-follow (Peter, Nov 2 2026): the departure starts the follow's
+        // clock; EXPORT_FOLLOW_MAX_S later the step completes whatever the
+        // ship has done since.
+        let departed = match departed {
+            None if self.fleets.values().any(|f| bound(f)) => {
+                self.players.get_mut(&owner).unwrap().founding.export_departed_at = Some(self.time);
+                Some(self.time)
+            }
+            other => other,
+        };
+        let capped = departed.map(|at| at + crate::founding::EXPORT_FOLLOW_MAX_S).filter(|at| *at <= self.time);
+        if let Some(at) = [booked, sailed, capped].into_iter().flatten().reduce(f64::min) {
             self.players.get_mut(&owner).unwrap().founding.export_dispatched_at = Some(at);
         }
     }
@@ -185,29 +200,45 @@ impl World {
                     out.push(Event::new(at, EventPayload::Vendetta {
                         owner, beat: crate::founding::VendettaBeat::Kill, pos, stolen: BTreeMap::new(), wreck: None }));
                 }
+                // §privateer-contract: the kill completes the Authority's
+                // contract on him; its report pays the bounty.
+                self.complete_founding_privateer_contract(owner, pos, out);
+                // §den-contract: the Authority's contract on the den, on the
+                // same light as the kill.
+                self.post_founding_den_contract(owner, pos, out);
             }
+        }
+        // §privateer-contract: the Authority's contract on him, offered as
+        // the hunt begins (the Interceptor under its captain).
+        if founding.stage == S::DefeatPrivateer && founding.privateer_report_at.is_none() {
+            self.post_founding_privateer_contract(owner, true, out);
+            // §den-retreat (Peter, Nov 12 2026): he went home to his den, so
+            // the hunt is an assault on it: the den is known as the hunt
+            // begins, and the Authority's contract on it is posted beside the
+            // one on him (once).
+            if let Some(den) = founding.den
+                && !self.operations.values().any(|o| o.is_founder_den()
+                    && matches!(o.scope, crate::operation::OperationScope::Private { player } if player == owner))
+                && let Some(pos) = self.systems.iter().find(|s| s.id == den).map(|s| s.pos)
+            {
+                self.reveal_founding_den(owner, self.time, pos);
+                self.post_founding_den_contract(owner, cc, out);
+            }
+        }
+        // §den-retreat: the den falls in the battle that kills him, before his
+        // kill's report moves the step on; its fall is noted as it happens.
+        if founding.stage == S::DefeatPrivateer {
+            self.note_and_tell_founding_den_cleared(owner, events, out);
         }
         let arrived = self.players[&owner]
             .founding
             .privateer_report_at
             .is_some_and(|at| at <= self.time);
         if arrived && !founding.reward_granted {
-            let title = self.pirate_family(owner)
-                .map_or_else(|| "Rogue Privateer destroyed · bounty".to_string(), |p| format!("{} destroyed · bounty", p.nephew_name()));
-            let corp = self.players.get_mut(&owner).unwrap();
-            corp.credits += crate::founding::PRIVATEER_CREDIT_BOUNTY;
-            corp.founding.reward_granted = true;
-            // §founding R6: the bounty is a reward moment, not a silent credit.
-            out.push(Event::new(
-                self.time,
-                EventPayload::CharterStipend {
-                    owner,
-                    title,
-                    credits: crate::founding::PRIVATEER_CREDIT_BOUNTY,
-                    standing: 0.0,
-                    dossier: None,
-                },
-            ));
+            // §founding R6: the bounty is a reward moment, not a silent
+            // credit. §privateer-contract: the contract's report pays it, with
+            // its own line, on this same light.
+            self.players.get_mut(&owner).unwrap().founding.reward_granted = true;
         }
         self.advance_founding_raid(owner, out);
         // The home's own facts: it is the command's system, so its truth is
@@ -235,17 +266,26 @@ impl World {
         let trader_gone = founding.merchant_called && !self.merchants.values().any(|v| v.customer == owner);
         let f = &self.players[&owner].founding;
         let next = match f.stage {
-            S::BuildBioharvester => home_has(K::Bioharvester, true).then_some(S::BuildHabitat),
-            S::BuildHabitat => home_has(K::Habitat, false).then_some(S::BuildAgroplex),
+            // §habitat-first (Nov 8 2026): a home for the settlers (no power:
+            // the colony ship's reactor keeps its people alive), then light
+            // for the colony, then the food chain on it.
+            S::BuildHabitat => home_has(K::Habitat, false).then_some(S::PowerShipyard),
+            S::PowerShipyard => home_has(K::PowerPlant, false).then_some(S::BuildBioharvester),
+            S::BuildBioharvester => home_has(K::Bioharvester, true).then_some(S::BuildAgroplex),
+            // §charter-v6 (Peter, Nov 7 2026): the Command Center's reactor
+            // runs the colony, not the mine or the Smelter; the mine, then the
+            // Smelter: ore to Alloys begins before the raid breaks the plan.
             S::BuildAgroplex => home_has(K::Agroplex, true).then_some(S::BuildMine),
-            S::BuildMine => mine.then_some(S::PirateRaid),
+            S::BuildMine => mine.then_some(S::BuildSmelter),
+            S::BuildSmelter => home_has(K::Smelter, true).then_some(S::PirateRaid),
             // The report of what the raid took reaching command.
             S::PirateRaid => f.raid_report_at.is_some_and(|at| at <= self.time).then_some(S::BuildGunPlatform),
             // §gun-platform: a station over the home, at any level.
             S::BuildGunPlatform => home_id.and_then(|id| self.systems.iter().find(|s| s.id == id))
                 .is_some_and(|s| s.station_level() >= 1).then_some(S::SellOre),
-            S::SellOre => (f.ore_sold > 0 || trader_gone).then_some(S::PowerShipyard),
-            S::PowerShipyard => home_has(K::PowerPlant, false).then_some(S::BuildShipyard),
+            // The Alloys sale, then the Shipyard for the ship that takes the
+            // engines back.
+            S::SellOre => (f.alloys_sold > 0 || trader_gone).then_some(S::BuildShipyard),
             S::BuildShipyard => home_has(K::Shipyard, true).then_some(S::BuildInterceptor),
             // Peter (Oct 30 2026): its captain isn't optional. Done once a
             // captain commands it, or when none is free to.
@@ -259,7 +299,7 @@ impl World {
             S::DefeatPrivateer => f.reward_granted
                 .then_some(if f.den.is_some() { S::EliminateDen } else { S::PrepareExport }),
             // Retired opening steps hand on to their successors.
-            S::BuySemiconductors => Some(S::PowerShipyard),
+            S::BuySemiconductors => Some(S::BuildShipyard),
             S::BuildFreighter | S::BuildConvoy => Some(S::BuildInterceptor),
             S::CompleteExport | S::GrowBusiness | S::BuildSecondFreighter => Some(S::BuildShipyard),
             _ => None,
@@ -355,6 +395,61 @@ mod tests {
         w.players[&owner].founding.stage
     }
 
+    /// §stores-flows: a tally folds into a per-second rate that settles on
+    /// the true rate, then fades and leaves once the flow stops.
+    #[test]
+    fn flows_settle_on_the_rate_then_fade() {
+        let (mut w, _, home) = scene();
+        let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+        sys.flows.clear();
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            sys.tally_made(C::Alloys, 0.5 * DT);
+            sys.tally_used(C::Alloys, 0.2 * DT);
+            sys.fold_flows(DT);
+        }
+        let f = sys.flows[&C::Alloys];
+        assert!((f.made - 0.5).abs() < 0.01 && (f.used - 0.2).abs() < 0.01, "{f:?}");
+        for _ in 0..(600 * crate::config::TICK_HZ) {
+            sys.fold_flows(DT);
+        }
+        assert!(!sys.flows.contains_key(&C::Alloys), "gone once it fades");
+        // A trickle below the grain still builds up rather than being dropped.
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            sys.tally_made(C::Machinery, 0.001 * DT);
+            sys.fold_flows(DT);
+        }
+        assert!((sys.flows[&C::Machinery].made - 0.001).abs() < 1e-4);
+    }
+
+    /// §stores-flows (Peter, Nov 5 2026: the Stores panel's in, out and net):
+    /// a staffed mine's ore shows as made at its real rate, the settlers'
+    /// food as used, and the site report carries both at its grain.
+    #[test]
+    fn a_home_reports_what_its_mine_makes_and_its_settlers_eat() {
+        let (mut w, owner, home) = scene();
+        let land = landing(&w, home);
+        // §charter-v6: the Solar Array runs the mine; the Command Center's
+        // reactor runs the colony.
+        place(&mut w, home, land, K::PowerPlant);
+        place(&mut w, home, land, K::MiningComplex);
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        let before = stock(&w, home, C::MetallicOre);
+        for _ in 0..(60 * crate::config::TICK_HZ) {
+            w.step(&[]);
+        }
+        let grew = (stock(&w, home, C::MetallicOre) - before) / 60.0;
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        let ore = sys.flows.get(&C::MetallicOre).copied().unwrap_or_default();
+        assert!(grew > 0.0 && (ore.made - grew).abs() < 0.03 * grew.max(0.01), "made {:.4}/s vs grew {grew:.4}/s", ore.made);
+        assert!(sys.flows.get(&C::Provisions).is_some_and(|f| f.used > 0.0), "the settlers eat");
+        let cc = w.players[&owner].command_center;
+        let report = w.information.site(home, cc, w.config.c, w.time).expect("its report");
+        let reported = report.system.flows.get(&C::MetallicOre).copied().unwrap_or_default();
+        assert!((reported.made - ore.made).abs() <= crate::production::FLOW_QUANTUM, "at the report's grain");
+    }
+
     fn stock(w: &World, home: EntityId, c: C) -> f64 {
         w.systems.iter().find(|s| s.id == home).unwrap().stockpile.get(&c).copied().unwrap_or(0.0)
     }
@@ -378,9 +473,9 @@ mod tests {
         let (mut w, owner, home) = scene();
         let land = landing(&w, home);
         stocked(&mut w, owner, home);
-        // §charter-gates: step 7 has opened all five. (Step 4's mine takes the
+        // §charter-gates: step 6 has opened all five. (Step 5's mine takes the
         // privateer's flight instead: `founding_raid`.)
-        w.players.get_mut(&owner).unwrap().founding.stage = S::PowerShipyard;
+        w.players.get_mut(&owner).unwrap().founding.stage = S::BuildSmelter;
         for kind in crate::founding::OPENING_BUILDS {
             order(&mut w, owner, home, land, kind);
             assert_eq!(required(&w, kind), ten, "{kind:?} I takes ten seconds");
@@ -401,7 +496,7 @@ mod tests {
         let (mut w, owner, home) = scene();
         let f = w.players[&owner].founding.clone();
         assert!(f.local_opening);
-        assert_eq!(f.stage, S::BuildBioharvester);
+        assert_eq!(f.stage, S::BuildHabitat, "§habitat-first: the settlers' home first");
         assert!(!w.fleets.values().any(|g| g.owner == owner), "§charter-v4: no starting ships");
         let captain = w.players[&owner].captains.values().next().unwrap();
         assert_eq!((captain.assigned_fleet, captain.stationed_system), (None, Some(home)),
@@ -444,15 +539,22 @@ mod tests {
     fn the_landing_steps_follow_the_homes_own_buildings() {
         let (mut w, owner, home) = scene();
         let land = landing(&w, home);
-        place(&mut w, home, land, K::Bioharvester);
-        w.advance_founding_programs(&[]);
-        assert_eq!(stage(&w, owner), S::BuildHabitat);
+        // §habitat-first (Nov 8 2026): the settlers' home first (it draws no
+        // power), then the Solar Array, then the food chain on its power.
         let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
         s.bodies.iter_mut().find(|b| b.id == land).unwrap().structures.insert(K::Habitat, 1);
+        w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w, owner), S::PowerShipyard);
+        place(&mut w, home, land, K::PowerPlant);
+        w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w, owner), S::BuildBioharvester);
+        place(&mut w, home, land, K::Bioharvester);
         w.advance_founding_programs(&[]);
         assert_eq!(stage(&w, owner), S::BuildAgroplex);
         place(&mut w, home, land, K::Agroplex);
         w.advance_founding_programs(&[]);
+        // §charter-v6 (Peter, Nov 7 2026): the Command Center's reactor runs
+        // the colony, not the mine.
         assert_eq!(stage(&w, owner), S::BuildMine);
         // The landing world holds its own basic ore beside its Biomass.
         place(&mut w, home, land, K::MiningComplex);
@@ -462,13 +564,20 @@ mod tests {
             }
             w.step(&[]);
         }
-        assert_eq!(stage(&w, owner), S::PirateRaid, "the mine report hands on to the raid");
+        assert_eq!(stage(&w, owner), S::BuildSmelter, "the mine report hands on to the Smelter");
         assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().bodies.iter()
-            .find(|b| b.id == land).unwrap().grid.power, 1.0, "the reactor runs the mine");
+            .find(|b| b.id == land).unwrap().grid.power, 1.0, "the Solar Array runs the mine");
+        // §sell-alloys (Nov 11 2026): the sale is Alloys, so the Smelter
+        // keeps no ore back for it.
+        let reserve = &w.systems.iter().find(|s| s.id == home).unwrap().industry.refining_reserve;
+        assert!(reserve.get(&C::MetallicOre).is_none_or(|n| *n == 0), "no ore floor");
+        place(&mut w, home, land, K::Smelter);
+        w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w, owner), S::PirateRaid, "the Smelter hands on to the raid");
     }
 
     #[test]
-    fn after_the_raid_an_ore_sale_the_solar_array_and_the_shipyard_lead_to_the_interceptor() {
+    fn after_the_raid_an_alloy_sale_and_the_shipyard_lead_to_the_interceptor() {
         let (mut w, owner, home) = scene();
         let land = landing(&w, home);
         w.players.get_mut(&owner).unwrap().founding.set_stage(S::PirateRaid, w.time);
@@ -482,23 +591,20 @@ mod tests {
         assert_eq!(stage(&w, owner), S::BuildGunPlatform, "no station yet");
         place(&mut w, home, land, K::OrbitalDefense);
         w.advance_founding_programs(&[]);
-        assert_eq!(stage(&w, owner), S::SellOre, "the Gun Platform hands on to the ore sale");
+        assert_eq!(stage(&w, owner), S::SellOre, "the Laser Battery hands on to the sale");
         w.step(&[]);
-        assert_eq!(stage(&w, owner), S::SellOre, "the trader is in orbit, waiting for ore");
-        w.players.get_mut(&owner).unwrap().founding.ore_sold = 12;
-        w.advance_founding_programs(&[]);
-        assert_eq!(stage(&w, owner), S::PowerShipyard);
-        let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
-        s.bodies.iter_mut().find(|b| b.id == land).unwrap().structures.insert(K::PowerPlant, 1);
-        w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w, owner), S::SellOre, "the trader is in orbit, waiting for Alloys");
+        w.players.get_mut(&owner).unwrap().founding.alloys_sold = 3;
+        let notices = w.advance_founding_programs(&[]);
+        // §charter-v6 (Nov 7 2026): the Smelter and the Solar Array stood
+        // before the raid; the sale hands on to the Shipyard, the ship that
+        // gets the engines back. The sale pays nothing.
         assert_eq!(stage(&w, owner), S::BuildShipyard);
-        let before = w.players[&owner].credits;
+        assert!(!notices.iter().any(|e| matches!(&e.payload, EventPayload::CharterStipend { .. })));
         place(&mut w, home, land, K::Shipyard);
         let notices = w.advance_founding_programs(&[]);
         assert_eq!(stage(&w, owner), S::BuildInterceptor);
-        assert!(notices.iter().any(|e| matches!(&e.payload,
-            EventPayload::CharterStipend { title, .. } if title == "Shipyard staffed")));
-        assert_eq!(w.players[&owner].credits, before + 400.0);
+        assert!(!notices.iter().any(|e| matches!(&e.payload, EventPayload::CharterStipend { .. })), "the Shipyard pays nothing");
         let at_home = w.players[&owner].home;
         let interceptor = add_ship(&mut w, owner, ShipKind::Raider, at_home);
         w.advance_founding_programs(&[]);
@@ -528,7 +634,8 @@ mod tests {
         f.set_stage(S::SellOre, 0.0);
         f.merchant_called = true;
         w.advance_founding_programs(&[]);
-        assert_eq!(stage(&w, owner), S::PowerShipyard);
+        // §charter-v6: on to the Shipyard.
+        assert_eq!(stage(&w, owner), S::BuildShipyard);
     }
 
     #[test]
@@ -580,6 +687,26 @@ mod tests {
         };
         w.advance_founding_programs(&[]);
         assert_eq!(stage(&w, owner), S::DefeatPrivateer, "an Interceptor launched");
+        // §privateer-contract: the hunt begins with the Authority's contract
+        // on him, offered at the colony: news at once, by his name.
+        w.advance_founding_programs(&[]);
+        let contract = w.founding_privateer_contract(owner).expect("the Authority's contract on him");
+        let mut delivered = Vec::new();
+        w.deliver_operation_reports(&mut delivered);
+        {
+            use crate::operation::{OperationIssuer, OperationKind, OperationState};
+            let o = &w.operations[&contract];
+            let lurk = w.players[&owner].founding.raid.as_ref().unwrap().lurk;
+            assert_eq!((o.issuer, o.state), (OperationIssuer::Authority, OperationState::Offered), "offered, for the founder to take");
+            assert!(matches!(o.kind, OperationKind::PrivateerPatrol { pos } if pos == lurk), "at his last known position");
+            assert_eq!(o.known[&owner].state, OperationState::Offered, "news at once");
+            let nephew = w.pirate_family(owner).unwrap().nephew_name();
+            assert_eq!(o.briefing.as_ref().unwrap().title, format!("Eliminate {nephew}"));
+            assert_eq!(o.reward.credits, crate::founding::PRIVATEER_CREDIT_BOUNTY);
+            assert_eq!(o.expires_at, f64::MAX, "it never lapses");
+        }
+        w.advance_founding_programs(&[]);
+        assert_eq!(w.operations.values().filter(|o| o.is_founder_privateer()).count(), 1, "one contract");
         let before = w.players[&owner].credits;
         let at = w.time;
         let pos = w.fleets[&privateer].pos;
@@ -594,13 +721,30 @@ mod tests {
         let report = w.players[&owner].founding.privateer_report_at.unwrap();
         assert!(report > at, "the fight's report travels home");
         assert_eq!(w.players[&owner].captains[&captain].level, 2, "the kill promotes the Interceptor's captain");
-        // The privateer's log names its den, arriving with the kill report.
+        // The privateer's log names its den, arriving with the kill report,
+        // and §den-contract the Authority's contract on it rides along.
         let den = w.players[&owner].founding.den.expect("the den rose with the privateer");
         let snap = w.players[&owner].intel[&den];
         assert_eq!((snap.enclave_tier, snap.observed_at, snap.pos), (1, at, pos));
+        assert!(w.operations.values().any(|o| o.is_founder_den()
+            && matches!(o.kind, crate::operation::OperationKind::PirateBounty { system, .. } if system == den)));
+        // The kill claims the contract, taken on or not; its report pays.
+        assert_eq!(w.operations[&contract].state, crate::operation::OperationState::Completed);
+        assert_eq!(w.operations[&contract].winner, Some(owner));
+        let mut paid = Vec::new();
+        w.deliver_operation_reports(&mut paid);
+        assert_eq!(w.players[&owner].credits, before, "nothing before its report");
         w.time = report;
-        w.advance_founding_programs(&[]);
-        assert!(w.players[&owner].credits >= before + crate::founding::PRIVATEER_CREDIT_BOUNTY);
+        w.deliver_operation_reports(&mut paid);
+        paid.extend(w.advance_founding_programs(&[]));
+        let nephew = w.pirate_family(owner).unwrap().nephew_name();
+        let moments: Vec<_> = paid.iter().filter_map(|e| match &e.payload {
+            EventPayload::CharterStipend { owner: o, title, credits, .. } if *o == owner => Some((title.clone(), *credits)),
+            _ => None,
+        }).collect();
+        assert_eq!(moments, vec![(format!("{nephew} destroyed · contract"), crate::founding::PRIVATEER_CREDIT_BOUNTY)],
+            "one reward moment: the contract's");
+        assert!((w.players[&owner].credits - before - crate::founding::PRIVATEER_CREDIT_BOUNTY).abs() < 1e-6, "paid once");
         w.advance_founding_programs(&[]);
         assert_eq!(stage(&w, owner), S::EliminateDen, "then its den");
         assert_eq!(w.players[&owner].founding.survey_candidates, vec![den], "whose belt is the survey's");
@@ -612,16 +756,26 @@ mod tests {
         assert_eq!(stage(&w, owner), S::EliminateDen);
         w.time = w.players[&owner].founding.den_report_at.unwrap();
         let notices = w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w, owner), S::RepairInterceptor, "then the den's aftermath (§stash)");
+        // §den-contract: the den's contract pays for it, not a stipend
+        // (`founding_den` tests).
+        assert!(!notices.iter().any(|e| matches!(&e.payload, EventPayload::CharterStipend { .. })));
+        // No hull hurt, a freighter at hand and nothing in the den: the three
+        // steps hand straight on, each stamped.
+        for _ in 0..4 {
+            w.advance_founding_programs(&[]);
+        }
         assert_eq!(stage(&w, owner), S::PrepareExport, "then the first ore to the Market Hub");
-        assert!(notices.iter().any(|e| matches!(&e.payload,
-            EventPayload::CharterStipend { title, .. } if title == "Privateer den eliminated")));
+        let f = &w.players[&owner].founding;
+        assert!([S::RepairInterceptor, S::BuildTinyFreighter, S::HaulLoot].iter().all(|s| f.milestones.contains_key(s)));
     }
 
-    /// §charter-v5: "Export your ore", after the den: the first Ferrite Ore to
+    /// §charter-v5: the first export, after the den: the first cargo to
     /// leave for the Market Hub, by Freighter past the gravity well or booked
     /// on Authority freight; an early export completes it as it is reached.
+    /// §charter-v6 (Nov 7 2026): the cargo is the Smelter's Alloys.
     #[test]
-    fn the_first_ore_export_after_the_den_hands_on_to_research() {
+    fn the_first_alloys_export_after_the_den_hands_on_to_research() {
         let (mut w, owner, _) = scene();
         let at_home = w.players[&owner].home;
         w.players.get_mut(&owner).unwrap().founding.set_stage(S::PrepareExport, w.time);
@@ -629,10 +783,11 @@ mod tests {
         assert_eq!(stage(&w, owner), S::PrepareExport, "nothing has left yet");
         let freight = add_ship(&mut w, owner, ShipKind::TinyFreighter, at_home);
         let f = w.fleets.get_mut(&freight).unwrap();
-        f.add_cargo(C::MetallicOre, 20);
+        f.add_cargo(C::Alloys, 20);
         f.order = FleetOrder::MoveTo { dest: w.hub };
         w.advance_founding_programs(&[]);
         assert!(w.players[&owner].founding.export_dispatched_at.is_none(), "still inside the gravity well");
+        assert_eq!(w.players[&owner].founding.export_departed_at, Some(w.time), "but it has departed: the follow runs");
         let out = (w.hub - at_home).normalized();
         w.fleets.get_mut(&freight).unwrap().pos = at_home + out * 1_500.0;
         w.advance_founding_programs(&[]);
@@ -647,9 +802,9 @@ mod tests {
         // Authority freight counts too, booked before the step.
         let (mut w, owner, home) = scene();
         w.players.get_mut(&owner).unwrap().founding.set_stage(S::BuildInterceptor, w.time);
-        w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.insert(C::MetallicOre, 100.0);
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.insert(C::Alloys, 100.0);
         let mut events = Vec::new();
-        w.apply_now(&Command::BookFreightIn { player_id: owner, system: home, commodity: C::MetallicOre,
+        w.apply_now(&Command::BookFreightIn { player_id: owner, system: home, commodity: C::Alloys,
             units: 50, sell_on_arrival: true }, &mut events);
         w.advance_founding_programs(&events);
         assert!(w.players[&owner].founding.export_dispatched_at.is_some(), "booked on Authority freight: {events:?}");
@@ -658,41 +813,84 @@ mod tests {
         assert_eq!(stage(&w, owner), S::FirstResearch, "an early export completes the step as it is reached");
     }
 
+    /// §export-follow (Peter, Nov 2 2026): the first shipment is followed out
+    /// of the well for EXPORT_FOLLOW_MAX_S at most. A freighter that leaves the
+    /// dock but never clears the hyperlimit still completes the step then.
+    #[test]
+    fn the_export_follow_ends_at_the_hyperlimit_or_ninety_seconds_after_departure() {
+        let (mut w, owner, _) = scene();
+        let at_home = w.players[&owner].home;
+        w.players.get_mut(&owner).unwrap().founding.set_stage(S::PrepareExport, w.time);
+        let freight = add_ship(&mut w, owner, ShipKind::TinyFreighter, at_home);
+        w.advance_founding_programs(&[]);
+        assert!(w.players[&owner].founding.export_departed_at.is_none(), "an empty freighter at its dock has not departed");
+        let f = w.fleets.get_mut(&freight).unwrap();
+        f.add_cargo(C::Alloys, 20);
+        f.order = FleetOrder::MoveTo { dest: w.hub };
+        w.advance_founding_programs(&[]);
+        let departed = w.players[&owner].founding.export_departed_at.expect("loaded and under way for the Hub: departed");
+        assert_eq!(departed, w.time);
+        assert!(w.players[&owner].founding.export_dispatched_at.is_none(), "still inside the well");
+        w.time = departed + crate::founding::EXPORT_FOLLOW_MAX_S - 1.0;
+        w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w, owner), S::PrepareExport, "the follow still runs");
+        w.time = departed + crate::founding::EXPORT_FOLLOW_MAX_S;
+        w.advance_founding_programs(&[]);
+        assert_eq!(w.players[&owner].founding.export_dispatched_at, Some(w.time), "the cap completes it, no light delay");
+        w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w, owner), S::FirstResearch);
+    }
+
     #[test]
     fn charter_stipends_pay_once_when_a_milestone_is_first_reached() {
         let (mut w, owner, _home) = scene();
         let before = w.players[&owner].credits;
-        w.players.get_mut(&owner).unwrap().founding.set_stage(S::PirateRaid, w.time);
+        // §charter-v6: the mine's step hands on to the Smelter's.
+        w.players.get_mut(&owner).unwrap().founding.set_stage(S::BuildSmelter, w.time);
         let notices = w.advance_founding_programs(&[]);
-        assert_eq!(w.players[&owner].credits, before + 300.0);
+        assert_eq!(w.players[&owner].credits, before + 2_000.0);
         assert!(notices.iter().any(|e| matches!(&e.payload,
-            EventPayload::CharterStipend { owner: o, credits, title, .. } if *o == owner && *credits == 300.0 && title == "Mine online")));
+            EventPayload::CharterStipend { owner: o, credits, title, .. } if *o == owner && *credits == 2_000.0 && title == "Mine online")));
         w.time += 1.0;
         assert!(w.advance_founding_programs(&[]).iter().all(|e| !matches!(e.payload, EventPayload::CharterStipend { .. })));
-        assert_eq!(w.players[&owner].credits, before + 300.0, "paid once");
+        assert_eq!(w.players[&owner].credits, before + 2_000.0, "paid once");
         // A milestone stamped in the past (an old save) never pays retroactively.
-        w.players.get_mut(&owner).unwrap().founding.milestones.insert(S::DefeatPrivateer, 0.0);
+        w.players.get_mut(&owner).unwrap().founding.milestones.insert(S::ExpandMining, 0.0);
         w.advance_founding_programs(&[]);
-        assert_eq!(w.players[&owner].credits, before + 300.0);
-        // Before the Interceptor, the stipends leave the founder short of
-        // buying back what the raid took (the Solar Array's, the Shipyard's
-        // and the Interceptor's 35 semiconductors and its 15 Armaments): the
-        // ore sale makes up the rest, inside the trader's cap.
-        let early: f64 = [S::BuildMine, S::PirateRaid, S::BuildInterceptor]
-            .into_iter().filter_map(crate::founding::charter_stipend).map(|(_, c)| c).sum();
+        assert_eq!(w.players[&owner].credits, before + 2_000.0);
+        // §three-stipends (Peter, Nov 6 2026): the mine, the Smelter and the
+        // second mine pay, 2,000 each; nothing else does.
+        let paying: Vec<_> = crate::founding::FoundingStage::STEPS.into_iter().chain([S::Complete])
+            .filter_map(|s| crate::founding::charter_stipend(s).map(|(title, c)| (s, title, c))).collect();
+        // §charter-v6 (Nov 7 2026): the mine's as its step hands on to the
+        // Smelter, the Smelter's as its hands on to the raid.
+        assert_eq!(paying, vec![(S::BuildSmelter, "Mine online", 2_000.0), (S::PirateRaid, "Smelter running", 2_000.0),
+            (S::SurveyCandidates, "Second mine running", 2_000.0)]);
+        // Before the Interceptor, the start and the mine's and the Smelter's
+        // stipends buy back what the raid took (the Solar Array's, the
+        // Shipyard's and the Interceptor's 35 semiconductors and its 15
+        // Armaments) at twice the Hub, with room for prices that drift; the
+        // colony smelts the Interceptor's Alloys. The Alloys sale is the
+        // lesson, inside the trader's cap.
+        let early: f64 = crate::founding::FoundingStage::STEPS.into_iter()
+            .take_while(|s| *s != S::DefeatPrivateer).filter_map(crate::founding::charter_stipend).map(|(_, c)| c).sum();
+        assert_eq!(early, 4_000.0, "the mine's and the Smelter's");
         let price = |c: C| crate::market::base_price(c) * (1.0 + crate::merchant::FOUNDING_MARKUP);
-        let short = 35.0 * price(C::Electronics) + crate::founding::KIT_ARMAMENTS * price(C::Armaments)
-            - (before + early);
-        let ore = short / (crate::market::base_price(C::MetallicOre) * crate::merchant::ORE_PRICE_SHARE);
-        assert!(short > 0.0, "the ore sale is needed");
-        assert!(ore <= crate::merchant::ORE_CAP as f64 * 0.8, "and fits the trader's cap: {ore:.0} ore");
+        let bill = 35.0 * price(C::Electronics) + 15.0 * price(C::Armaments);
+        assert!(crate::merchant::FOUNDING_STOCK.iter().all(|(c, _)| *c != C::Alloys), "the trader sells no Alloys");
+        assert!(before + early >= bill * 1.08, "the parts with prices 8% dearer: {bill:.0} of {:.0} Cr", before + early);
+        assert!(before + early <= bill + 2_500.0, "and not much more: {bill:.0} of {:.0} Cr", before + early);
     }
 
     /// §vendetta (Oct 29 2026): the kit and the trader's stock supply every
     /// charter build, the second Interceptor the uncle's fight needs too, and
-    /// the privateer's bounty pays for the last call's stock-up.
+    /// the privateer's bounty pays for the trader's goods for the builds after
+    /// the den. §den-stores (Nov 5 2026): with the den's stores, and
+    /// §den-contract the den's contract paying for the Tiny Freighter's parts
+    /// and fuel. §smelt-from-landing (Nov 6 2026): the colony smelts every
+    /// Alloy from the Interceptor on; the trader sells none.
     #[test]
-    fn the_kit_and_the_trader_supply_every_charter_build_and_the_bounty_pays_the_last_call() {
+    fn the_kit_and_the_trader_supply_every_charter_build_and_the_bounty_and_the_den_contract_pay_for_it() {
         use crate::build::{recipe_for, BuildKind as B};
         let need = |builds: &[B]| {
             let mut goods: BTreeMap<C, f64> = BTreeMap::new();
@@ -701,35 +899,107 @@ mod tests {
                     *goods.entry(c).or_default() += n;
                 }
             }
-            *goods.entry(C::Electronics).or_default() += crate::merchant::RESEARCH_RESERVE;
             goods
         };
         let up = |k: K| B::Upgrade { upgrade: k };
         let ship = |s: ShipKind| B::Ship { ship: s };
-        // After the den: the Academy, the Smelter, the expansion's Solar Array
-        // and mine, the probe, the barge and the second Interceptor (the
-        // client's `AHEAD`).
-        let ahead = [up(K::Academy), up(K::Smelter), up(K::PowerPlant), up(K::MiningComplex), ship(ShipKind::SurveyProbe),
-            ship(ShipKind::MiningBarge), ship(ShipKind::Raider), ship(ShipKind::Raider)];
+        // The Landfall crate's builds, then the trader's: the first
+        // Interceptor and the Tiny Freighter.
         let before = [up(K::Bioharvester), up(K::Habitat), up(K::Agroplex), up(K::MiningComplex), up(K::OrbitalDefense),
-            up(K::PowerPlant), up(K::Shipyard), ship(ShipKind::Raider), ship(ShipKind::TinyFreighter)];
+            up(K::PowerPlant), up(K::Shipyard), up(K::Smelter), ship(ShipKind::Raider), ship(ShipKind::TinyFreighter)];
+        // After the den: the Academy, the Small Freighter, the expansion's
+        // Solar Array and mine, the probe, the barge and the uncle's two
+        // Interceptors.
+        let ahead = [up(K::Academy), ship(ShipKind::SmallFreighter), up(K::PowerPlant), up(K::MiningComplex),
+            ship(ShipKind::SurveyProbe), ship(ShipKind::MiningBarge), ship(ShipKind::Raider), ship(ShipKind::Raider)];
+        // Once the Smelter runs it makes the Alloys of what comes after it,
+        // all but the barge's (the Reach crate's).
+        let smelted = need(&[ship(ShipKind::Raider), ship(ShipKind::TinyFreighter), up(K::Academy),
+            ship(ShipKind::SmallFreighter), up(K::PowerPlant), up(K::MiningComplex), ship(ShipKind::SurveyProbe),
+            ship(ShipKind::Raider), ship(ShipKind::Raider)])[&C::Alloys];
         let kit = crate::founding::charter_supplies();
+        let den: BTreeMap<C, u32> = crate::founding::DEN_STORES.into_iter().collect();
         let trader: BTreeMap<C, u32> = crate::merchant::FOUNDING_STOCK.into_iter().collect();
-        for (c, n) in need(&[&before[..], &ahead[..]].concat()) {
-            // The raid takes the kit's semiconductors and Armaments; the trader sells them back.
-            let kept = if crate::founding::RAID_TAKES.contains(&c) { 0.0 } else { kit.get(&c).copied().unwrap_or(0.0) };
+        assert!(!trader.contains_key(&C::Alloys) && !den.contains_key(&C::Alloys), "Alloys are smelted");
+        let mut all = need(&[&before[..], &ahead[..]].concat());
+        *all.entry(C::Electronics).or_default() += crate::merchant::RESEARCH_RESERVE;
+        for (c, n) in all {
+            // §shipbuilding-overhaul: the engines and the kit parts are their
+            // own story below.
+            if c.is_part() { continue; }
+            // The raid takes the kit's semiconductors and Armaments; the
+            // trader sells them back, and §stash the den's stash returns them.
+            // §hull-ladder: the Small Freighter's plating and precision parts
+            // are the trader's too (a Hub import is an hour away).
+            let n = if c == C::Alloys { n - smelted } else { n };
+            let kept = kit.get(&c).copied().unwrap_or(0.0) + den.get(&c).copied().unwrap_or(0) as f64;
             let sold = trader.get(&c).copied().unwrap_or(0) as f64;
-            assert!(kept + sold >= n, "{c:?}: the charter needs {n}, the kit keeps {kept} and the trader sells {sold}");
+            assert!(kept + sold >= n, "{c:?}: the charter needs {n}, the kit and the den keep {kept} and the trader sells {sold}");
         }
-        assert_eq!(kit[&C::WarpCore], 5.0, "the Tiny Freighter, three Interceptors and the barge");
-        // The last call buys what the raid took for the builds ahead, and the
-        // Interceptor's tank (30 Deuterium) besides.
+        // §reactors-drives + §hull-ladder (Nov 7 2026): the raid takes the
+        // kit's six Fission Reactors and seven Zephyr Drives and the den
+        // returns them; the trader sells three of each (the Interceptor's
+        // featured at half, the Tiny Freighter's pair at its usual price).
+        // The Small Freighter's four of each come from the kit, so its step
+        // waits on no Hub import (the charter harness, Nov 6 2026); what the
+        // uncle's two Interceptors still lack is the first engines a player
+        // buys at the Hub.
         let price = |c: C| crate::market::base_price(c) * (1.0 + crate::merchant::FOUNDING_MARKUP);
-        let ahead = need(&ahead);
-        let stock_up: f64 = crate::founding::RAID_TAKES.iter().map(|c| ahead.get(c).copied().unwrap_or(0.0) * price(*c)).sum::<f64>()
-            + 30.0 * price(C::Deuterium);
-        let paid = crate::founding::PRIVATEER_CREDIT_BOUNTY + crate::founding::charter_stipend(S::DefeatPrivateer).unwrap().1;
-        assert!(paid >= stock_up + 1_000.0, "the bounty buys the stock-up with room to spare: {paid} vs {stock_up:.0}");
+        let parts = |what: B, goods: &[C]| recipe_for(what).costs.iter()
+            .filter(|(c, _)| goods.contains(c)).map(|&(c, n)| n * price(c)).sum::<f64>();
+        let needed = need(&[&before[..], &ahead[..]].concat());
+        assert_eq!((kit[&C::FissionReactor], kit[&C::ZephyrDrive]), (6.0, 7.0), "the charter's engines");
+        assert!(!den.keys().any(|c| c.is_engine_part()), "the den's engines are the raid's take");
+        assert_eq!((trader[&C::FissionReactor], trader[&C::ZephyrDrive]), (4, 3), "the trader's four and three");
+        assert_eq!((needed[&C::FissionReactor], needed[&C::ZephyrDrive]), (12.0, 12.0), "every charter hull's engines");
+        // §hull-ladder: the charter's own hulls, through the barge, take no
+        // Hub part at all (a Hub import is a light round trip and a freight
+        // run — an hour in the harness); the uncle's two Interceptors
+        // (§vendetta) are the running colony's, the first parts a player buys
+        // at the Hub, for about two Interceptors' price.
+        let charter = need(&[&before[..], &ahead[..ahead.len() - 2]].concat());
+        let hub_bill = |goods: &BTreeMap<C, f64>| goods.iter()
+            .filter(|(c, _)| c.is_part())
+            .map(|(c, n)| (n - kit.get(c).copied().unwrap_or(0.0) - trader.get(c).copied().unwrap_or(0) as f64)
+                .max(0.0) * crate::market::base_price(*c))
+            .sum::<f64>();
+        assert_eq!(hub_bill(&charter), 0.0, "the kit and the trader fit every charter hull");
+        let vendetta_bill = hub_bill(&needed);
+        assert!(vendetta_bill < crate::founding::PRIVATEER_CREDIT_BOUNTY,
+            "the uncle's two Interceptors from the Hub cost less than the bounty did: {vendetta_bill:.0} Cr");
+        // The Small Freighter's kit beyond its engines, at the trader's twice.
+        let parts_bill = parts(ship(ShipKind::SmallFreighter),
+            &[C::HullSections, C::CargoBay, C::NavComputer, C::Composites, C::PrecisionComponents]);
+        assert!(parts_bill < 9_000.0, "the trader's bill for the Small Freighter's kit: {parts_bill:.0} Cr");
+        let engines_bill = price(C::FissionReactor);
+        // The trader sells what the builds after the den need of what the raid
+        // took, less what §stash the den's stash brings back, as each comes
+        // up (§den-contract: it stays for the charter); the Tiny Freighter's
+        // parts and its fuel (a store and a tank) and the Small Freighter's
+        // Polymers besides.
+        let mut ahead = need(&ahead);
+        *ahead.entry(C::Electronics).or_default() += crate::merchant::RESEARCH_RESERVE;
+        let stock_up: f64 = crate::founding::RAID_TAKES.iter().filter(|c| !c.is_engine_part())
+            .map(|c| (ahead.get(c).copied().unwrap_or(0.0) - kit.get(c).copied().unwrap_or(0.0)
+                - den.get(c).copied().unwrap_or(0) as f64).max(0.0) * price(*c))
+            .sum::<f64>()
+            // §shipbuilding-overhaul: the Tiny Freighter's pair of reactors
+            // and drives from the trader at its usual price.
+            + 2.0 * (price(C::FissionReactor) + price(C::ZephyrDrive));
+        // §reactors-drives: a Fission hull's tank holds Uranium alone.
+        let tank = ShipKind::TinyFreighter.hull_mass() * crate::fuel::FUEL_PER_HULL_MASS;
+        // The Small Freighter's Machinery is the den's.
+        // §shipbuilding-overhaul: the Hub's cores and kit parts for the later
+        // builds are bought from the same purse.
+        let cost = stock_up + parts(ship(ShipKind::TinyFreighter), &[C::Machinery, C::Polymers])
+            + tank * price(C::Uranium) + parts(ship(ShipKind::SmallFreighter), &[C::Polymers])
+            + engines_bill + parts_bill;
+        let stipend = |s: S| crate::founding::charter_stipend(s).map_or(0.0, |(_, c)| c);
+        let paid = crate::founding::PRIVATEER_CREDIT_BOUNTY + crate::founding::DEN_CONTRACT_CREDITS
+            + stipend(S::SurveyCandidates);
+        assert!(crate::founding::charter_stipend(S::RepairInterceptor).is_none(), "the den pays through its contract");
+        assert!(paid >= cost + 500.0, "the bounty, the den's contract and the second mine's stipend buy them with room to spare: {paid} vs {cost:.0} (engines {engines_bill:.0}, parts {parts_bill:.0}, stock-up {stock_up:.0})");
+        assert!(paid <= cost + 3_500.0, "and not much more: {paid} vs {cost:.0} (engines {engines_bill:.0}, parts {parts_bill:.0}, stock-up {stock_up:.0})");
     }
 
     #[test]
@@ -749,7 +1019,7 @@ mod tests {
         b.structures.insert(K::MiningComplex, 1);
         b.assignments
             .insert(K::MiningComplex, crate::production::Assignment::crew(1));
-        s.modules.insert(M::ReconSuite, 1);
+        s.put_modules(M::ReconSuite, 1);
         let food: Vec<_> = s
             .bodies
             .iter()
@@ -948,7 +1218,7 @@ mod tests {
         body.structures.insert(K::MiningComplex, 1);
         body.assignments
             .insert(K::MiningComplex, crate::production::Assignment::crew(1));
-        s.modules.insert(M::ReconSuite, 1);
+        s.put_modules(M::ReconSuite, 1);
         w.apply_refit(
             owner,
             scout,
@@ -965,7 +1235,7 @@ mod tests {
         assert!(w.refit_queue.is_empty());
         assert!(!w.fleets[&scout].has_recon_on(ShipKind::Scout));
         let s = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!(s.modules[&M::ReconSuite], 1);
+        assert_eq!(s.module_stock(M::ReconSuite), 1);
         assert_eq!(
             s.bodies
                 .iter()

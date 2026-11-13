@@ -1,0 +1,1275 @@
+{
+  "mode": "built-in image_gen",
+  "generatedAt": "2026-11-08",
+  "brief": "docs/shipbuilding-art-prompts.md",
+  "assets": [
+    {
+      "key": "mass_driver",
+      "name": "Mass Driver",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/mass_driver.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "7fccf51aed7ffb67ed66510b25ef753de16894b8139fd0d1529880ae7fb1c780",
+      "transparent": true,
+      "bounds": {
+        "left": 95,
+        "top": 236,
+        "width": 1053,
+        "height": 827
+      },
+      "fill": 0.8397129186602871,
+      "clearShare": 0.6546699683818797,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A ship-mounted mass driver on a round turret base: two long parallel copper-lined rails forming an open barrel, a squat capacitor block at the breech and a small slug magazine clipped to its side. No lens, no glow.\nInput image 1 is the Pulse Laser reference. Keep its round turret base design, three-quarter camera and upper-left light. Replace the gun assembly with the subject above. Use the same grey steel finish throughout the new weapon. Preserve the base proportions; the Lance Array may use the explicitly requested wider armoured base. Do not retain the Pulse Laser barrel or red lens when the subject specifies different equipment.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/pulse_laser.png",
+              "sha256": "3d468b2fdc00496a97aac10ec5519a0fc8150819d6e191fa6f0309c35cfc31ac"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-6361a0e7-0cd4-4980-ae73-888751a7309c.png",
+          "sourceSha256": "7fccf51aed7ffb67ed66510b25ef753de16894b8139fd0d1529880ae7fb1c780"
+        }
+      ]
+    },
+    {
+      "key": "torpedo_rack",
+      "name": "Torpedo Rack",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/torpedo_rack.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "5e6a5efc590c08ae501fa8fb7ce62c57118ab86e0101f834be89eba0d5f26ecc",
+      "transparent": true,
+      "bounds": {
+        "left": 212,
+        "top": 97,
+        "width": 832,
+        "height": 1008
+      },
+      "fill": 0.8038277511961722,
+      "clearShare": 0.609962633130601,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A torpedo launcher on a round turret base: an armoured grey box of four square launch tubes, two by two, red-banded torpedo noses just visible in two of them, a hinged loading hatch at the back.\nInput image 1 is the Pulse Laser reference. Keep its round turret base design, three-quarter camera and upper-left light. Replace the gun assembly with the subject above. Use the same grey steel finish throughout the new weapon. Preserve the base proportions; the Lance Array may use the explicitly requested wider armoured base. Do not retain the Pulse Laser barrel or red lens when the subject specifies different equipment.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/pulse_laser.png",
+              "sha256": "3d468b2fdc00496a97aac10ec5519a0fc8150819d6e191fa6f0309c35cfc31ac"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8bc03abc-1829-493e-9114-205c86bf08b6.png",
+          "sourceSha256": "5e6a5efc590c08ae501fa8fb7ce62c57118ab86e0101f834be89eba0d5f26ecc"
+        }
+      ]
+    },
+    {
+      "key": "point_defense_screen",
+      "name": "Point-Defense Screen",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/point_defense_screen.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "947ffc4e01b161a0eeba2e33b9e4f8a66fa79cd177ec0c1dfc1f0146f6e783fd",
+      "transparent": true,
+      "bounds": {
+        "left": 115,
+        "top": 157,
+        "width": 1025,
+        "height": 938
+      },
+      "fill": 0.817384370015949,
+      "clearShare": 0.6246289385926757,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A point-defence turret on a round turret base: a low dome bristling with four short twin-barrel rapid-fire guns aimed in different directions, a flat tracking-radar paddle on top. Busy and compact.\nInput image 1 is the Pulse Laser reference. Keep its round turret base design, three-quarter camera and upper-left light. Replace the gun assembly with the subject above. Use the same grey steel finish throughout the new weapon. Preserve the base proportions; the Lance Array may use the explicitly requested wider armoured base. Do not retain the Pulse Laser barrel or red lens when the subject specifies different equipment.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/pulse_laser.png",
+              "sha256": "3d468b2fdc00496a97aac10ec5519a0fc8150819d6e191fa6f0309c35cfc31ac"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8e07c801-5d19-4009-b87c-daabed363e48.png",
+          "sourceSha256": "1a7bf63d62a01d3847ba82995c80b71673e8cc68751b4cc1c4f1249c016544e1"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. This is a fictional, stylized inventory icon for the sci-fi strategy game Stellar Syndicates. Input image 1 is the existing Point-Defense Screen turret artwork, shown alone without any scene, people or combat. Make a small visual-count correction: it should have four compact twin-barrel assemblies, eight barrels total. Keep both front-facing pairs exactly as drawn. On each of the two rear-facing assemblies, reduce the three visible barrels to two parallel short barrels. Preserve the rest of the existing fantasy game model unchanged: radar paddle, dome, round turret base, polished grey metal, camera, studio light, scale and transparent margins. This is only a decorative game icon, with no schematics, dimensions or functional construction information. Deliver one 1254 × 1254 RGBA image with the original transparent background, no text or extra objects.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8e07c801-5d19-4009-b87c-daabed363e48.png",
+              "sha256": "1a7bf63d62a01d3847ba82995c80b71673e8cc68751b4cc1c4f1249c016544e1"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-2bb2c429-c543-406a-ae49-35892342e7a0.png",
+          "sourceSha256": "947ffc4e01b161a0eeba2e33b9e4f8a66fa79cd177ec0c1dfc1f0146f6e783fd"
+        }
+      ]
+    },
+    {
+      "key": "lance_array",
+      "name": "Lance Array",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/lance_array.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "e1443d5ce1d6564e860df1c129b593b074901e0e23629545bf3c61197b909093",
+      "transparent": true,
+      "bounds": {
+        "left": 84,
+        "top": 179,
+        "width": 1082,
+        "height": 909
+      },
+      "fill": 0.8628389154704944,
+      "clearShare": 0.5915990679904052,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A heavy beam lance on a wide armoured turret base: three long slim barrels in a triangular bundle, each ending in a blue-white emitter lens, a ribbed coolant manifold behind. Longer and heavier than the Beam Battery.\nInput image 1 is the Pulse Laser reference. Keep its round turret base design, three-quarter camera and upper-left light. Replace the gun assembly with the subject above. Use the same grey steel finish throughout the new weapon. Preserve the base proportions; the Lance Array may use the explicitly requested wider armoured base. Do not retain the Pulse Laser barrel or red lens when the subject specifies different equipment.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/pulse_laser.png",
+              "sha256": "3d468b2fdc00496a97aac10ec5519a0fc8150819d6e191fa6f0309c35cfc31ac"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-cedc1910-7014-4d60-adea-d98f975a4624.png",
+          "sourceSha256": "e1443d5ce1d6564e860df1c129b593b074901e0e23629545bf3c61197b909093"
+        }
+      ]
+    },
+    {
+      "key": "prismatic_lance",
+      "name": "Prismatic Lance",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/prismatic_lance.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "39e56ccef2feabf1d8ab136024e641c56050bea100e68d653df651c833c78155",
+      "transparent": true,
+      "bounds": {
+        "left": 63,
+        "top": 303,
+        "width": 1126,
+        "height": 643
+      },
+      "fill": 0.89792663476874,
+      "clearShare": 0.7753968799045606,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A found beam weapon on a round turret base, its housing in pale pearl-white alloy with fine engraved lines: one long barrel ending in a large clear faceted crystal prism that throws a faint rainbow sheen along the barrel.\nInput image 1 is the Pulse Laser reference. Keep its round turret base design, three-quarter camera and upper-left light. Replace the gun assembly with the subject above. Use the same grey steel finish, except the requested pearl-white engraved housing. Preserve the base proportions; the Lance Array may use the explicitly requested wider armoured base. Do not retain the Pulse Laser barrel or red lens when the subject specifies different equipment.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/pulse_laser.png",
+              "sha256": "3d468b2fdc00496a97aac10ec5519a0fc8150819d6e191fa6f0309c35cfc31ac"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-aeaeb522-eeaf-4a4f-822e-c19016212eb2.png",
+          "sourceSha256": "6801fbc9a8659023b76a65a26b27318b0d7e37e48c08cbe552a83ce31dc842cf"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Input image 1 is the Prismatic Lance edit target. Correct ONLY the barrel: insert a long slim pearl-white alloy barrel between the existing gun housing and the large clear faceted prism, so the prism caps the far end of a long barrel instead of plugging directly into the housing. The long barrel should carry fine engraved lines and a faint rainbow sheen reflected from its existing clear prism. Keep the same crystal shape, the same pale pearl-white housing, the same grey steel round turret base, the same camera, lighting and material finish, and all other details. Adjust only the overall scale enough to fit the complete longer weapon, centred, at about 82–86% fill on the square canvas with clear outer margins. Deliver exactly one 1254 × 1254 RGBA PNG with real transparent alpha. No additional parts, beams, labels, backdrop, ground, glow haze or floating light.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-aeaeb522-eeaf-4a4f-822e-c19016212eb2.png",
+              "sha256": "6801fbc9a8659023b76a65a26b27318b0d7e37e48c08cbe552a83ce31dc842cf"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-c21fbda6-4df2-4d30-b753-96a0b481729f.png",
+          "sourceSha256": "39e56ccef2feabf1d8ab136024e641c56050bea100e68d653df651c833c78155"
+        }
+      ]
+    },
+    {
+      "key": "reflective_plating",
+      "name": "Reflective Plating",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/reflective_plating.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "ebcbf5194c948fba43a6125f7916764931f2bcc42579aecd826d670ee243ba72",
+      "transparent": true,
+      "bounds": {
+        "left": 78,
+        "top": 149,
+        "width": 1096,
+        "height": 1011
+      },
+      "fill": 0.8740031897926634,
+      "clearShare": 0.47662472114751137,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. Three curved armour plates stacked with small gaps, their faces polished to mirror chrome that catches a hint of red laser light along the edges, heavy bolts at the corners.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-04cfb79a-5d69-4e14-bf64-52661816d8cd.png",
+          "sourceSha256": "ebcbf5194c948fba43a6125f7916764931f2bcc42579aecd826d670ee243ba72"
+        }
+      ]
+    },
+    {
+      "key": "whipple_armor",
+      "name": "Whipple Armor",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/whipple_armor.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "02fa65a69c35005599ab2c0678c6879a60b0b2fd6a3b6ef9db4997ac96a1d26d",
+      "transparent": true,
+      "bounds": {
+        "left": 121,
+        "top": 128,
+        "width": 988,
+        "height": 1007
+      },
+      "fill": 0.803030303030303,
+      "clearShare": 0.4851740777200359,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. Spaced kinetic armour: two dull grey armour plates held a hand's width apart by short steel standoffs, the front plate pocked with small impact craters and one slug lodged in it.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-c3011536-8e56-4f27-97f5-95907f8abe15.png",
+          "sourceSha256": "02fa65a69c35005599ab2c0678c6879a60b0b2fd6a3b6ef9db4997ac96a1d26d"
+        }
+      ]
+    },
+    {
+      "key": "extended_tanks",
+      "name": "Extended Tanks",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/extended_tanks.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "397b2f60467df4eb5c41f8693ff22bc8978d687c0665672aba3b6481a172edfb",
+      "transparent": true,
+      "bounds": {
+        "left": 77,
+        "top": 230,
+        "width": 1098,
+        "height": 862
+      },
+      "fill": 0.8755980861244019,
+      "clearShare": 0.5646518064045135,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. Two long rounded fuel tanks lying side by side in a curved steel saddle, bare brushed steel with amber hazard stripes and a filler cap on each tank.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-647cc9f9-5bc7-4c68-b41f-0a7c132e8872.png",
+          "sourceSha256": "397b2f60467df4eb5c41f8693ff22bc8978d687c0665672aba3b6481a172edfb"
+        }
+      ]
+    },
+    {
+      "key": "recon_suite",
+      "name": "Recon Suite",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/recon_suite.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "862086900b3b31880fcaf65b85d4cfbd743b9d92159097bc04b5b47bce9b4ee8",
+      "transparent": true,
+      "bounds": {
+        "left": 106,
+        "top": 179,
+        "width": 1065,
+        "height": 898
+      },
+      "fill": 0.8492822966507177,
+      "clearShare": 0.7017175023974319,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A recon sensor pod: a slim streamlined grey pod with a dark glass sensor window at its nose, a small folding radar dish on top and a short whip antenna at the tail.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-471aa30e-3310-4e84-95cd-243cde62a66c.png",
+          "sourceSha256": "862086900b3b31880fcaf65b85d4cfbd743b9d92159097bc04b5b47bce9b4ee8"
+        }
+      ]
+    },
+    {
+      "key": "cargo_pods",
+      "name": "Cargo Pods",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/cargo_pods.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "325902607506d2d9a59efa76282cd6f705210d4a63fe998b5825626163dec575",
+      "transparent": true,
+      "bounds": {
+        "left": 155,
+        "top": 104,
+        "width": 934,
+        "height": 1092
+      },
+      "fill": 0.8708133971291866,
+      "clearShare": 0.44973978007219007,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. Three boxy modular cargo pods, orange with grey frames, stacked in a short steel rack with quick-release latches. Closed containers, not an open hold.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-a4e93aa7-1fb2-4f12-b7da-ef5f93233ef9.png",
+          "sourceSha256": "325902607506d2d9a59efa76282cd6f705210d4a63fe998b5825626163dec575"
+        }
+      ]
+    },
+    {
+      "key": "escort_datalink",
+      "name": "Escort Datalink",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/escort_datalink.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "75168aef9ef615cccb4e044aee6445683891f58e692734251a1a5a75abaeb1fc",
+      "transparent": true,
+      "bounds": {
+        "left": 105,
+        "top": 118,
+        "width": 1052,
+        "height": 1039
+      },
+      "fill": 0.8389154704944178,
+      "clearShare": 0.6792770312034981,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A datalink mast: a short armoured mast topped by a flat square phased-array panel, two blade antennas angled out from its sides, three small green link lights at its foot.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-cb88c425-c78b-4c20-ab4b-c6d2e6d17086.png",
+          "sourceSha256": "75168aef9ef615cccb4e044aee6445683891f58e692734251a1a5a75abaeb1fc"
+        }
+      ]
+    },
+    {
+      "key": "fuel_transfer_rig",
+      "name": "Fuel Transfer Rig",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/fuel_transfer_rig.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "2a7371aadda6a4319c09a3936cba2666facad3af8349dc217759978609a530a6",
+      "transparent": true,
+      "bounds": {
+        "left": 85,
+        "top": 195,
+        "width": 1088,
+        "height": 894
+      },
+      "fill": 0.8676236044657097,
+      "clearShare": 0.6867135215158383,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A refuelling boom: a folded telescoping steel boom ending in a funnel-shaped drogue coupling, a hose reel and a pump block at its base, yellow-and-black hazard bands.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-b2b55f04-c836-4704-bc4b-6a7763884cb7.png",
+          "sourceSha256": "2a7371aadda6a4319c09a3936cba2666facad3af8349dc217759978609a530a6"
+        }
+      ]
+    },
+    {
+      "key": "survey_drive",
+      "name": "Survey Booster",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/survey_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "fd9231a52d54bdc9199cc44999521ed7c310c34dd7a3e68940936fc73ebff0db",
+      "transparent": true,
+      "bounds": {
+        "left": 79,
+        "top": 304,
+        "width": 1090,
+        "height": 687
+      },
+      "fill": 0.8692185007974481,
+      "clearShare": 0.71109101592607,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A found strap-on booster in pale pearl-white alloy with fine engraved lines: a flat wedge-shaped sled carrying two small auxiliary thruster pods side by side, their nozzles lit pale cyan. No bell and no emitter ring.\nInput image 1 is the Prismatic Lance, a MATERIAL AND FINISH reference only. Match its pale pearl-white alloy and fine engraving so the found modules read as one family. Draw the subject specified above, preserving none of the weapon geometry or turret base.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-08/prismatic_lance.png",
+              "sha256": "39e56ccef2feabf1d8ab136024e641c56050bea100e68d653df651c833c78155"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-ea41f85a-67c2-44e2-a6d7-a85ab1d15d50.png",
+          "sourceSha256": "fd9231a52d54bdc9199cc44999521ed7c310c34dd7a3e68940936fc73ebff0db"
+        }
+      ]
+    },
+    {
+      "key": "nebula_spectrometer",
+      "name": "Nebula Spectrometer",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/nebula_spectrometer.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "8a291bdffffb907f21f9dd2a2cb9d2ca5d6232cf4ef6ffa4066ae955a2f8a23d",
+      "transparent": true,
+      "bounds": {
+        "left": 88,
+        "top": 269,
+        "width": 1074,
+        "height": 750
+      },
+      "fill": 0.8564593301435407,
+      "clearShare": 0.645840805435366,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A found field spectrometer in pale pearl-white alloy with fine engraved lines: a short telescope barrel with a large round lens on a compact instrument box, a strip of rainbow spectrum lines across its side panel.\nInput image 1 is the Prismatic Lance, a MATERIAL AND FINISH reference only. Match its pale pearl-white alloy and fine engraving so the found modules read as one family. Draw the subject specified above, preserving none of the weapon geometry or turret base.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-08/prismatic_lance.png",
+              "sha256": "39e56ccef2feabf1d8ab136024e641c56050bea100e68d653df651c833c78155"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-79489bf2-a907-4242-8123-4d0aa27b9373.png",
+          "sourceSha256": "8a291bdffffb907f21f9dd2a2cb9d2ca5d6232cf4ef6ffa4066ae955a2f8a23d"
+        }
+      ]
+    },
+    {
+      "key": "stasis_web",
+      "name": "Stasis Web",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/stasis_web.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "05f8997e2ac115f59d9cfb79b8dffc0aa96f09b7e700e4620c92ed7325b7de90",
+      "transparent": true,
+      "bounds": {
+        "left": 117,
+        "top": 143,
+        "width": 1018,
+        "height": 952
+      },
+      "fill": 0.8118022328548644,
+      "clearShare": 0.5535523962872237,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A stasis web projector: a concave emitter dish ringed by four short prongs, a taut web of fine cyan filaments strung between the prong tips across the dish face.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-be44bf1b-cfa2-4dee-ad13-6b6753c26079.png",
+          "sourceSha256": "05f8997e2ac115f59d9cfb79b8dffc0aa96f09b7e700e4620c92ed7325b7de90"
+        }
+      ]
+    },
+    {
+      "key": "warp_stabilizer",
+      "name": "Warp Stabilizer",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/warp_stabilizer.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "e7c8e7744074c3402276055bec697f8403fce4eefb4d11d30fe42e6d23d8d902",
+      "transparent": true,
+      "bounds": {
+        "left": 164,
+        "top": 116,
+        "width": 920,
+        "height": 1045
+      },
+      "fill": 0.8333333333333334,
+      "clearShare": 0.6542381762729282,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A warp stabilizer: three nested steel gimbal rings set at different angles around a small pale-green core sphere, on a squat mounting base. Reads as a gyroscope.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-3ee5c38b-c9f7-4af1-8916-3c801d54da06.png",
+          "sourceSha256": "e7c8e7744074c3402276055bec697f8403fce4eefb4d11d30fe42e6d23d8d902"
+        }
+      ]
+    },
+    {
+      "key": "interdiction_field",
+      "name": "Interdiction Field",
+      "group": "module",
+      "master": "client/art-src/goods-2026-11-08/interdiction_field.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "8bb32cd43b29445b6c65c8c1a8c42d48135f0bdaf4049b1e6dddbd2fa01bdf3d",
+      "transparent": true,
+      "bounds": {
+        "left": 119,
+        "top": 103,
+        "width": 1016,
+        "height": 1075
+      },
+      "fill": 0.8572567783094099,
+      "clearShare": 0.6221265793162041,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. An interdiction field generator: a heavy dark-steel anchor-shaped projector standing on its base, a ring of six coils glowing deep red around its foot and a stubby emitter spike on top.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-5611befe-04a2-4307-96a0-f1019089b5e2.png",
+          "sourceSha256": "8bb32cd43b29445b6c65c8c1a8c42d48135f0bdaf4049b1e6dddbd2fa01bdf3d"
+        }
+      ]
+    },
+    {
+      "key": "heavy_fission_reactor",
+      "name": "Heavy Fission Reactor",
+      "group": "heavy",
+      "base": "fission_reactor",
+      "master": "client/art-src/goods-2026-11-08/heavy_fission_reactor.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "fb6fc7b10649b2a7124475ec7564d346bab75eb8682064c5c213278534c022b5",
+      "transparent": true,
+      "bounds": {
+        "left": 90,
+        "top": 170,
+        "width": 1086,
+        "height": 990
+      },
+      "fill": 0.8660287081339713,
+      "clearShare": 0.5672571853004993,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a heavy industrial part: sit it in a low dark-steel transport cradle with heavy bolted feet, and fix two lifting lugs to the top of the object. The object and its cradle together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Fission Reactor master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested transport cradle and exactly two lifting lugs. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/fission_reactor.png",
+              "sha256": "cb5173c830e4fc448407846cb7e0dfea2f490f4307404fa9b2d910670c707068"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8ad20a16-73ab-42ef-b7ea-740bf02550df.png",
+          "sourceSha256": "c9cc52755d6e50c9cc72f9a4e80f68cff5a4554f5c865ce90de2490b26e5ca00"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Input image 1 is the completed Heavy Fission Reactor icon. Change ONLY its overall size on the transparent canvas: uniformly shrink the ENTIRE assembly, including the original part and all of its supporting structure, so the complete longest silhouette extent is 1040 pixels on a 1254 × 1254 canvas. Centre the entire assembly at (627,627), leaving generous fully transparent margins. Preserve every mechanical detail, coloured light, material, shape, camera, proportion and lighting exactly as shown. Do not crop, stretch, add, remove or redesign anything. Deliver exactly one sharp 1254 × 1254 RGBA PNG with genuine transparent background, transparent open gaps and clear corners. No shadow, haze, ground, scene, border or text.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8ad20a16-73ab-42ef-b7ea-740bf02550df.png",
+              "sha256": "c9cc52755d6e50c9cc72f9a4e80f68cff5a4554f5c865ce90de2490b26e5ca00"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8bbe24f0-3ace-45dd-86e9-d855fe55cb85.png",
+          "sourceSha256": "fb6fc7b10649b2a7124475ec7564d346bab75eb8682064c5c213278534c022b5"
+        }
+      ]
+    },
+    {
+      "key": "capital_fission_reactor",
+      "name": "Capital Fission Reactor",
+      "group": "capital",
+      "base": "fission_reactor",
+      "master": "client/art-src/goods-2026-11-08/capital_fission_reactor.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "bbc782a4c749e1912c33a71f5e06d586b54eb3a4ef69b0e02e9600e55c35f74c",
+      "transparent": true,
+      "bounds": {
+        "left": 98,
+        "top": 150,
+        "width": 1072,
+        "height": 944
+      },
+      "fill": 0.8548644338118022,
+      "clearShare": 0.5524191804725676,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a capital-ship part: mount it in an open steel gantry frame with a narrow catwalk and handrail running along its side, the handrail sized for a person so the object reads as enormous. The object and its gantry together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no people, scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Fission Reactor master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested open supporting gantry and narrow side catwalk with person-scale handrail. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/fission_reactor.png",
+              "sha256": "cb5173c830e4fc448407846cb7e0dfea2f490f4307404fa9b2d910670c707068"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-f88e4a8b-7980-4402-9067-f197a0a037f9.png",
+          "sourceSha256": "d83b15d07e9a9cccd07b780b6ce1dd0d6bde60baf16278b5a2450af73950cf74"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Input image 1 is the completed Capital Fission Reactor icon. Change ONLY its overall size on the transparent canvas: uniformly shrink the ENTIRE assembly, including the original part and all of its supporting structure, so the complete longest silhouette extent is 1040 pixels on a 1254 × 1254 canvas. Centre the entire assembly at (627,627), leaving generous fully transparent margins. Preserve every mechanical detail, coloured light, material, shape, camera, proportion and lighting exactly as shown. Do not crop, stretch, add, remove or redesign anything. Deliver exactly one sharp 1254 × 1254 RGBA PNG with genuine transparent background, transparent open gaps and clear corners. No shadow, haze, ground, scene, border or text.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-f88e4a8b-7980-4402-9067-f197a0a037f9.png",
+              "sha256": "d83b15d07e9a9cccd07b780b6ce1dd0d6bde60baf16278b5a2450af73950cf74"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-d340cafa-c015-4641-a374-fca8c45548db.png",
+          "sourceSha256": "c7a4549410ed0ae0cd38e6625f188692a76b45957734314eed071930cafb05d4"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Input image 1 is the final Capital Fission Reactor artwork. Correct ONLY its scale on the canvas. The current complete silhouette is 952 pixels wide or tall. Uniformly ENLARGE the ENTIRE assembly by a factor of 1.113 so its longest dimension becomes about 1060 pixels (84.5% of the 1254 square). Keep its centre at (627,627). Preserve all original geometry, supporting frame, mounting feet, small fittings, colours, material, emission, camera and lighting exactly. Do not crop or redraw the object. Deliver exactly one 1254 × 1254 RGBA PNG with clear outer corners, no background, ground, shadow, text or haze.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-d340cafa-c015-4641-a374-fca8c45548db.png",
+              "sha256": "c7a4549410ed0ae0cd38e6625f188692a76b45957734314eed071930cafb05d4"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-d25bfd1a-ec57-4ace-be8d-0b35610032ef.png",
+          "sourceSha256": "bbc782a4c749e1912c33a71f5e06d586b54eb3a4ef69b0e02e9600e55c35f74c"
+        }
+      ]
+    },
+    {
+      "key": "heavy_fusion_reactor",
+      "name": "Heavy Fusion Reactor",
+      "group": "heavy",
+      "base": "fusion_reactor",
+      "master": "client/art-src/goods-2026-11-08/heavy_fusion_reactor.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "8ab323d3112365779a606e74658fb73dba8cb5003950ba903f37b9cee429356c",
+      "transparent": true,
+      "bounds": {
+        "left": 83,
+        "top": 133,
+        "width": 1092,
+        "height": 954
+      },
+      "fill": 0.8708133971291866,
+      "clearShare": 0.47941578972805365,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a heavy industrial part: sit it in a low dark-steel transport cradle with heavy bolted feet, and fix two lifting lugs to the top of the object. The object and its cradle together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Fusion Reactor master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested transport cradle and exactly two lifting lugs. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/fusion_reactor.png",
+              "sha256": "ea29c67b50ce44c3c414f06b8cb228e64d390dbd7261760d282b04f2126a1c56"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-7881a32d-ef45-49e2-bb66-aa82a9196be8.png",
+          "sourceSha256": "880b8dd836e3c8ad331429c401627c5ff43e46d19b9d606a91b0ed495e3c0718"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Input image 1 is the completed Heavy Fusion Reactor icon. Change ONLY its overall size on the transparent canvas: uniformly shrink the ENTIRE assembly, including the original part and all of its supporting structure, so the complete longest silhouette extent is 1040 pixels on a 1254 × 1254 canvas. Centre the entire assembly at (627,627), leaving generous fully transparent margins. Preserve every mechanical detail, coloured light, material, shape, camera, proportion and lighting exactly as shown. Do not crop, stretch, add, remove or redesign anything. Deliver exactly one sharp 1254 × 1254 RGBA PNG with genuine transparent background, transparent open gaps and clear corners. No shadow, haze, ground, scene, border or text.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-7881a32d-ef45-49e2-bb66-aa82a9196be8.png",
+              "sha256": "880b8dd836e3c8ad331429c401627c5ff43e46d19b9d606a91b0ed495e3c0718"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-703c09aa-c8af-4733-83ab-36dd58d1c902.png",
+          "sourceSha256": "96467d6a54b4a21ec743de1816e12d98272e69e4d9d59a55a379f1afd514d91f"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Input image 1 is the final Heavy Fusion Reactor artwork. Correct ONLY its scale on the canvas. The current complete silhouette is 930 pixels wide or tall. Uniformly ENLARGE the ENTIRE assembly by a factor of 1.140 so its longest dimension becomes about 1060 pixels (84.5% of the 1254 square). Keep its centre at (627,627). Preserve all original geometry, supporting frame, mounting feet, small fittings, colours, material, emission, camera and lighting exactly. Do not crop or redraw the object. Deliver exactly one 1254 × 1254 RGBA PNG with clear outer corners, no background, ground, shadow, text or haze.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-703c09aa-c8af-4733-83ab-36dd58d1c902.png",
+              "sha256": "96467d6a54b4a21ec743de1816e12d98272e69e4d9d59a55a379f1afd514d91f"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-cc0551d6-b643-44ed-9233-86b8f3e2c29b.png",
+          "sourceSha256": "8ab323d3112365779a606e74658fb73dba8cb5003950ba903f37b9cee429356c"
+        }
+      ]
+    },
+    {
+      "key": "capital_fusion_reactor",
+      "name": "Capital Fusion Reactor",
+      "group": "capital",
+      "base": "fusion_reactor",
+      "master": "client/art-src/goods-2026-11-08/capital_fusion_reactor.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "a4015e49c3ce3000ea56b49422f6a0c3cd89325c473944c56902de0d07c9ca85",
+      "transparent": true,
+      "bounds": {
+        "left": 126,
+        "top": 231,
+        "width": 1003,
+        "height": 796
+      },
+      "fill": 0.7998405103668261,
+      "clearShare": 0.5972040984002707,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a capital-ship part: mount it in an open steel gantry frame with a narrow catwalk and handrail running along its side, the handrail sized for a person so the object reads as enormous. The object and its gantry together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no people, scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Fusion Reactor master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested open supporting gantry and narrow side catwalk with person-scale handrail. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/fusion_reactor.png",
+              "sha256": "ea29c67b50ce44c3c414f06b8cb228e64d390dbd7261760d282b04f2126a1c56"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-14e461fc-1ac8-4e8a-97ea-25265a4e0fdf.png",
+          "sourceSha256": "83a2512b9ac0164d040c2388d161a999cc205f230554fad7c8c9dbfdb3a6b3ef"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Input image 1 is the completed Capital Fusion Reactor icon. Change ONLY its overall size on the transparent canvas: uniformly shrink the ENTIRE assembly, including the original part and all of its supporting structure, so the complete longest silhouette extent is 1040 pixels on a 1254 × 1254 canvas. Centre the entire assembly at (627,627), leaving generous fully transparent margins. Preserve every mechanical detail, coloured light, material, shape, camera, proportion and lighting exactly as shown. Do not crop, stretch, add, remove or redesign anything. Deliver exactly one sharp 1254 × 1254 RGBA PNG with genuine transparent background, transparent open gaps and clear corners. No shadow, haze, ground, scene, border or text.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-14e461fc-1ac8-4e8a-97ea-25265a4e0fdf.png",
+              "sha256": "83a2512b9ac0164d040c2388d161a999cc205f230554fad7c8c9dbfdb3a6b3ef"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-a289dcca-e15b-47fa-8526-1dc53b2dd7ee.png",
+          "sourceSha256": "a4015e49c3ce3000ea56b49422f6a0c3cd89325c473944c56902de0d07c9ca85"
+        }
+      ]
+    },
+    {
+      "key": "heavy_advanced_fusion_reactor",
+      "name": "Heavy Advanced Fusion Reactor",
+      "group": "heavy",
+      "base": "advanced_fusion_reactor",
+      "master": "client/art-src/goods-2026-11-08/heavy_advanced_fusion_reactor.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "3549263a0dff6eb907fcf9b054720fdaeb683edb75ae86695b2b9a0a8f540b51",
+      "transparent": true,
+      "bounds": {
+        "left": 124,
+        "top": 237,
+        "width": 1007,
+        "height": 796
+      },
+      "fill": 0.803030303030303,
+      "clearShare": 0.5982730859336248,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a heavy industrial part: sit it in a low dark-steel transport cradle with heavy bolted feet, and fix two lifting lugs to the top of the object. The object and its cradle together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Advanced Fusion Reactor master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested transport cradle and exactly two lifting lugs. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/advanced_fusion_reactor.png",
+              "sha256": "e3c5926f7c9f045ce283829bd15a7aff3754e209522749d64881b8db9b47369d"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-739b8625-ae69-45fe-a01b-31df3b0894d9.png",
+          "sourceSha256": "6289619eaee263e2b0ee57d34dc23aeab681eed8a4a0ba56d4b50bc3840724af"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Input image 1 is the completed Heavy Advanced Fusion Reactor icon. Change ONLY its overall size on the transparent canvas: uniformly shrink the ENTIRE assembly, including the original part and all of its supporting structure, so the complete longest silhouette extent is 1040 pixels on a 1254 × 1254 canvas. Centre the entire assembly at (627,627), leaving generous fully transparent margins. Preserve every mechanical detail, coloured light, material, shape, camera, proportion and lighting exactly as shown. Do not crop, stretch, add, remove or redesign anything. Deliver exactly one sharp 1254 × 1254 RGBA PNG with genuine transparent background, transparent open gaps and clear corners. No shadow, haze, ground, scene, border or text.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-739b8625-ae69-45fe-a01b-31df3b0894d9.png",
+              "sha256": "6289619eaee263e2b0ee57d34dc23aeab681eed8a4a0ba56d4b50bc3840724af"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-995b3bc0-0d5f-45c7-aca0-46ffd0795067.png",
+          "sourceSha256": "3549263a0dff6eb907fcf9b054720fdaeb683edb75ae86695b2b9a0a8f540b51"
+        }
+      ]
+    },
+    {
+      "key": "capital_advanced_fusion_reactor",
+      "name": "Capital Advanced Fusion Reactor",
+      "group": "capital",
+      "base": "advanced_fusion_reactor",
+      "master": "client/art-src/goods-2026-11-08/capital_advanced_fusion_reactor.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "07398ab4ebb9a6a54c56b737593b162b1fdcb3e0cf15d3ac46339f5343430ea2",
+      "transparent": true,
+      "bounds": {
+        "left": 74,
+        "top": 172,
+        "width": 1106,
+        "height": 927
+      },
+      "fill": 0.8819776714513556,
+      "clearShare": 0.4759589091621325,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a capital-ship part: mount it in an open steel gantry frame with a narrow catwalk and handrail running along its side, the handrail sized for a person so the object reads as enormous. The object and its gantry together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no people, scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Advanced Fusion Reactor master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested open supporting gantry and narrow side catwalk with person-scale handrail. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/advanced_fusion_reactor.png",
+              "sha256": "e3c5926f7c9f045ce283829bd15a7aff3754e209522749d64881b8db9b47369d"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-81bc408a-ab63-49b1-ad3f-d384f5747165.png",
+          "sourceSha256": "07398ab4ebb9a6a54c56b737593b162b1fdcb3e0cf15d3ac46339f5343430ea2"
+        }
+      ]
+    },
+    {
+      "key": "heavy_antimatter_reactor",
+      "name": "Heavy Antimatter Reactor",
+      "group": "heavy",
+      "base": "antimatter_reactor",
+      "master": "client/art-src/goods-2026-11-08/heavy_antimatter_reactor.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "7c41bd1d87dcc2ba0b6104757393ed66a6411411d7b1b07f9bf86e7a98309b08",
+      "transparent": true,
+      "bounds": {
+        "left": 61,
+        "top": 189,
+        "width": 1133,
+        "height": 943
+      },
+      "fill": 0.9035087719298246,
+      "clearShare": 0.5914133783058487,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a heavy industrial part: sit it in a low dark-steel transport cradle with heavy bolted feet, and fix two lifting lugs to the top of the object. The object and its cradle together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Antimatter Reactor master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested transport cradle and exactly two lifting lugs. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/antimatter_reactor.png",
+              "sha256": "3f7f968a91d52389631ec702c01ee9abc93d7f1e4794ab944a67043cab4d241d"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-3a80a175-d938-42ca-b419-e1ca5ea41ef8.png",
+          "sourceSha256": "7c41bd1d87dcc2ba0b6104757393ed66a6411411d7b1b07f9bf86e7a98309b08"
+        }
+      ]
+    },
+    {
+      "key": "capital_antimatter_reactor",
+      "name": "Capital Antimatter Reactor",
+      "group": "capital",
+      "base": "antimatter_reactor",
+      "master": "client/art-src/goods-2026-11-08/capital_antimatter_reactor.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "a1c0f76cfb3646092955b61c0c1855429acbe0849275110c270352e9e47402d1",
+      "transparent": true,
+      "bounds": {
+        "left": 69,
+        "top": 142,
+        "width": 1116,
+        "height": 1000
+      },
+      "fill": 0.8899521531100478,
+      "clearShare": 0.5429375599357972,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a capital-ship part: mount it in an open steel gantry frame with a narrow catwalk and handrail running along its side, the handrail sized for a person so the object reads as enormous. The object and its gantry together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no people, scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Antimatter Reactor master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested open supporting gantry and narrow side catwalk with person-scale handrail. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/antimatter_reactor.png",
+              "sha256": "3f7f968a91d52389631ec702c01ee9abc93d7f1e4794ab944a67043cab4d241d"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-96410a1b-a0df-40b5-93d4-3364a2bf7bbe.png",
+          "sourceSha256": "a1c0f76cfb3646092955b61c0c1855429acbe0849275110c270352e9e47402d1"
+        }
+      ]
+    },
+    {
+      "key": "heavy_zephyr_drive",
+      "name": "Heavy Zephyr Drive",
+      "group": "heavy",
+      "base": "zephyr_drive",
+      "master": "client/art-src/goods-2026-11-08/heavy_zephyr_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "9458120c3cfeca7aa7e11dbd0f9ddc5e8f07425672bc355e7e0d8c92c5a99485",
+      "transparent": true,
+      "bounds": {
+        "left": 88,
+        "top": 153,
+        "width": 1078,
+        "height": 1015
+      },
+      "fill": 0.8596491228070176,
+      "clearShare": 0.5382641575666003,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a heavy industrial part: sit it in a low dark-steel transport cradle with heavy bolted feet, and fix two lifting lugs to the top of the object. The object and its cradle together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Zephyr Drive master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested transport cradle and exactly two lifting lugs. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/zephyr_drive.png",
+              "sha256": "29742708cd59217e2680b212666a28edca44c7dc3184cede06120082880bd130"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-d1b0fdc9-90aa-411e-bbf2-d5942176d79e.png",
+          "sourceSha256": "9458120c3cfeca7aa7e11dbd0f9ddc5e8f07425672bc355e7e0d8c92c5a99485"
+        }
+      ]
+    },
+    {
+      "key": "capital_zephyr_drive",
+      "name": "Capital Zephyr Drive",
+      "group": "capital",
+      "base": "zephyr_drive",
+      "master": "client/art-src/goods-2026-11-08/capital_zephyr_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "e24054843a458740752eb0c2270171f8ae16c2d324cc28c97e94d60696b6cc26",
+      "transparent": true,
+      "bounds": {
+        "left": 97,
+        "top": 125,
+        "width": 1080,
+        "height": 1019
+      },
+      "fill": 0.861244019138756,
+      "clearShare": 0.5069595476294041,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a capital-ship part: mount it in an open steel gantry frame with a narrow catwalk and handrail running along its side, the handrail sized for a person so the object reads as enormous. The object and its gantry together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no people, scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Zephyr Drive master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested open supporting gantry and narrow side catwalk with person-scale handrail. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/zephyr_drive.png",
+              "sha256": "29742708cd59217e2680b212666a28edca44c7dc3184cede06120082880bd130"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-d747c00f-86d4-494c-9be7-6e7e30f29fed.png",
+          "sourceSha256": "e24054843a458740752eb0c2270171f8ae16c2d324cc28c97e94d60696b6cc26"
+        }
+      ]
+    },
+    {
+      "key": "heavy_gale_drive",
+      "name": "Heavy Gale Drive",
+      "group": "heavy",
+      "base": "gale_drive",
+      "master": "client/art-src/goods-2026-11-08/heavy_gale_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "a5736a43fdf03793827b87a2a1966e49dbc14d23a81311916fb4a209ebc1886c",
+      "transparent": true,
+      "bounds": {
+        "left": 122,
+        "top": 170,
+        "width": 1010,
+        "height": 951
+      },
+      "fill": 0.8054226475279107,
+      "clearShare": 0.5817632380211075,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a heavy industrial part: sit it in a low dark-steel transport cradle with heavy bolted feet, and fix two lifting lugs to the top of the object. The object and its cradle together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Gale Drive master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested transport cradle and exactly two lifting lugs. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/gale_drive.png",
+              "sha256": "3db6d8f6dbdd14dbfe784121f7c7d71a2f689c1fe83835c4ed5552b10e99d650"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-41c8d79a-aba0-4d81-b372-1a0cd4fd9d38.png",
+          "sourceSha256": "a5736a43fdf03793827b87a2a1966e49dbc14d23a81311916fb4a209ebc1886c"
+        }
+      ]
+    },
+    {
+      "key": "capital_gale_drive",
+      "name": "Capital Gale Drive",
+      "group": "capital",
+      "base": "gale_drive",
+      "master": "client/art-src/goods-2026-11-08/capital_gale_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "8c753fca66186973e062a5efba27a280616621cd3ec3a444a1aeebf3c69ad9b2",
+      "transparent": true,
+      "bounds": {
+        "left": 68,
+        "top": 99,
+        "width": 1119,
+        "height": 1059
+      },
+      "fill": 0.8923444976076556,
+      "clearShare": 0.4847352904517347,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a capital-ship part: mount it in an open steel gantry frame with a narrow catwalk and handrail running along its side, the handrail sized for a person so the object reads as enormous. The object and its gantry together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no people, scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Gale Drive master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested open supporting gantry and narrow side catwalk with person-scale handrail. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/gale_drive.png",
+              "sha256": "3db6d8f6dbdd14dbfe784121f7c7d71a2f689c1fe83835c4ed5552b10e99d650"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-f01edea7-7df3-4ab8-b47e-624de5b174aa.png",
+          "sourceSha256": "8c753fca66186973e062a5efba27a280616621cd3ec3a444a1aeebf3c69ad9b2"
+        }
+      ]
+    },
+    {
+      "key": "heavy_tempest_drive",
+      "name": "Heavy Tempest Drive",
+      "group": "heavy",
+      "base": "tempest_drive",
+      "master": "client/art-src/goods-2026-11-08/heavy_tempest_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "a60c769e6824c4fdae74f3cd6ec4089481ec2d1387d8d4483e1a6931e153a9db",
+      "transparent": true,
+      "bounds": {
+        "left": 72,
+        "top": 121,
+        "width": 1115,
+        "height": 1046
+      },
+      "fill": 0.8891547049441786,
+      "clearShare": 0.5285510608477115,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a heavy industrial part: sit it in a low dark-steel transport cradle with heavy bolted feet, and fix two lifting lugs to the top of the object. The object and its cradle together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Tempest Drive master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested transport cradle and exactly two lifting lugs. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/tempest_drive.png",
+              "sha256": "517c343e2d15508d79ee8264bfa39048f25daa5dbc6bc6f4a584f5d3b07d6115"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-c3d71e50-7a1e-451f-a7df-718f447f6b5e.png",
+          "sourceSha256": "a60c769e6824c4fdae74f3cd6ec4089481ec2d1387d8d4483e1a6931e153a9db"
+        }
+      ]
+    },
+    {
+      "key": "capital_tempest_drive",
+      "name": "Capital Tempest Drive",
+      "group": "capital",
+      "base": "tempest_drive",
+      "master": "client/art-src/goods-2026-11-08/capital_tempest_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "c09c1a51d7e127562f084ea1f7e892ac28ae96c874460ee5beac12c69847927c",
+      "transparent": true,
+      "bounds": {
+        "left": 94,
+        "top": 135,
+        "width": 1070,
+        "height": 1008
+      },
+      "fill": 0.8532695374800638,
+      "clearShare": 0.5251329716200026,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a capital-ship part: mount it in an open steel gantry frame with a narrow catwalk and handrail running along its side, the handrail sized for a person so the object reads as enormous. The object and its gantry together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no people, scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Tempest Drive master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested open supporting gantry and narrow side catwalk with person-scale handrail. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/tempest_drive.png",
+              "sha256": "517c343e2d15508d79ee8264bfa39048f25daa5dbc6bc6f4a584f5d3b07d6115"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-9c597241-7a33-4104-bcb4-c5aaae50ad3f.png",
+          "sourceSha256": "95b784554f95a630ed301599418b625d7b451cd4bf380b660a732326ce8228a3"
+        },
+        {
+          "prompt": "Use case: background-extraction. Input image 1 is the completed Capital Tempest Drive game icon. Preserve the complete drive and open steel gantry exactly as shown, including its gold emitter ring, exactly three short gold vanes, copper conduit bands, narrow side catwalk, gold handrails, supports, feet, camera, colours, lighting, size and position. Correct ONLY leftover background matte inside the OPEN GAPS of the gantry. The pale white-grey patch between the overhead steel beams is background residue, not a roof: remove that patch completely to transparent alpha. Also clear any grey mist or matte in the empty spaces around the drive and between the frame bars. Keep all genuine metal beams and braces; do not remove, add or redesign structural parts. Every empty opening in this open gantry must be genuinely transparent, just like the outside background. Preserve fine edge antialiasing around real objects. Deliver exactly one 1254 × 1254 RGBA PNG at the same 85% fill and centring, no added ground, shadows, haze, scene, labels, text or panels.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-9c597241-7a33-4104-bcb4-c5aaae50ad3f.png",
+              "sha256": "95b784554f95a630ed301599418b625d7b451cd4bf380b660a732326ce8228a3"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8ddfa039-43d1-4bdc-a2c7-64082e8ee680.png",
+          "sourceSha256": "c09c1a51d7e127562f084ea1f7e892ac28ae96c874460ee5beac12c69847927c"
+        }
+      ]
+    },
+    {
+      "key": "heavy_maelstrom_drive",
+      "name": "Heavy Maelstrom Drive",
+      "group": "heavy",
+      "base": "maelstrom_drive",
+      "master": "client/art-src/goods-2026-11-08/heavy_maelstrom_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "5cb1f12955527a51c06d831f6138a957aa0723f85fb3a799a77bb2c298f3fc0a",
+      "transparent": true,
+      "bounds": {
+        "left": 119,
+        "top": 152,
+        "width": 1039,
+        "height": 1008
+      },
+      "fill": 0.828548644338118,
+      "clearShare": 0.5685188576777597,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a heavy industrial part: sit it in a low dark-steel transport cradle with heavy bolted feet, and fix two lifting lugs to the top of the object. The object and its cradle together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Maelstrom Drive master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested transport cradle and exactly two lifting lugs. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/maelstrom_drive.png",
+              "sha256": "7890ede1ba42430952f30a750669a8db6512c1919c652dfeaff80a2f70ab968a"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-bf49d91e-1121-482f-97ea-788f2771634f.png",
+          "sourceSha256": "5cb1f12955527a51c06d831f6138a957aa0723f85fb3a799a77bb2c298f3fc0a"
+        }
+      ]
+    },
+    {
+      "key": "capital_maelstrom_drive",
+      "name": "Capital Maelstrom Drive",
+      "group": "capital",
+      "base": "maelstrom_drive",
+      "master": "client/art-src/goods-2026-11-08/capital_maelstrom_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "369d41b5cf9dfca4cee284c54163be8992ea9dda0a1bbdc04083abc59d7f4335",
+      "transparent": true,
+      "bounds": {
+        "left": 88,
+        "top": 139,
+        "width": 1082,
+        "height": 1010
+      },
+      "fill": 0.8628389154704944,
+      "clearShare": 0.5337719934169192,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a capital-ship part: mount it in an open steel gantry frame with a narrow catwalk and handrail running along its side, the handrail sized for a person so the object reads as enormous. The object and its gantry together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no people, scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Maelstrom Drive master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested open supporting gantry and narrow side catwalk with person-scale handrail. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/maelstrom_drive.png",
+              "sha256": "7890ede1ba42430952f30a750669a8db6512c1919c652dfeaff80a2f70ab968a"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-bd9e184f-2e4a-4c08-aa73-938243b74a75.png",
+          "sourceSha256": "369d41b5cf9dfca4cee284c54163be8992ea9dda0a1bbdc04083abc59d7f4335"
+        }
+      ]
+    },
+    {
+      "key": "heavy_hull_sections",
+      "name": "Heavy Hull Sections",
+      "group": "heavy",
+      "base": "hull_sections",
+      "master": "client/art-src/goods-2026-11-08/heavy_hull_sections.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "f2075ac37842bf149975a9c7a9e691a8ec3653792aba6d664e856fbb210ec56a",
+      "transparent": true,
+      "bounds": {
+        "left": 81,
+        "top": 135,
+        "width": 1060,
+        "height": 1005
+      },
+      "fill": 0.8452950558213717,
+      "clearShare": 0.5988651307840429,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a heavy industrial part: sit it in a low dark-steel transport cradle with heavy bolted feet, and fix two lifting lugs to the top of the object. The object and its cradle together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Hull Sections master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested transport cradle and exactly two lifting lugs. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-10-24/hull_sections.png",
+              "sha256": "d14b13dc96b984ffe7065a951ad739fc1e19efddb16bd007e07af6947d050802"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-2a62f17a-2721-4889-ad7d-5e1b16243a93.png",
+          "sourceSha256": "f2075ac37842bf149975a9c7a9e691a8ec3653792aba6d664e856fbb210ec56a"
+        }
+      ]
+    },
+    {
+      "key": "capital_hull_sections",
+      "name": "Capital Hull Sections",
+      "group": "capital",
+      "base": "hull_sections",
+      "master": "client/art-src/goods-2026-11-08/capital_hull_sections.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "1fc6d31d3d77bd3b620a92ac4e142257c2ff1894a6827fc70c511da4a278d3c7",
+      "transparent": true,
+      "bounds": {
+        "left": 94,
+        "top": 138,
+        "width": 1064,
+        "height": 1002
+      },
+      "fill": 0.8484848484848485,
+      "clearShare": 0.534322703234816,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Edit this icon. Keep the object exactly as it is: body, colours, materials, camera and light. Make it a capital-ship part: mount it in an open steel gantry frame with a narrow catwalk and handrail running along its side, the handrail sized for a person so the object reads as enormous. The object and its gantry together fill 80% of the square canvas, centred. Genuine transparent RGBA background; no people, scene, ground, border, text, numbers, badge, glow haze or extra props.\nInput image 1 is the EDIT TARGET: the light Hull Sections master. Preserve the exact original object, its complete geometry and its visible details. Add only the requested open supporting gantry and narrow side catwalk with person-scale handrail. Keep the object clearly visible within the supporting structure. Preserve any coloured emitter or plasma and keep its light on or inside the object. The supporting structure belongs to the object, not to a background scene.\nDelivery: exactly one 1254 × 1254 RGBA PNG with true transparent alpha and clear corners. Centre the complete silhouette at approximately 80% fill: its longest dimension should be about 1000 pixels, leaving generous transparent margins on every side. Keep broad forms crisp at 32–64 px; no lettering, logos, diagram, scene, glow haze or shadow outside the object.\nFraming priority: uniformly reduce the original part to make room for its new supporting structure. Do NOT keep the original part at its previous pixel scale. The whole completed assembly, including every foot, lifting lug and handrail, must stay within a centred 1030 × 1030 pixel bounding square on the 1254 × 1254 canvas, with at least 100 pixels of fully transparent padding at the outside edges. Keep the camera and proportions unchanged.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-10-24/hull_sections.png",
+              "sha256": "d14b13dc96b984ffe7065a951ad739fc1e19efddb16bd007e07af6947d050802"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-9b32125e-223d-4565-9616-975373064f43.png",
+          "sourceSha256": "1fc6d31d3d77bd3b620a92ac4e142257c2ff1894a6827fc70c511da4a278d3c7"
+        }
+      ]
+    }
+  ]
+}

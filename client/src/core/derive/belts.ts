@@ -1,7 +1,6 @@
 import type { BodyView, Commodity, Deposit, GhostView, PlayerId, StationAnchor, SystemStateView } from "../../protocol";
-import { fleetCargoManifest } from "../../protocol";
 import { label } from "../../icons";
-import { fleetCargoCapacity, mineCapable, prospectCapable, shipKindLabel } from "./fleet";
+import { fleetCargoCapacity, fleetHoldUsed, mineCapable, prospectCapable, shipKindLabel } from "./fleet";
 
 /** §belts: mirror of the sim's ANCHOR_SECS (anchoring, and unanchoring). */
 export const ANCHOR_SECS = 60;
@@ -54,7 +53,7 @@ export function beltActions(ghosts: GhostView[], playerId: PlayerId | null, dyna
   // (unowned or allied systems only: a colony stockpiles its own ore).
   const here = own.find((g) => g.anchor?.system === dynamic.id && g.anchor.body === body.id);
   const station = here?.anchor ? { fleet: here.id, anchor: here.anchor,
-    held: fleetCargoManifest(here).reduce((n, c) => n + c.units, 0), capacity: fleetCargoCapacity(here) } : null;
+    held: fleetHoldUsed(here), capacity: fleetCargoCapacity(here) } : null; // §hold-room: held in quarters
   const free = own.filter((g) => isStation(g) && (!g.anchor || g.anchor.phase === "approaching")).slice(0, 3);
   const anchor = station || yours || rival ? [] : free.map((g) => ({ fleet: g.id, text: `Anchor station${tag(g, free.length > 1)}` }));
   return { prospect, mine, anchor, station, note, yours };

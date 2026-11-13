@@ -74,7 +74,7 @@ assert.equal(pick(state, [{ type: "AttackFleet", fleet_id: "f1", target_id: "p" 
 assert.equal(pick(state, [{ type: "AssignCaptain", captain_id: 99, fleet_id: "f1" }], () => sent++), false, "an unknown captain falls back");
 
 // Both shells open it from the guide's Assign captain.
-for (const shell of ["shell/deck/command.ts", "shell/mobile/surfaces.ts"]) {
+for (const shell of ["shell/deck/founding-guide.ts", "shell/mobile/surfaces.ts"]) {
   assert.match(src(shell), /if \(commands && introduceCaptainFor\(this\.ctx\.state, commands, \(\) => \{\n\s*this\.ctx\.intent\.beginFleetCommand\(commands\);\n\s*this\.ctx\.intent\.confirmPendingIntent\(\);\n\s*\}\)\) return;/, shell);
 }
 

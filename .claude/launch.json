@@ -146,6 +146,17 @@
       ],
       "port": 4183,
       "url": "http://127.0.0.1:4183"
+    },
+    {
+      "name": "research-fixture",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "client/scripts/test-research-workbench.mjs",
+        "--serve",
+        "--port=4180"
+      ],
+      "port": 4180,
+      "url": "http://127.0.0.1:4180"
     }
   ]
 }

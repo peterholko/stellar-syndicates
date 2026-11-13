@@ -106,7 +106,10 @@ report.owner = "1";
 assert.equal(commands.fleetCommandsValid([{ ...bad, fleet_id: "rival", pursuit_radius: 10_000 }], st), false);
 
 // §orbital-defense: the station as the owner's report shows it.
-assert.equal(station.stationName(1), "Gun Platform", "§gun-platform: the ladder's first level");
+assert.equal(station.stationName(1), "Laser Battery", "§laser-battery: the ladder's first level");
+assert.equal(station.stationArtUrl(1, 256), "/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-1-256.webp",
+  "§laser-battery: level 1 is the ground turret");
+assert.equal(station.stationArtUrl(2, 256), "/art/derived/stations/v2/level-2-256.webp", "the station proper from level 2");
 assert.equal(station.stationName(6), "Star Fortress");
 assert.equal(station.stationArtUrl(9, 512), "/art/derived/stations/v2/level-6-512.webp", "levels clamp to the ladder");
 assert.equal(station.mountFitError(["mass_driver", "mass_driver", "whipple_armor"], false), "");
@@ -129,7 +132,8 @@ st.galaxy.build_options = [{ key: "orbital_defense", tiers: [
   { tier: 5, label: "Citadel", description: "Four hardpoints.", research_prerequisite: "weap_cm_v_grand_batteries", requires: { yard: "naval_drydock", tier: 1 } },
   { tier: 6, label: "Star Fortress", description: "Six hardpoints; one per corporation.", research_prerequisite: "weap_cm_v_star_fortress", requires: { yard: "capital_slipway", tier: 1 } }] }];
 st.research = { programmes: [{ id: "weap_cm_v_star_fortress", name: "Star Fortress", state: "available" }] };
-const fortified = { ...report, station: citadel, structures: { naval_drydock: 1 }, modules: { mass_driver: 1 } };
+// §modules-as-goods: the modules on hand are stockpile goods.
+const fortified = { ...report, station: citadel, structures: { naval_drydock: 1 }, stockpile: [{ commodity: "mass_driver", units: 1 }] };
 for (const theme of ["deck", "mobile"]) {
   const html = surface.systemDefenseHtml(st, system, fortified, 10_000, theme);
   assert.match(html, /<span>Citadel · 3 of 4 hardpoints firing · 1 local fleet<\/span>/);
@@ -157,7 +161,7 @@ for (const module of ["mass_driver", "mass_driver", "whipple_armor", "stasis_web
 }
 assert.deepEqual(plain(draft.fit), ["mass_driver", "mass_driver", "whipple_armor"], "three slots");
 let html = surface.systemDefenseHtml(st, system, fortified, 10_000, "deck", false, draft);
-assert.match(html, /Not enough crates here: 2× Mass Driver \(have 1\), 1× Whipple Armor \(have 0\)\./);
+assert.match(html, /Not enough modules here: 2× Mass Driver \(have 1\), 1× Whipple Armor \(have 0\)\./);
 assert.match(html, /defense-refit-confirm"[^>]*data-mount="1" disabled/);
 assert.doesNotMatch(html, /Prismatic Lance/, "no lance before Platform Lances");
 draft = surface.stationDraftAction("defense-refit-remove", { mount: "1", index: "1" }, draft, fortified).draft;

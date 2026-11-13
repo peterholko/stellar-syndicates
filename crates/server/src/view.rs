@@ -138,7 +138,6 @@ struct FleetFacts {
     cargo: Vec<Cargo>,
     passengers: BTreeMap<sim::SpecialistKind, u32>,
     loadouts: BTreeMap<ShipKind, BTreeMap<String, u32>>,
-    modules: BTreeMap<sim::ModuleKind, u32>,
     route: Option<Vec<Vec2>>,
     ships: Vec<sim::ship::Ship>,
     marines: u32,
@@ -190,11 +189,31 @@ struct Bunker {
     fuel: f64,
     capacity: f64,
     helium3: f64,
+    #[serde(default)]
+    helium3_capacity: f64,
     uranium: f64,
     uranium_capacity: f64,
     antimatter: f64,
     antimatter_capacity: f64,
+    /// §shipbuilding-overhaul Phase 5: the magazines — torpedoes, slugs and
+    /// beam crystals with what the guns aboard can hold.
+    #[serde(default)]
+    torpedoes: f64,
+    #[serde(default)]
+    torpedoes_capacity: f64,
+    #[serde(default)]
+    slugs: f64,
+    #[serde(default)]
+    slugs_capacity: f64,
+    #[serde(default)]
+    crystals: f64,
+    #[serde(default)]
+    crystals_capacity: f64,
     stalled: bool,
+    /// §reactors-drives: engine-bearing hulls by (reactor rung, drive rung),
+    /// 1-based rungs at 0-based indices.
+    #[serde(default)]
+    drives: [[u32; 4]; 4],
 }
 
 /// Position history + current metadata for one FLEET. Fleet-derived scalars
@@ -272,9 +291,6 @@ struct Track {
     /// the makeup can see the FITS. Only fitted stacks; the unfitted remainder is
     /// derived client-side.
     loadouts: std::collections::BTreeMap<ShipKind, std::collections::BTreeMap<String, u32>>,
-    /// §modules Part B3: MODULE CRATES aboard (a transport convoy's manifest) —
-    /// fogged exactly like `passengers`/`cargo`.
-    modules: std::collections::BTreeMap<sim::ModuleKind, u32>,
     /// Current observable route (convoys' waypoints). Static for demo patrols
     /// (same caveat as cargo).
     route: Option<Vec<Vec2>>,
@@ -632,7 +648,6 @@ impl PositionHistory {
                     cargo: Vec::new(),
                     passengers: Default::default(),
                     loadouts: Default::default(),
-                    modules: Default::default(),
                     route: None,
                     gone: None,
                     migrant: world.migrant_runs.contains_key(id),
@@ -684,16 +699,31 @@ impl PositionHistory {
             track.max_speed = ship.max_speed();
             track.count_class = ship.count_class();
             track.damage_frac = ship.damage_fraction();
+            let engines = ship.engines_aboard();
             track.bunkers.push_back(Bunker {
                 at: now,
                 fuel: ship.fuel,
                 capacity: ship.fuel_capacity(),
                 helium3: ship.helium3,
+                helium3_capacity: ship.helium3_capacity(),
                 uranium: ship.uranium,
                 uranium_capacity: ship.uranium_capacity(),
                 antimatter: ship.antimatter,
                 antimatter_capacity: ship.antimatter_capacity(),
+                torpedoes: ship.torpedoes,
+                torpedoes_capacity: ship.magazine_capacity(sim::Commodity::Torpedoes),
+                slugs: ship.slugs,
+                slugs_capacity: ship.magazine_capacity(sim::Commodity::Slugs),
+                crystals: ship.crystals,
+                crystals_capacity: ship.magazine_capacity(sim::Commodity::BeamCrystals),
                 stalled: ship.stalled,
+                drives: {
+                    let mut grid = [[0u32; 4]; 4];
+                    for ((r, d), n) in &engines {
+                        grid[(r.rung() - 1) as usize][(d.rung() - 1) as usize] = *n;
+                    }
+                    grid
+                },
             });
             while track.bunkers.len() > 1 && track.bunkers[1].at <= now - self.horizon {
                 track.bunkers.pop_front();
@@ -778,9 +808,6 @@ impl PositionHistory {
             if track.loadouts != ship.loadouts {
                 track.loadouts = ship.loadouts.clone();
             }
-            if track.modules != ship.modules {
-                track.modules = ship.modules.clone();
-            }
             if !route_matches(&track.route, &ship.order) {
                 track.route = route_of(&ship.order);
             }
@@ -841,7 +868,6 @@ impl PositionHistory {
                     cargo,
                     passengers,
                     loadouts,
-                    modules,
                     route,
                     ships,
                     marines: prev_marines,
@@ -885,7 +911,6 @@ impl PositionHistory {
                     && *cargo == track.cargo
                     && *passengers == track.passengers
                     && *loadouts == track.loadouts
-                    && *modules == track.modules
                     && *route == track.route
                     && *ships == ship.ships
                     && *prev_marines == marines
@@ -931,7 +956,6 @@ impl PositionHistory {
                     cargo: track.cargo.clone(),
                     passengers: track.passengers.clone(),
                     loadouts: track.loadouts.clone(),
-                    modules: track.modules.clone(),
                     route: track.route.clone(),
                     ships: ship.ships.clone(),
                     marines,
@@ -1238,7 +1262,6 @@ impl PositionHistory {
             sample: Sample,
             cargo: &'a [Cargo],
             passengers: &'a std::collections::BTreeMap<sim::SpecialistKind, u32>,
-            modules: &'a std::collections::BTreeMap<sim::ModuleKind, u32>,
             route: &'a Option<Vec<Vec2>>,
             /// A destroyed raider that WAS legitimately within the viewer's sensor
             /// coverage at the retarded time of the ghost being shown. Latches its
@@ -1368,7 +1391,6 @@ impl PositionHistory {
                 sample,
                 cargo: &facts.cargo,
                 passengers: &facts.passengers,
-                modules: &facts.modules,
                 route: &facts.route,
                 destroyed_detected,
                 migrant: track.migrant,
@@ -1543,7 +1565,6 @@ impl PositionHistory {
                 && (mimic || p.flagship.is_freighter_hull() || p.facts.freight_run.is_some()))
                 .then(|| if mimic { "goods" }
                     else if !p.passengers.is_empty() { "personnel" }
-                    else if !p.modules.is_empty() { "modules" }
                     else if !p.cargo.is_empty() || p.facts.freight_run.is_some() { "goods" }
                     else { "empty" }.to_string());
             // §research-wiring Wake Analysis: a seen rival's tank and heading.
@@ -1602,14 +1623,6 @@ impl PositionHistory {
             } else {
                 None
             };
-            // §modules Part B3: crate MANIFEST obeys the tier-2 manifest rule (like
-            // passengers) — shown exactly when the rest of the manifest is.
-            let modules = if detected {
-                p.modules.clone()
-            } else {
-                Default::default()
-            };
-
             ghosts.push(GhostView {
                 docked,
                 job: if own { p.job } else { None },
@@ -1645,10 +1658,24 @@ impl PositionHistory {
                 fuel: own.then_some(p.bunker.fuel),
                 fuel_capacity: own.then_some(p.bunker.capacity),
                 helium3: (own && p.bunker.helium3 > 0.0).then_some(p.bunker.helium3),
+                helium3_capacity: (own && p.bunker.helium3_capacity > 0.0).then_some(p.bunker.helium3_capacity),
+                drives: own.then(|| p.bunker.drives.iter().enumerate().flat_map(|(ri, row)| row.iter().enumerate()
+                    .filter(|(_, n)| **n > 0)
+                    .filter_map(move |(di, n)| Some(crate::protocol::DriveView {
+                        reactor: sim::fuel::ReactorGrade::of_rung(ri as u8 + 1)?,
+                        drive: sim::fuel::Drive::of_rung(di as u8 + 1)?,
+                        count: *n,
+                    }))).collect()),
                 uranium: own.then_some(p.bunker.uranium),
                 uranium_capacity: own.then_some(p.bunker.uranium_capacity),
                 antimatter: (own && p.bunker.antimatter_capacity > 0.0).then_some(p.bunker.antimatter),
                 antimatter_capacity: (own && p.bunker.antimatter_capacity > 0.0).then_some(p.bunker.antimatter_capacity),
+                torpedoes: (own && p.bunker.torpedoes_capacity > 0.0).then_some(p.bunker.torpedoes),
+                torpedoes_capacity: (own && p.bunker.torpedoes_capacity > 0.0).then_some(p.bunker.torpedoes_capacity),
+                slugs: (own && p.bunker.slugs_capacity > 0.0).then_some(p.bunker.slugs),
+                slugs_capacity: (own && p.bunker.slugs_capacity > 0.0).then_some(p.bunker.slugs_capacity),
+                crystals: (own && p.bunker.crystals_capacity > 0.0).then_some(p.bunker.crystals),
+                crystals_capacity: (own && p.bunker.crystals_capacity > 0.0).then_some(p.bunker.crystals_capacity),
                 cargo_mult: None,
                 prize_mult: None,
                 stalled: own && p.bunker.stalled,
@@ -1692,7 +1719,6 @@ impl PositionHistory {
                 composition,
                 damage,
                 loadouts,
-                modules,
                 signature: if p.broadcasts { None } else { Some(signature) },
                 // OWNER-ONLY per-fleet posture is filled in by the game loop from the
                 // authoritative fleet (this history-only view can't see it); None here.
@@ -1998,6 +2024,14 @@ pub fn filter_charted_systems(
                     })
                     .collect()
             });
+            // §stores-flows: what the economy makes and uses, a minute.
+            let flows: Vec<crate::protocol::FlowView> = if own {
+                sim::information::quantized_flows(&sys.flows)
+                    .map(|(commodity, f)| crate::protocol::FlowView { commodity, made: f.made * 60.0, used: f.used * 60.0 })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             // §vault: what raiders can't reach, from the same report.
             let vault: Vec<StockSlot> = if own {
                 sim::world::raid_reserve(sys).into_iter()
@@ -2107,6 +2141,20 @@ pub fn filter_charted_systems(
                     // filter on purpose — the odds are a decision aid computed
                     // from state the viewer already has, not another gated fact.
                     landing: None,
+                    // §veil: the projector, its level and whether the sky is
+                    // lit — the same two viewers.
+                    veil: sys.veil_body().map(|b| {
+                        let level = b.tier(sim::StructureKind::VeilProjector).min(sim::ground::VEIL_MAX_LEVEL);
+                        let plant = b.tier(sim::StructureKind::PowerPlant);
+                        crate::protocol::VeilStateView {
+                            level,
+                            up: sys.veil_up,
+                            descent_loss: sim::ground::veil_descent_loss(level),
+                            burn_per_s: sim::power::veil_mw(level) * sim::power::burn_per_mw_s(plant),
+                            fuel: sim::power::plant_fuel(plant),
+                            raise: !sys.veil_never,
+                        }
+                    }),
                 })
             };
             let station = (own && sys.station_level() > 0).then(|| crate::protocol::StationView {
@@ -2125,6 +2173,7 @@ pub fn filter_charted_systems(
                 owner,
                 stockpile,
                 vault,
+                flows,
                 build,
                 builds,
                 blockade,
@@ -2190,12 +2239,6 @@ pub fn filter_charted_systems(
                 // §economy Part 4: your talent is private intel.
                 specialists: if own {
                     sys.specialists.clone()
-                } else {
-                    Default::default()
-                },
-                // §modules Part B3: your armory (module ledger) is private intel.
-                modules: if own {
-                    sys.modules.clone()
                 } else {
                     Default::default()
                 },
@@ -2290,6 +2333,8 @@ pub fn filter_charted_systems(
                                 sim::MigrationPolicy::Closed
                             },
                             inbound_migrants: if own { b.inbound_migrants } else { 0 },
+                            // Filled for the owner from the allocation pass (game_loop).
+                            migration: None,
                             power: own.then(|| crate::protocol::PowerView {
                                 demand: b.grid.demand,
                                 supply: b.grid.supply,
@@ -2527,6 +2572,7 @@ fn assignment_views(sys: &sim::StarSystem, mods: sim::production::ProductionMods
                         }
                         let rate = sim::explore::natural_extraction_rate_with(body, d, sys.trait_, geo)
                             * sim::production::ore_bulk_ratio(d.resource)
+                            * sim::production::OUTPUT_SCALE
                             * throughput
                             * staffing
                             * skill
@@ -2931,6 +2977,7 @@ pub fn ground_header(r: &sim::ground::GroundRecord, spec: &GroundSpec) -> Ground
         defenders_initial: participant.then_some(r.defenders_initial),
         garrison_tiers: r.garrison_tiers,
         suppression_at_drop: r.suppression_at_drop,
+        descent_losses: participant.then_some(r.descent_losses),
     }
 }
 
@@ -3272,8 +3319,9 @@ pub(crate) fn tracked_contacts(world: &World, viewer: PlayerId, now: f64) -> BTr
 /// §privateer-hunt (Peter, Oct 27 2026: "show up as a last known contact or
 /// something and the player moves their interceptor there and then the
 /// pirate appears"): where the founder's privateer went to ground, from the
-/// raid's report until its kill's report. It lies quiet just outside the
-/// colony's sensors on the side it left by.
+/// raid's report until its kill's report. §den-retreat (Nov 12 2026): its den,
+/// where it joined the garrison; without a den, just outside the colony's
+/// sensors on the side it left by.
 pub(crate) fn privateer_last_seen(world: &World, viewer: PlayerId, now: f64) -> Option<Vec2> {
     let founding = &world.players.get(&viewer)?.founding;
     let raid = founding.raid.as_ref()?;
@@ -3746,7 +3794,7 @@ mod tests {
         world.merchants.insert(ship, sim::merchant::MerchantVisit {
             fleet: ship, customer: founder, system: home, phase: sim::merchant::MerchantPhase::Docked,
             arrived_at: Some(0.0), leave_by: 10_000.0, mids: Default::default(), markup: 1.5,
-            stock: Default::default(), ore_bought: 0,
+            stock: Default::default(), bought: 0, featured: Default::default(),
         });
         let dealt = world.free_trader(founder).slug;
         let mut history = PositionHistory::for_world(&world);
@@ -3937,7 +3985,7 @@ mod tests {
         let owner = PlayerId(701);
         world.step(&[sim::Command::AddPlayer { id: owner, name: "Yard reports".into() }]);
         let system = world.systems.iter().find(|s| s.owner == Some(owner)).unwrap().clone();
-        let job = sim::BuildJob {
+        let job = sim::BuildJob { reactor: Default::default(), drive: Default::default(), charged: Vec::new(),
             id: 1, owner, system: system.id, body_id: system.bodies[0].id,
             construction_yard: None,
             what: sim::BuildKind::Ship { ship: ShipKind::LargeFreighter },
@@ -3980,7 +4028,7 @@ mod tests {
         let owner = PlayerId(703);
         world.step(&[sim::Command::AddPlayer { id: owner, name: "Queued reports".into() }]);
         let system = world.systems.iter().find(|s| s.owner == Some(owner)).unwrap().clone();
-        let active = sim::BuildJob {
+        let active = sim::BuildJob { reactor: Default::default(), drive: Default::default(), charged: Vec::new(),
             id: 10, owner, system: system.id, body_id: system.bodies[0].id,
             construction_yard: None,
             what: sim::BuildKind::Upgrade { upgrade: K::Shipyard },
@@ -4048,7 +4096,6 @@ mod tests {
             cargo: track.cargo.clone(),
             passengers: track.passengers.clone(),
             loadouts: track.loadouts.clone(),
-            modules: track.modules.clone(),
             route: track.route.clone(),
             ships: Vec::new(), marines: 0,
             posture: sim::EngagementPosture::Passive,
@@ -4220,7 +4267,6 @@ mod tests {
             cargo,
             passengers: Default::default(),
             loadouts: Default::default(),
-            modules: Default::default(),
             route: None,
             gone: None,
             migrant: false,
@@ -4936,7 +4982,6 @@ mod tests {
             claimed_at,
             stockpile: stock.iter().copied().collect::<BTreeMap<_, _>>(),
             industry: Default::default(),
-            modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0,
@@ -4949,6 +4994,8 @@ mod tests {
             blockade: None,
             garrison_fed: true,
             garrison_suppression: 0.0,
+            veil_up: false,
+            veil_never: false,
             blockade_prev: None,
             mounts: Vec::new(),
             trait_: None,
@@ -4960,6 +5007,8 @@ mod tests {
             landing_holds: 0.0,
             storage_mult: 1.0,
             twin_campuses: false,
+            flows: BTreeMap::new(),
+            flow_tick: BTreeMap::new(),
         };
         let mut systems = vec![
             mk(
@@ -5003,7 +5052,7 @@ mod tests {
 
         // A build at MINE (owner) and one at RIVAL's system — only MINE's is visible.
         let builds = vec![
-            sim::BuildJob {
+            sim::BuildJob { reactor: Default::default(), drive: Default::default(), charged: Vec::new(),
                 id: 1,
                 construction_yard: None,
                 owner: me,
@@ -5019,7 +5068,7 @@ mod tests {
                 join: None,
                 loadout: Default::default(),
             },
-            sim::BuildJob {
+            sim::BuildJob { reactor: Default::default(), drive: Default::default(), charged: Vec::new(),
                 id: 2,
                 construction_yard: None,
                 owner: rival,
@@ -5037,7 +5086,7 @@ mod tests {
             },
             // A second concurrent job of mine, finishing FIRST — the queue list
             // must come back completion-ordered (§build-progress).
-            sim::BuildJob {
+            sim::BuildJob { reactor: Default::default(), drive: Default::default(), charged: Vec::new(),
                 id: 3,
                 construction_yard: None,
                 owner: me,
@@ -5324,7 +5373,6 @@ mod tests {
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
             industry: Default::default(),
-            modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0,
@@ -5337,6 +5385,8 @@ mod tests {
             blockade: None,
             garrison_fed: true,
             garrison_suppression: 0.0,
+            veil_up: false,
+            veil_never: false,
             blockade_prev: None,
             mounts: Vec::new(),
             // Every test system carries a trait — the leak assertions below
@@ -5352,6 +5402,8 @@ mod tests {
             landing_holds: 0.0,
             storage_mult: 1.0,
             twin_campuses: false,
+            flows: BTreeMap::new(),
+            flow_tick: BTreeMap::new(),
         };
         let mut systems = vec![
             mk(1, Vec2::new(0.0, 0.0), Some(me)), // mine (never explicitly surveyed)
@@ -5629,7 +5681,6 @@ mod tests {
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
             industry: Default::default(),
-            modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0,
@@ -5652,6 +5703,8 @@ mod tests {
             mounts: Vec::new(),
             garrison_fed: true,
             garrison_suppression: 0.0,
+            veil_up: false,
+            veil_never: false,
             trait_: None,
             cache_claimed: false,
             legacy_structures: Default::default(),
@@ -5661,6 +5714,8 @@ mod tests {
             landing_holds: 0.0,
             storage_mult: 1.0,
             twin_campuses: false,
+            flows: BTreeMap::new(),
+            flow_tick: BTreeMap::new(),
         };
         // Two standing tiers on the habitable body — 50 marines to take it.
         sys.bodies.push(sim::Body {
@@ -5860,7 +5915,6 @@ mod tests {
                 claimed_at: Some(0.0),
                 stockpile: BTreeMap::new(),
                 industry: Default::default(),
-                modules: Default::default(),
                 legacy_extractor_tier: 0,
                 legacy_depot_tier: 0,
                 legacy_shipyard_tier: 0,
@@ -5875,6 +5929,8 @@ mod tests {
                 mounts: Vec::new(),
                 garrison_fed: true,
                 garrison_suppression: suppression,
+                veil_up: false,
+                veil_never: false,
                 trait_: None,
                 cache_claimed: false,
                 legacy_structures: Default::default(),
@@ -5884,6 +5940,8 @@ mod tests {
                 landing_holds: 0.0,
                 storage_mult: 1.0,
                 twin_campuses: false,
+                flows: BTreeMap::new(),
+                flow_tick: BTreeMap::new(),
             };
             sys.bodies.push(sim::Body {
                 founding_camp: None,
@@ -5954,7 +6012,6 @@ mod tests {
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
             industry: Default::default(),
-            modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0,
@@ -5977,6 +6034,8 @@ mod tests {
             mounts: Vec::new(),
             garrison_fed: true,
             garrison_suppression: 0.0,
+            veil_up: false,
+            veil_never: false,
             trait_: None,
             cache_claimed: false,
             legacy_structures: Default::default(),
@@ -5986,6 +6045,8 @@ mod tests {
             landing_holds: 0.0,
             storage_mult: 1.0,
             twin_campuses: false,
+            flows: BTreeMap::new(),
+            flow_tick: BTreeMap::new(),
         };
         // The blockaded system sits 6000 su (20 s of light) from every viewer's
         // command center at the origin — so the owner's onset light lands at t=120.
@@ -6054,7 +6115,6 @@ mod tests {
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
             industry: Default::default(),
-            modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0,
@@ -6067,6 +6127,8 @@ mod tests {
             blockade: None,
             garrison_fed: true,
             garrison_suppression: 0.0,
+            veil_up: false,
+            veil_never: false,
             blockade_prev: None,
             mounts: Vec::new(),
             trait_: None,
@@ -6078,6 +6140,8 @@ mod tests {
             landing_holds: 0.0,
             storage_mult: 1.0,
             twin_campuses: false,
+            flows: BTreeMap::new(),
+            flow_tick: BTreeMap::new(),
         }];
         let mut intel = BTreeMap::new();
         intel.insert(
@@ -6184,7 +6248,6 @@ mod tests {
             claimed_at: Some(0.0),
             stockpile: BTreeMap::new(),
             industry: Default::default(),
-            modules: Default::default(),
             legacy_extractor_tier: 0,
             legacy_depot_tier: 0,
             legacy_shipyard_tier: 0,
@@ -6197,6 +6260,8 @@ mod tests {
             blockade: None,
             garrison_fed: true,
             garrison_suppression: 0.0,
+            veil_up: false,
+            veil_never: false,
             blockade_prev: None,
             mounts: Vec::new(),
             trait_: None,
@@ -6208,6 +6273,8 @@ mod tests {
             landing_holds: 0.0,
             storage_mult: 1.0,
             twin_campuses: false,
+            flows: BTreeMap::new(),
+            flow_tick: BTreeMap::new(),
         }]
     }
 
@@ -7025,7 +7092,6 @@ mod tests {
             cargo: Vec::new(),
             passengers: Default::default(),
             loadouts: Default::default(),
-            modules: Default::default(),
             route: None,
             gone: None,
             migrant: false,
@@ -7571,12 +7637,16 @@ mod tests {
         }]);
         let c = w.config.c;
         // A settleable target: unclaimed AND not a reserved home site.
-        let pos = w
+        let (sys_id, pos) = w
             .systems
             .iter()
             .find(|s| s.is_unclaimed() && !w.home_slots.iter().any(|h| h.system == Some(s.id)))
-            .expect("a settleable system")
-            .pos;
+            .map(|s| (s.id, s.pos))
+            .expect("a settleable system");
+        // §claims: the Authority's claim, held.
+        let now = w.time;
+        w.players.get_mut(&me).unwrap().claims.insert(sys_id,
+            sim::claims::Claim { bought_at: now, lapses_at: now + sim::claims::CLAIM_LAPSE_S });
         // Park the colony ship OUT of claim range first, so it builds up a stretch
         // of history — a ghost needs old light to still be flying on.
         let cid = sim::EntityId(9_000_001);

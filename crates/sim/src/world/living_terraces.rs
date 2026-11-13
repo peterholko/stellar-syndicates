@@ -96,7 +96,8 @@ fn crewed_living_terraces_grow_provisions_without_biomass() {
     let staffed = stock(&w, home, Commodity::Provisions);
     let eaten_10s = start - unstaffed;
     let grown = staffed - unstaffed + eaten_10s;
-    assert!((grown - 12.0).abs() < 0.5, "≈1.2 Provisions/s for 10 s at tier I: {grown}");
+    let scale = crate::production::OUTPUT_SCALE;
+    assert!((grown - 12.0 * scale).abs() < 0.5 * scale, "≈1.2 Provisions/s × the output scale for 10 s at tier I: {grown}");
     assert_eq!(stock(&w, home, Commodity::Biomass), 0.0, "no Biomass drawn or needed");
 }
 

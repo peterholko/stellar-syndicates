@@ -327,6 +327,20 @@ impl Bot {
             return None;
         };
         if p.threatened(target.pos) { return None; }
+        // §claims: the Authority's claim first; the ship sails once it's held.
+        if !p.at_war && !p.claims_held.contains(&target_id) {
+            // The payment leaves with a tenth over the price; save for it first.
+            let price = p.claim_prices.get(&target_id).copied().unwrap_or(0.0) * 1.1;
+            if self.cash(p) < p.operating_reserve() + price {
+                self.status = "saving for the Authority's claim".into();
+                return None;
+            }
+            let key = format!("claim:{target_id}");
+            if !self.ready(&key, p.now) { return None; }
+            self.wait(key, p, p.hub);
+            self.status = "buying the Authority's claim for the next colony".into();
+            return Some(Command::BuyClaim { player_id: p.owner, system_id: target_id });
+        }
         for fleet in p.own().filter(|g| g.kind == H::Colony) {
             let key = format!("fleet:{}", fleet.id);
             if !self.ready(&key, p.now) || p.fighting.contains(&fleet.id)
@@ -341,7 +355,7 @@ impl Bot {
             }
             if let Some(dest) = step.filter(|dest| {
                 let bunker = if dest.distance(p.hub) < sim::transit::HYPERLIMIT {
-                    p.tank(fleet) * p.price(regime_fuel(fleet)) * 1.25
+                    p.tank_units(fleet) * p.price(regime_fuel(fleet)) * 1.25
                 } else { 0.0 };
                 self.cash(p) > p.operating_reserve() + bunker + 3_000.0
             }) {

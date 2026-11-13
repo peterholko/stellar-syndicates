@@ -29,7 +29,7 @@ export type SelectTarget = (
   | { type: "jumpDeparture"; key: string }
   | { type: "emplacement"; id: string }
   | { type: "system"; id: string }
-  | { type: "anchor"; readout: string }
+  | { type: "anchor"; readout: string; own: boolean }
   | { type: "hub" }
   | { type: "exploration"; id: string }
   | { type: "operation"; id: string }
@@ -601,7 +601,7 @@ export function resolveMapClick(
       : anchorPick.owner !== null
         ? `<b>Rival command base</b> — a rival corporation commands from here. <span class="dim">You can see the base, but its systems, stockpiles &amp; orders never leak. To contest a rival, <b>claim and hold the star systems</b> around it.</span>`
         : `<b>Empty command site</b> — no corporation is based here.`;
-    return { kind: "select", target: { type: "anchor", readout: message } };
+    return { kind: "select", target: { type: "anchor", readout: message, own: ownAnchor } };
   }
 
   if (state.galaxy) {

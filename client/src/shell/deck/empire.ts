@@ -1,16 +1,18 @@
-import { constructionStock, dockedAtSystem, PROSPECT_SECS, shipKindLabel } from "../../core/derive/fleet";
+import { constructionStock, fmtRoom, REACTOR_FUEL, REACTOR_GOOD, REACTOR_GRADES, REACTOR_LABEL, DRIVE_GOOD, DRIVE_LABEL, DRIVE_SPEED, DRIVES, reactorKnown, driveKnown, reactorPowers, dockedAtSystem, PROSPECT_SECS, shipKindLabel, engineGoodFor, lightBase } from "../../core/derive/fleet";
+import { CLAIM_TIP, claimOffer } from "../../core/derive/claims";
 import { anchorStatus, beltActions, prospectLine } from "../../core/derive/belts";
 import { colonyPurpose } from "../../core/derive/colony";
 import { commandDelayTo } from "../../core/derive/geo";
 import { pirateSite } from "../../core/derive/pirates";
 import { nodeBonusDesc, nodeLabel, researched } from "../../core/derive/research";
 import { liveProgressAttr } from "../../core/derive/construction";
-import { gridLine, hullJobs, isStructureJob, jobTag, jobTitle, maxLevel, nextOrderTiming, romanTier as roman, SENDING, slotLine, structureFacts, structureQueue, WORKFORCE_STRUCTURES, yardStatus, type StructureJob } from "../../core/derive/worldbuild";
+import { gridLine, hullJobs, isStructureJob, jobTag, jobTitle, maxLevel, nextOrderTiming, powerPlantFlavour, romanTier as roman, SENDING, slotLine, structureFacts, structureQueue, WORKFORCE_STRUCTURES, yardStatus, type StructureJob } from "../../core/derive/worldbuild";
 import { isOrbitalYard, planetStructureImage } from "../../planet-structure-art";
 import { planetSurface, type PlanetSurface } from "../../planet-surfaces";
 import { coach } from "../coach";
 import { ageLabel, fmtBuildDur, fmtRatePerMin } from "../../core/derive/format";
 import { COUNTER_SCOUTING_HINT, scoutReport } from "../../core/derive/scouting";
+import { housingText, migrationStatus } from "../../core/derive/migration";
 import { blockadeBadge, blockadeBrief } from "../../core/derive/blockade";
 import {
   bodyPoolUsage,
@@ -19,6 +21,8 @@ import {
   fitLegal,
   FITTING_POINTS,
   hullResearched,
+  licenceForSale,
+  licenceNote,
   MODULE_SLOTS,
   moduleLedgerAt,
   moduleBuildReason,
@@ -46,7 +50,7 @@ import type { CoreEvent } from "../../core/events";
 import { commodityIcon as commodityGlyph, icon, label, structureImage, type IconKey } from "../../icons";
 import type { AssignmentView, BodyView, BuildState, Commodity, Deposit, ModuleKind, ShipKind, SystemInfo, SystemStateView } from "../../protocol";
 import { fleetArtKind } from "../../shipart";
-import { fleetExactCount } from "../../protocol";
+import { fleetExactCount, type ReactorGrade, type Drive } from "../../protocol";
 import { liveSimTime } from "../../state";
 import { starTypeFor } from "../../stars";
 import { starArtSrcset, starArtUrl } from "../../starart";
@@ -61,6 +65,7 @@ import { fleetBerth, siegeTarget, type AnchorBody } from "../../systemlayout";
 import { refiningComparison } from "../refining";
 import { isSitePool } from "./planet-sites";
 import { hullStatsHtml } from "./shipyard";
+import { repairYardBody, yardRepairs } from "../../core/derive/shipyard";
 import "../../styles/planet-panel.css";
 import { DEFAULT_DEFENSE_RADIUS, DEFENSE_RADII } from "../../core/derive/defense";
 import { stageDefenseAction, stationDraftAction, systemDefenseHtml, type StationDraft } from "../systemdefense";
@@ -83,6 +88,8 @@ interface EmpireHooks {
   /** §planet-build: open a world with its structure builder over the planet,
    * as if the player had gone there and pressed Build. */
   openWorldBuild(systemId: string, bodyId: number, query: Record<string, string>): void;
+  /** §merchant: the world a pop-out floats over, if any. */
+  underlay(): DeckRoute | null;
   notice(html: string): void;
   toast(title: string, message: string, tone?: "quiet" | "good" | "warn" | "bad", destination?: DeckRoute): void;
 }
@@ -96,17 +103,17 @@ const STRUCTURE_DESCRIPTION: Record<string, string> = {
   mining_complex: "Mines this world's ore deposits.",
   volatile_harvester: "Extracts Volatiles from a local deposit.",
   bioharvester: "Harvests Biomass from the biosphere.",
-  smelter: "Refines ore into metals. Double power.",
+  smelter: "Refines ore into metals.",
   electronics_fabricator: "Silicates and Rare Elements → Semiconductors.",
   chemical_works: "Volatiles and Biomass → Polymers.",
   fuel_refinery: "Volatiles → Deuterium.",
   agroplex: "Biomass → Provisions.",
-  machine_works: "Alloys and Semiconductors → Machinery. Double power.",
+  machine_works: "Alloys and Semiconductors → Machinery.",
   armaments_complex: "Makes Armaments and fleet modules.",
   composite_works: "Makes Composites for hulls and drives.",
   hull_fabricator: "Makes Hull Sections for Destroyers and larger.",
   precision_works: "Makes Precision Components for advanced hulls.",
-  drive_works: "Makes Warp Cores or Fusion Cores. Double power.",
+  drive_works: "Makes reactors and warp drives by rung.",
   shipyard: "Builds freighters, scouts, colony ships and corvettes, and repairs docked ships.",
   naval_drydock: "Builds large freighters and warships in orbit. Needs Shipyard II and Autoforges or Modular Berths.",
   capital_slipway: "Builds Dreadnoughts and Titans in orbit. Needs Orbital Shipyard III.",
@@ -124,7 +131,8 @@ const STRUCTURE_DESCRIPTION: Record<string, string> = {
   asteroid_quarry: "A belt's mine, crew and power in one. Works every deposit on the belt; eats Provisions and Machinery.",
   vault: "Raiders can't reach it. Holds 200 units per level, dearest goods first.",
   assembly_hall: "Rallies the colonists: Resolve +1% an hour per level, from the levies on.",
-  power_plant: "Powers this planet's mines, factories, yards and Academy. Solar I–II; Deuterium III–IV; Helium-3 V–VI.",
+  veil_projector: "Under a held blockade, ionises the sky: guns pin nothing, prize crews load nothing, only Transports land (−10 / 15 / 20% by level). Burns the Fusion Plant's fuel while raised.",
+  power_plant: "Fields of panels turn sunlight into power for this world.",
   uranium_mill: "Ferrite Ore → Uranium.",
   antimatter_plant: "Deuterium → Antimatter. Ten times a factory's power.",
 };
@@ -189,6 +197,9 @@ export class DeckEmpireRoutes {
   private selectedHull: ShipKind | "" = "";
   private shipQuantity = 1;
   private pendingFit: ModuleKind[] = [];
+  /** §reactors-drives: the reactor and drive the next build takes. */
+  private pendingReactor: ReactorGrade = "fission";
+  private pendingDrive: Drive = "zephyr";
   private buildFeedback: BuildFeedback | null = null;
   private lastBuildPreset = "";
   private lastSystemId = "";
@@ -226,10 +237,23 @@ export class DeckEmpireRoutes {
     return this.pendingFit;
   }
 
+  /** §reactors-drives: the reactor and drive the next build takes. */
+  get composedReactor(): ReactorGrade {
+    return this.pendingReactor;
+  }
+  get composedDrive(): Drive {
+    return this.pendingDrive;
+  }
+
   render(route: DeckRoute | null, force = false): boolean {
     // The construction child belongs to ONE world; any other route dismisses it.
     if (this.worldBuildRoute && (route?.name !== "world" || worldKey(route) !== this.worldBuildFor)) this.resetWorkbench();
     this.renderWorldBuildWorkbench(force);
+    // §merchant (Peter, Nov 4 2026): the trader's stall opened from a world
+    // floats over its planet, which keeps its scene; its build sheet closes.
+    // Nov 9: so does the Shipyard view.
+    const underlay = route?.name === "merchant" || route?.name === "shipyard" ? this.hooks.underlay() : null;
+    if (underlay) return this.renderUnderlay(underlay, force);
     if (route?.name !== "system" && route?.name !== "build" && route?.name !== "world") {
       this.hideStage();
       this.resetWorkbench();
@@ -286,7 +310,7 @@ export class DeckEmpireRoutes {
       const body = context.dynamic?.bodies.find((entry) => String(entry.id) === route.params?.bodyId);
       const world = worldKey(route);
       if (this.worldBuilder && this.worldBuilder.world !== world) this.worldBuilder = null;
-      if ((route.query?.build === "structures" || route.query?.structure) && context.system && body
+      if ((route.query?.build === "structures" || route.query?.build === "ships" || route.query?.structure) && context.system && body
         && context.dynamic?.owner === this.ctx.state.playerId) {
         // A request from elsewhere (the guide, a link, a completion toast):
         // open the planet's own builder, or select the named building, then
@@ -296,6 +320,11 @@ export class DeckEmpireRoutes {
           const site = isSitePool(route.query.site_pool) && route.query.site_slot !== undefined
             ? { pool: route.query.site_pool, slot: Number(route.query.site_slot) } : null;
           this.enterWorldBuilder(world, site, route.query.select);
+        } else if (route.query.build === "ships") {
+          // Peter (Nov 9 2026): the guide's hull builds open this planet's
+          // own workbench on its Ships tab, never the System View's.
+          this.worldBuilder = null;
+          this.openWorldBuilder(route, context.system, body, "ships", undefined, route.query.select, null);
         } else if (route.query.structure) {
           this.worldBuilder = null;
           this.planet.focus(route.query.structure);
@@ -373,6 +402,12 @@ export class DeckEmpireRoutes {
       return true;
     }
     if (action === "build-workbench-close") return this.closeBuildWorkbench(route);
+    // §claims: the order travels to the Hub with its payment.
+    if (action === "buy-claim") {
+      this.ctx.send({ type: "BuyClaim", system: system.id });
+      this.hooks.notice(`<b>Claim order sent</b> · ${esc(system.name)} → the Authority at the Hub.`);
+      return true;
+    }
     // §designations Mass Streams: this system and another of yours.
     if (action === "system-stream" && button.dataset.to && dynamic?.owner === this.ctx.state.playerId) {
       this.ctx.send({ type: "SetDesignation", cap: "mass_streams", target: { system_pair: [system.id, button.dataset.to] } });
@@ -497,7 +532,7 @@ export class DeckEmpireRoutes {
     const mine = dynamic?.owner === this.ctx.state.playerId;
     const held = dynamic?.owner !== null && dynamic?.owner !== undefined;
     const surveyed = dynamic?.deposits !== null && dynamic?.deposits !== undefined;
-    const owner = mine ? "Owned system" : held ? "Rival-held system" : "Unclaimed system";
+    const owner = mine ? "Owned system" : held ? "Rival-held system" : "Unowned system";
     // §charting: a fleet that has been there charts the worlds; a survey reads the rock.
     const survey = surveyed ? "survey report received"
       : dynamic?.bodies?.length ? "Unsurveyed · send a Scout or Survey Probe" : "Uncharted · send a Scout or Survey Probe";
@@ -506,7 +541,7 @@ export class DeckEmpireRoutes {
       ["overview", "Overview"], ["worlds", "Worlds"], ["production", "Production"], ["fleets", "Fleets"], ["build", "Build"],
     ].map(([tab, text]) => `<button type="button" data-deck-act="system-tab" data-tab="${tab}" aria-selected="${tab === this.systemTab}">${text}</button>`).join("");
     const brief = dynamic?.blockade && this.ctx.state.galaxy
-      ? blockadeBrief(dynamic.blockade, liveSimTime(), this.ctx.state.galaxy.siege_secs, dynamic.ground?.marines_needed)
+      ? blockadeBrief(dynamic.blockade, liveSimTime(), this.ctx.state.galaxy.siege_secs, dynamic.ground?.marines_needed, dynamic.ground?.veil?.up)
       : null;
     const alert = brief
       ? `<div class="deck-alert deck-alert--${brief.tone === "good" ? "info" : brief.tone}"><b>${esc(brief.title)}</b><span>${esc(brief.detail)}</span></div>`
@@ -536,8 +571,8 @@ export class DeckEmpireRoutes {
     ];
     if (!mine || !dynamic) {
       return `<div class="deck-stat-grid">${publicStats.join("")}</div>` +
-        `<section class="deck-section"><h3>Known picture</h3><p class="deck-muted">${dynamic?.owner ? "Ownership light has arrived. Economic and workforce reports remain private to that corporation." : "No corporate claim has reached command."}</p></section>` +
-        this.scoutHtml(dynamic) + this.groundActivityHtml(dynamic) + this.opportunityHtml(dynamic);
+        `<section class="deck-section"><h3>Known picture</h3><p class="deck-muted">${dynamic?.owner ? "Ownership light has arrived. Economic and workforce reports remain private to that corporation." : "No owner reported."}</p></section>` +
+        this.claimHtml(system, dynamic) + this.scoutHtml(dynamic) + this.groundActivityHtml(dynamic) + this.opportunityHtml(dynamic);
     }
     const workforce = dynamic.workforce;
     const ownerStats = [
@@ -550,6 +585,20 @@ export class DeckEmpireRoutes {
       ...nodeStat(dynamic, mine),
     ];
     return `<div class="deck-stat-grid">${ownerStats.join("")}</div>${this.streamHtml(system)}${systemDefenseHtml(this.ctx.state, system, dynamic, this.defenseRadius.get(system.id) ?? DEFAULT_DEFENSE_RADIUS, "deck", this.defenseAssigning.has(system.id), this.stationDraft.get(system.id) ?? null)}${this.groundActivityHtml(dynamic)}${this.queueHtml(dynamic)}`;
+  }
+
+  /** §claims: the Authority's claim on an unowned system: its price and Buy,
+   * the lapse of one held, or why none is sold. */
+  private claimHtml(system: SystemInfo, dynamic: SystemStateView | undefined): string {
+    const offer = claimOffer(this.ctx.state, system, dynamic);
+    if (!offer) return "";
+    const line = offer.kind === "held" ? `Held · lapses in ${fmtBuildDur(Math.max(0, offer.lapsesAt - liveSimTime()))}`
+      : offer.kind === "price" ? `${fmt(offer.cost)} Cr`
+      : offer.kind === "war" ? "None needed · at war"
+      : "Not sold · charter closed";
+    const buy = offer.kind === "price"
+      ? `<button type="button" class="is-primary" data-deck-act="buy-claim" data-system="${esc(system.id)}" title="Paid at the Hub; the change comes home">Buy</button>` : "";
+    return `<section class="deck-section deck-claim"><header><div><h3>Claim</h3><p title="${esc(CLAIM_TIP)}">${esc(line)}</p></div>${buy}</header></section>`;
   }
 
   /** §scouting: what this corporation's Scouts last saw of a rival system. */
@@ -739,6 +788,16 @@ export class DeckEmpireRoutes {
       }
     } else if (action === "builder-quantity") {
       this.shipQuantity = Math.max(1, Number(button.dataset.quantity) || 1);
+    } else if (action === "builder-reactor") {
+      const reactor = button.dataset.reactor as ReactorGrade | undefined;
+      if (reactor && REACTOR_GRADES.includes(reactor)) {
+        this.pendingReactor = reactor;
+        // The power rule: a drive the new reactor cannot run falls back to the Zephyr.
+        if (!reactorPowers(reactor, this.pendingDrive)) this.pendingDrive = "zephyr";
+      }
+    } else if (action === "builder-drive") {
+      const drive = button.dataset.drive as Drive | undefined;
+      if (drive && DRIVES.includes(drive) && reactorPowers(this.pendingReactor, drive)) this.pendingDrive = drive;
     } else if (action === "builder-fit") {
       const module = button.dataset.module as ModuleKind | undefined;
       if (module && MODULES.some((entry) => entry.kind === module)) {
@@ -781,6 +840,13 @@ export class DeckEmpireRoutes {
         this.closeBuildWorkbench(route);
         return true;
       }
+    } else if (action === "builder-buy-licence") {
+      // §licences: the order travels to the Hub with its payment.
+      const hull = (button.dataset.hull ?? this.selectedHull) as ShipKind;
+      if (!hull) return true;
+      this.ctx.send({ type: "BuyLicence", hull });
+      this.hooks.notice(`<b>Licence order sent</b> · ${esc(buildName(hull))} → the Authority at the Hub.`);
+      return true;
     } else if (action === "builder-queue-ships") {
       if (!this.selectedHull) return true;
       const option = buildOption(this.selectedHull);
@@ -791,10 +857,14 @@ export class DeckEmpireRoutes {
       for (let index = 0; index < quantity; index++) dispatchBuildKey(this.selectedHull, dynamic.id);
       this.noteBuildDispatch(dynamic.id, `${quantity}× ${buildName(this.selectedHull)} sent to the yard.`);
       this.shipQuantity = 1;
-      // §shipyard-view: the hull on order appears in its yard at once.
+      // §shipyard-view: the hull on order appears in its yard at once. Peter
+      // (Nov 9 2026): "Click Queue 1 Ship should not zoom out of the
+      // planetary view": from a planet's own builder the planet stays, the
+      // hull taking shape in its ground Shipyard's bay.
       const kind = this.selectedHull;
+      const overPlanet = !!this.worldBuildRoute;
       this.closeBuildWorkbench(route);
-      this.hooks.go({ name: "shipyard", params: { id: dynamic.id, systemLabel: system.name }, query: { kind, sent: String(liveSimTime()) } });
+      if (!overPlanet) this.hooks.go({ name: "shipyard", params: { id: dynamic.id, systemLabel: system.name }, query: { kind, sent: String(liveSimTime()) } });
       return true;
     } else {
       return false;
@@ -823,7 +893,7 @@ export class DeckEmpireRoutes {
       + anchor.map((a) => `<button type="button" data-deck-act="world-anchor" data-fleet="${esc(a.fleet)}" title="Barges here unload into it">${esc(a.text)}</button>`).join("");
     // §belts: your station at this belt, with its hold.
     const depot = station ? `<div class="deck-belt-station"><span>${icon("mining_belt_station", "sm")}<b>Station</b><small>${esc(anchorStatus(station.anchor, liveSimTime()))}</small></span>`
-      + `<em>${fmt(station.held)} / ${fmt(station.capacity)}</em><button type="button" data-deck-act="world-station-open" data-fleet="${esc(station.fleet)}">Open</button></div>` : "";
+      + `<em>${fmtRoom(station.held)} / ${fmt(station.capacity)}</em><button type="button" data-deck-act="world-station-open" data-fleet="${esc(station.fleet)}">Open</button></div>` : "";
     const hint = mine.length ? `<p class="deck-muted">A barge cuts ore into ${station ? "your station" : "its own hold"}${yours ? ", or straight into this system's stockpile" : ""}.${station ? "" : " Bring it home to unload when the hold is full."}</p>` : "";
     return `<section class="deck-section"><h3>Ship mining</h3>${depot}${note ? `<div class="deck-empty-inline">${esc(note)}</div>` : ""}${buttons ? `<div class="deck-world-actions">${buttons}</div>` : ""}${hint}</section>`;
   }
@@ -859,6 +929,16 @@ export class DeckEmpireRoutes {
     }
     if (action === "watch-ground" && button.dataset.ground) {
       this.hooks.openGroundViewer(button.dataset.ground);
+      return true;
+    }
+    // §yard-repair: a hull mending at the yard opens the Shipyard close-up on it.
+    if (action === "planet-yard-repair" && button.dataset.fleet) {
+      this.hooks.go({ name: "shipyard", params: { id: system.id, systemLabel: system.name }, query: { repair: button.dataset.fleet } });
+      return true;
+    }
+    // §yard-build: a hull on the slip opens the yard's close-up on its kind.
+    if (action === "planet-yard-build" && button.dataset.kind) {
+      this.hooks.go({ name: "shipyard", params: { id: system.id, systemLabel: system.name }, query: { kind: button.dataset.kind } });
       return true;
     }
     if (action === "world-fleet-open" && button.dataset.fleet) {
@@ -1044,6 +1124,25 @@ export class DeckEmpireRoutes {
 
   private get stagePanel(): HTMLElement {
     return this.stageRoot.closest("#deck-planet-stage") as HTMLElement;
+  }
+
+  /** §merchant: only the scene of the world beneath the trader's stall; the
+   * workspace column is the stall's. */
+  private renderUnderlay(route: DeckRoute, force: boolean): boolean {
+    this.worldBuilder = null;
+    const { system, dynamic } = this.systemContext(route);
+    const body = dynamic?.bodies.find((entry) => String(entry.id) === route.params?.bodyId);
+    if (!system || !dynamic || !body) {
+      this.hideStage();
+      return false;
+    }
+    const signature = sheetFingerprint(["underlay", route, dynamic, this.pendingBuilds, Math.floor(liveSimTime())]);
+    if (!force && signature === this.signature) return false;
+    this.signature = signature;
+    this.reconcileBuilds();
+    setHtml(this.stageRoot, this.planet.renderScene(this.planetModel(system, dynamic, body)));
+    this.showStage(body.name);
+    return false;
   }
 
   private showStage(name: string): void {
@@ -1238,6 +1337,8 @@ export class DeckEmpireRoutes {
       expectBy: now + 2 * delay + 3, slot, costs: state.o.costs.map((cost) => ({ commodity: cost.commodity as Commodity, units: cost.units })) });
     // Queued: the sheet closes (Peter, Oct 20 2026); Build opens it again.
     this.worldBuilder = null;
+    // The column selects what was queued (Peter, Nov 4 2026).
+    this.planet.focus(key);
     this.hooks.notice(`<b>Build order sent</b> · ${esc(state.o.label)} ${roman(state.targetTier)} → ${esc(body.name)}.`);
   }
 
@@ -1367,7 +1468,7 @@ export class DeckEmpireRoutes {
 
   /** A new building that takes a ground site the player may choose. */
   private placeable(item: SheetEntry): boolean {
-    return item.state.foundsNew && !item.block && !item.order && !isOrbitalYard(item.key) && item.entry.consumes_slot !== false;
+    return item.state.foundsNew && !item.block && !item.order && !isOrbitalYard(item.key, 1) && item.entry.consumes_slot !== false;
   }
 
   private sheetCard(item: SheetEntry, systemId: string, body: BodyView, surface: PlanetSurface | null): string {
@@ -1405,7 +1506,7 @@ export class DeckEmpireRoutes {
       : state.foundsNew ? entry.consumes_slot === false ? "New · no slot used" : `New · ${POOL_LABEL[state.pool]}`
       : entry.consumes_slot === false ? `${step} · no slot used` : step;
     const title = entry.tiers?.length ? state.o.label : `${state.o.label} ${roman(shown)}`;
-    const description = STRUCTURE_DESCRIPTION[key] ?? state.o.description ?? "";
+    const description = (key === "power_plant" ? powerPlantFlavour(state.targetTier) : STRUCTURE_DESCRIPTION[key]) ?? state.o.description ?? "";
     const facts = item.block || state.maxed ? [] : structureFacts(entry, state.targetTier - 1, state.targetTier, body, dynamic.storage_mult ?? 1);
     const factHtml = facts.length ? `<dl class="deck-bsheet__facts">${facts.map((fact) => `<dt>${esc(fact.label)}</dt><dd>${fact.from ? `${esc(fact.from)} → ` : ""}<b>${esc(fact.to)}</b></dd>`).join("")}</dl>` : "";
     const have = constructionStock(dynamic, key).available;
@@ -1496,6 +1597,7 @@ export class DeckEmpireRoutes {
       ...this.constructionModel(system, dynamic, body, bodyArtUrl(system.id, body)),
       economy: this.ctx.state,
       siege: this.planetSiege(system, dynamic, body),
+      veil: dynamic.ground?.veil ?? null,
       docked: this.planetDocked(system, dynamic, body),
       talent: { expert: researched("life_talent_iii_expert_training"), slots: researched("life_talent_iv_broad_curricula") ? 2 : 1 },
       crowns: body.belt ? [] : ([["crown_vein", "Crown Vein", "mat_deepcrust_v_crown_vein"], ["crown_project", "Crown Project", "mat_foundry_v_crown_project"]] as const)
@@ -1520,11 +1622,14 @@ export class DeckEmpireRoutes {
     const caption = dynamic.blockade ? blockadeBadge(dynamic.blockade, liveSimTime(), base) : "LANDING UNDER WAY";
     const latest = landing?.rounds[landing.rounds.length - 1];
     const suppression = dynamic.ground?.suppression ?? latest?.suppression ?? 0;
+    // §veil: the sky is up — the headline says so, and what it costs a landing.
+    const veil = dynamic.ground?.veil;
     const detail = [
+      veil?.up ? `VEIL UP · landings −${pct(veil.descent_loss)}` : "",
       landing ? `LANDING ${pct(latest?.marines_frac ?? 1)} vs ${pct(latest?.defenders_frac ?? 1)}` : "",
       suppression > 0.02 ? `GARRISON PINNED ${pct(suppression)}` : "",
     ].filter(Boolean).join(" · ");
-    return { caption, detail, suppression, landingId: landing?.id ?? null };
+    return { caption, detail, suppression, landingId: landing?.id ?? null, veil: !!veil?.up };
   }
 
   /// §planet-orbit: fleets berthed at this system whose facility is on this
@@ -1533,12 +1638,19 @@ export class DeckEmpireRoutes {
   private planetDocked(system: SystemInfo, dynamic: SystemStateView, body: BodyView): PlanetDockedFleet[] {
     const anchors = anchorBodies(dynamic);
     const state = this.ctx.state;
+    // §yard-repair (Peter, Nov 5 2026: "the ship being repaired in the ground
+    // based shipyard fly down to the ground"): a hull mending stands on its
+    // yard's world, whatever its berth.
+    const yard = repairYardBody(dynamic);
+    const mending = new Map(yardRepairs(state.ghosts, dynamic).map((job) => [job.repair!.fleet, job.progress]));
     return state.ghosts
-      .filter((ghost) => dockedAtSystem(ghost, system.id) && fleetBerth(ghost, anchors) === body.id)
+      .filter((ghost) => dockedAtSystem(ghost, system.id)
+        && (mending.has(ghost.id) ? yard === body.id : fleetBerth(ghost, anchors) === body.id))
       .map((ghost) => ({
         id: ghost.id, kind: ghost.migrant ? "colony" : ghost.kind, art: fleetArtKind(ghost), own: ghost.own, count: fleetExactCount(ghost),
         name: ghost.merchant ? "Free Trader" : ghost.migrant ? "Migrant Liner" : ghost.rescue_service ? "AAA Rescue Tender" : shipKindLabel(ghost.kind),
         selected: state.selectedShipId === ghost.id || state.selectedShipIds.has(ghost.id),
+        repairing: mending.get(ghost.id) ?? null,
       }));
   }
 
@@ -1548,7 +1660,10 @@ export class DeckEmpireRoutes {
     const options = this.ctx.state.systems
       .filter((entry) => entry.owner === this.ctx.state.playerId && entry.blockade?.held_since == null && entry.habitat_fed)
       .flatMap((entry) => entry.bodies.filter((candidate) => !(entry.id === systemId && candidate.id === body.id) && candidate.population > 0).map((candidate) => `<option value="${esc(entry.id)}|${candidate.id}">${esc(systemName(this.ctx, entry.id))} · ${esc(candidate.name)}</option>`)).join("");
-    return `<div class="deck-stat-grid">${stat("Population", fmtPopulation(body.population))}${stat("Inbound", `${fmt(body.inbound_migrants)} people`)}${stat("Food use", `×${body.provisions_mult.toFixed(2)}`)}${stat("Settlement appeal", `×${body.population_growth_mult.toFixed(2)}`)}</div><div class="deck-policy"><span>Immigration policy</span>${policyButtons}</div><div class="deck-inline-form"><select data-deck-relocation-target>${options}</select><button type="button" data-deck-act="relocate-migrants" ${options && body.population * 1_000_000 >= cohort * 2 ? "" : "disabled"}>Relocate ${cohort.toLocaleString()}</button></div>`;
+    // §migration-status: housing, and the next landing or what holds the next liner.
+    const housing = housingText(body);
+    const status = migrationStatus(body, liveSimTime());
+    return `<div class="deck-stat-grid">${housing ? stat("Housing", housing, body.migration?.hold === "housing", "People here / housing") : stat("Population", fmtPopulation(body.population))}${stat("Inbound", `${fmt(body.inbound_migrants)} people`)}${stat("Food use", `×${body.provisions_mult.toFixed(2)}`)}${stat("Settlement appeal", `×${body.population_growth_mult.toFixed(2)}`)}${status ? stat("Immigration", status.text, status.warn, status.tip, true) : ""}</div><div class="deck-policy"><span>Immigration policy</span>${policyButtons}</div><div class="deck-inline-form"><select data-deck-relocation-target>${options}</select><button type="button" data-deck-act="relocate-migrants" ${options && body.population * 1_000_000 >= cohort * 2 ? "" : "disabled"}>Relocate ${cohort.toLocaleString()}</button></div>`;
   }
 
   private structureBuilder(dynamic: SystemStateView, body: BodyView, poolFilter?: Pool): string {
@@ -1602,10 +1717,11 @@ export class DeckEmpireRoutes {
     }).join("");
     const attachment = option.key === "service_berth";
     const category = attachment ? "Warehouse attachment" : state.foundsNew ? POOL_LABEL[state.pool] : `${POOL_LABEL[state.pool]} · upgrade to tier ${state.targetTier}`;
-    const slot = option.key === "command_center" ? "Dedicated civic footprint · no extra slot" : option.key === "power_plant" ? "Own slot · one per planet" : option.key === "vault" ? "Under the Command Center · no slot" : option.key === "assembly_hall" ? "At the Command Center · no slot" : attachment ? "Attached to Warehouse · no extra slot" : state.foundsNew ? `${POOL_LABEL[state.pool]} ${pools[state.pool].used} → ${pools[state.pool].used + 1}/${pools[state.pool].total}` : "Deepens in place";
+    const slot = option.key === "command_center" ? "Dedicated civic footprint · no extra slot" : option.key === "power_plant" ? "Own slot · one per planet" : option.key === "vault" ? "Under the Command Center · no slot" : option.key === "assembly_hall" ? "At the Command Center · no slot" : option.key === "veil_projector" ? "Off the Fusion Plant · no slot" : attachment ? "Attached to Warehouse · no extra slot" : state.foundsNew ? `${POOL_LABEL[state.pool]} ${pools[state.pool].used} → ${pools[state.pool].used + 1}/${pools[state.pool].total}` : "Deepens in place";
     const recipe = option.key === "smelter" ? option.refining_recipes?.find(r => body.deposits?.some(d => d.resource === r.inputs[0][0])) ?? option.conversion : undefined;
     const comparison = recipe ? refiningComparison(this.ctx.state, dynamic, body.id, recipe) : "";
-    const description = option.description ?? STRUCTURE_DESCRIPTION[option.key] ?? "Adds a new capability to this world.";
+    const description = (option.key === "power_plant" ? powerPlantFlavour(state.targetTier) : undefined)
+      ?? option.description ?? STRUCTURE_DESCRIPTION[option.key] ?? "Adds a new capability to this world.";
     return `<article class="deck-build-detail"><header>${structureImage(option.key, state.targetTier, "md", undefined, "deck-structure-icon")}<span><small>${esc(category)}</small><h3>${esc(option.label)}</h3></span></header><p>${esc(description)}</p>${option.conversion ? `<p class="deck-production-recipe">${esc(conversionSummary(option))}</p>` : ""}<table class="deck-cost-table" aria-label="Construction requirements"><thead><tr><th aria-label="Resource"></th><th scope="col">Cost</th><th scope="col">Stock</th></tr></thead><tbody>${costs}</tbody></table><dl><div><dt>Build time</dt><dd>${fmtBuildDur(structureBuildSeconds(option, body, openingBuild(option.key, state.targetTier, dynamic.id, body)))}</dd></div><div><dt>Slot</dt><dd>${slot}</dd></div></dl>${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${comparison}</article>`;
   }
 
@@ -1629,7 +1745,7 @@ export class DeckEmpireRoutes {
     const quantity = Math.min(Math.max(1, this.shipQuantity), max);
     const fitOkay = fitLegal(hull, this.effectiveFit(dynamic.id, hull));
     const canQueue = state.buildable && quantity <= state.maxAff && fitOkay;
-    return `<div class="deck-builder__commit"><span><small>Selected hull</small><b>${esc(buildName(hull))} ×${quantity}</b></span><button type="button" class="is-primary" data-deck-act="builder-queue-ships" ${canQueue ? "" : "disabled"}>Queue ${quantity} hull${quantity === 1 ? "" : "s"}</button></div>`;
+    return `<div class="deck-builder__commit"><span><small>Selected hull</small><b>${esc(buildName(hull))} ×${quantity}</b></span><button type="button" class="is-primary" data-deck-act="builder-queue-ships" data-coach="queue-build" ${canQueue ? "" : "disabled"}>Queue ${quantity} hull${quantity === 1 ? "" : "s"}</button></div>`;
   }
 
   private shipDetail(dynamic: SystemStateView, body: BodyView, option: BuildOpt): string {
@@ -1641,18 +1757,51 @@ export class DeckEmpireRoutes {
     this.shipQuantity = quantity;
     const supply = constructionStock(dynamic, option.key).available;
     const costs = option.costs.map((cost) => {
-      const commodity = cost.commodity as Commodity;
+      // §reactors-drives: the recipe names rung 1 in the hull's size; the
+      // yard fits the reactor and drive the card chose.
+      const commodity = engineGoodFor(cost.commodity as Commodity, this.pendingReactor, this.pendingDrive);
       const need = cost.units * quantity;
       const have = supply.get(commodity) ?? 0;
       return `<div class="deck-cost${have < need ? " is-short" : ""}"><span>${commodityGlyph(commodity)} ${esc(label(commodity))}</span><b>${need} <small>${quantity > 1 ? `${cost.units}×${quantity} · ` : ""}have ${fmt(have)}</small></b></div>`;
     }).join("");
     const quantities = [...new Set([1, 5, 10, max])].filter((value) => value <= max).map((value) => `<button type="button" data-deck-act="builder-quantity" data-quantity="${value}" aria-selected="${quantity === value}">${value === max && max > 10 ? `Max ${value}` : value}</button>`).join("");
-    const fit = this.fitPicker(dynamic, hull);
+    const fit = this.enginePicker(hull, option) + this.fitPicker(dynamic, hull);
     const fitOkay = fitLegal(hull, this.effectiveFit(dynamic.id, hull));
     const gate = SHIP_YARD[hull] ?? { yard: "shipyard", tier: 1 };
     const siteTime = (state.yardBody ?? body).ship_build_time_mult ?? 1;
     const buildTime = state.buildRate > 0 ? fmtBuildDur(option.build_secs * siteTime / state.buildRate) : "Awaiting workforce";
-    return `<article class="deck-build-detail"><header>${icon(shipIcon(hull), "lg", undefined, "deck-hull-icon")}<span><small>${esc(YARD_TITLE[gate.yard] ?? label(gate.yard))} · Tier ${gate.tier}</small><h3>${esc(buildName(hull))}</h3></span></header><p>${esc(stats?.role ?? "Fleet hull")}</p><ship-model-preview kind="${hull}"></ship-model-preview>${hullStatsHtml(hull)}<div class="deck-quantity"><span>Quantity</span>${quantities}</div><div class="deck-costs">${costs}</div><dl><div><dt>Build time</dt><dd>${buildTime}</dd></div><div><dt>Site</dt><dd>${esc((state.yardBody ?? body).name)} · ×${siteTime.toFixed(2)}</dd></div></dl>${fit}${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${!fitOkay ? `<div class="deck-build-warning">The composed fit exceeds this hull's fitting budget or module slots.</div>` : ""}</article>`;
+    // §licences: the Authority's licence, for an Orbital Shipyard or Slipway hull.
+    const note = licenceNote(state.licence);
+    const licence = note ? `<div><dt>Licence</dt><dd>${esc(note)}${licenceForSale(state.licence)
+      ? ` <button type="button" class="is-primary" data-deck-act="builder-buy-licence" data-hull="${hull}" title="Bought once at the Hub, kept for good">Buy</button>` : ""}</dd></div>` : "";
+    return `<article class="deck-build-detail"><header>${icon(shipIcon(hull), "lg", undefined, "deck-hull-icon")}<span><small>${esc(YARD_TITLE[gate.yard] ?? label(gate.yard))} · Tier ${gate.tier}</small><h3>${esc(buildName(hull))}</h3></span></header><p>${esc(stats?.role ?? "Fleet hull")}</p><ship-model-preview kind="${hull}"></ship-model-preview>${hullStatsHtml(hull)}<div class="deck-quantity"><span>Quantity</span>${quantities}</div><div class="deck-costs">${costs}</div><dl><div><dt>Build time</dt><dd>${buildTime}</dd></div><div><dt>Site</dt><dd>${esc((state.yardBody ?? body).name)} · ×${siteTime.toFixed(2)}</dd></div>${licence}</dl>${fit}${state.reason ? `<div class="deck-build-warning">${esc(state.reason)}</div>` : ""}${!fitOkay ? `<div class="deck-build-warning">The composed fit exceeds this hull's fitting budget or module slots.</div>` : ""}</article>`;
+  }
+
+  /** §reactors-drives: the reactor and drive for the next build. Only known
+   * rungs are offered (Peter, Oct 28 2026: nothing research has not unlocked
+   * is rendered), so a row appears only once a second rung is known; a drive
+   * the chosen reactor cannot power, or a Maelstrom on a ship of the line, is
+   * not offered. Prices from the Hub book. */
+  private enginePicker(hull: ShipKind, option: BuildOpt): string {
+    const engines = option.costs.find((cost) => lightBase(cost.commodity as Commodity) === "fission_reactor")?.units ?? 0;
+    if (!engines) return "";
+    const line = ["battleship", "dreadnought", "titan"].includes(hull);
+    const reactors = REACTOR_GRADES.filter(reactorKnown);
+    const drivesFor = (r: ReactorGrade) => DRIVES.filter((d) => driveKnown(d) && reactorPowers(r, d) && !(line && d === "maelstrom"));
+    if (!reactors.includes(this.pendingReactor)) this.pendingReactor = "fission";
+    if (!drivesFor(this.pendingReactor).includes(this.pendingDrive)) this.pendingDrive = "zephyr";
+    const drives = drivesFor(this.pendingReactor);
+    const price = (good: Commodity) => this.ctx.state.market?.prices.find((entry) => entry.commodity === good)?.price;
+    const chip = (act: "builder-reactor" | "builder-drive", key: string, good: Commodity, name: string, pressed: boolean, note: string) => {
+      const quote = price(good);
+      return `<button type="button" data-deck-act="${act}" data-${act === "builder-reactor" ? "reactor" : "drive"}="${key}" aria-pressed="${pressed}">${commodityGlyph(good)} ${esc(name)} · ${esc(note)}${quote ? ` · ${fmt(quote)} Cr` : ""}</button>`;
+    };
+    const row = (title: string, chips: string) => `<section class="deck-fit deck-core-picker"><h4>${title} · ${engines}</h4><div class="deck-fit-chips">${chips}</div></section>`;
+    const reactorRow = reactors.length < 2 ? "" : row("Reactor", reactors.map((r) =>
+      chip("builder-reactor", r, REACTOR_GOOD[r], REACTOR_LABEL[r], this.pendingReactor === r, label(REACTOR_FUEL[r]))).join(""));
+    const driveRow = drives.length < 2 ? "" : row("Drive", drives.map((d) =>
+      chip("builder-drive", d, DRIVE_GOOD[d], DRIVE_LABEL[d], this.pendingDrive === d, `×${DRIVE_SPEED[d]} speed`)).join(""));
+    return reactorRow + driveRow;
   }
 
   private fitPicker(dynamic: SystemStateView, hull: ShipKind): string {
@@ -1777,8 +1926,8 @@ function systemName(ctx: CoreContext, id: string): string {
   return ctx.state.galaxy?.systems.find((entry) => entry.id === id)?.name ?? id;
 }
 
-function stat(name: string, value: string, warn = false, tip = ""): string {
-  return `<span class="deck-stat${warn ? " is-warn" : ""}"${tip ? ` title="${esc(tip)}"` : ""}><small>${esc(name)}</small><b>${esc(value)}</b></span>`;
+function stat(name: string, value: string, warn = false, tip = "", wide = false): string {
+  return `<span class="deck-stat${warn ? " is-warn" : ""}${wide ? " is-wide" : ""}"${tip ? ` title="${esc(tip)}"` : ""}><small>${esc(name)}</small><b>${esc(value)}</b></span>`;
 }
 
 /** §node: the system's exotic node, its bonus in the tooltip. */

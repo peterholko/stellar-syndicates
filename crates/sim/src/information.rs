@@ -102,6 +102,7 @@ mod tests {
         s.stockpile.insert(Commodity::Alloys, 85.0);
         s.owner = Some(PlayerId(72));
         w.build_queue.push(BuildJob {
+            charged: Vec::new(),
             id: 99,
             construction_yard: None,
             owner,
@@ -116,6 +117,8 @@ mod tests {
             ship_work: None,
             join: None,
             loadout: Default::default(),
+            reactor: Default::default(),
+            drive: Default::default(),
         });
         w.record_information();
         // Persistence must retain the old private picture AND the future report.
@@ -145,6 +148,7 @@ mod tests {
         let started = w.time;
         let body = w.systems.iter().find(|s| s.id == id).unwrap().bodies[0].id;
         w.build_queue.push(BuildJob {
+            charged: Vec::new(),
             id: 100, owner, system: id, body_id: body,
             construction_yard: None,
             what: crate::BuildKind::Ship { ship: crate::ShipKind::Convoy },
@@ -152,7 +156,7 @@ mod tests {
             queued_tick: None, structure_work: None,
             ship_work: Some(crate::build::BuildWork {
                 required: 1000.0, completed: 0.0, at_tick: w.tick, rate: 1.25,
-            }), join: None, loadout: Default::default(),
+            }), join: None, loadout: Default::default(), reactor: Default::default(), drive: Default::default(),
         });
         w.record_information();
         w.tick += 150;
@@ -567,7 +571,6 @@ impl InformationHistory {
                 unknown.blockade = None;
                 unknown.blockade_prev = None;
                 unknown.stockpile.clear();
-                unknown.modules.clear();
                 unknown.specialists.clear();
                 for body in &mut unknown.bodies {
                     body.founding_camp = None;
@@ -847,6 +850,9 @@ impl InformationHistory {
                 for amount in system.stockpile.values_mut() {
                     *amount = amount.floor();
                 }
+                // §stores-flows: the flows at their reported grain, likewise.
+                system.flows = quantized_flows(&system.flows).collect();
+                system.flow_tick.clear();
                 history.push_back(SiteReport {
                     at: world.time,
                     tick: world.tick,
@@ -905,7 +911,6 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         claimed_at,
         stockpile,
         industry,
-        modules,
         legacy_extractor_tier,
         legacy_depot_tier,
         legacy_shipyard_tier,
@@ -921,6 +926,8 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         trait_,
         garrison_fed,
         garrison_suppression,
+        veil_up,
+        veil_never,
         cache_claimed,
         legacy_structures,
         legacy_population,
@@ -929,6 +936,8 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         landing_holds,
         storage_mult,
         twin_campuses,
+        flows,
+        flow_tick: _,
     } = stored;
     *id == live.id
         && *pos == live.pos
@@ -940,7 +949,6 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         && *claimed_at == live.claimed_at
         && floored_stockpile_matches(stockpile, &live.stockpile)
         && *industry == live.industry
-        && *modules == live.modules
         && *legacy_extractor_tier == live.legacy_extractor_tier
         && *legacy_depot_tier == live.legacy_depot_tier
         && *legacy_shipyard_tier == live.legacy_shipyard_tier
@@ -956,6 +964,8 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         && *trait_ == live.trait_
         && *garrison_fed == live.garrison_fed
         && *garrison_suppression == live.garrison_suppression
+        && *veil_up == live.veil_up
+        && *veil_never == live.veil_never
         && *cache_claimed == live.cache_claimed
         && *legacy_structures == live.legacy_structures
         && *legacy_population == live.legacy_population
@@ -964,6 +974,25 @@ fn site_system_matches(stored: &StarSystem, live: &StarSystem) -> bool {
         && *landing_holds == live.landing_holds
         && *storage_mult == live.storage_mult
         && *twin_campuses == live.twin_campuses
+        && quantized_flows_match(flows, &live.flows)
+}
+
+/// §stores-flows: the reported flows, rounded to their grain with the goods
+/// that round to nothing left out (`flow_tick` is this tick's scratch).
+pub fn quantized_flows(
+    live: &BTreeMap<crate::cargo::Commodity, crate::production::Flow>,
+) -> impl Iterator<Item = (crate::cargo::Commodity, crate::production::Flow)> + '_ {
+    live.iter().map(|(c, f)| (*c, crate::production::quantized_flow(*f)))
+        .filter(|(_, f)| f.made != 0.0 || f.used != 0.0)
+}
+
+/// The stored (quantized) flows against the live ones, quantized the same way
+/// the report would store them: a steady economy makes no new report.
+fn quantized_flows_match(
+    stored: &BTreeMap<crate::cargo::Commodity, crate::production::Flow>,
+    live: &BTreeMap<crate::cargo::Commodity, crate::production::Flow>,
+) -> bool {
+    stored.iter().map(|(c, f)| (*c, *f)).eq(quantized_flows(live))
 }
 
 /// Station hardpoints match when their fits do and their health is in the

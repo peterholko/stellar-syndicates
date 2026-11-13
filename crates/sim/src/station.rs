@@ -1,13 +1,18 @@
 //! §orbital-defense: THE STATION LADDER. Every system can raise one orbital
-//! defense station, level by level, from a Gun Platform to a Star Fortress
+//! defense station, level by level, from a Laser Battery to a Star Fortress
 //! (the `OrbitalDefense` structure; its tier is the level). Each level is its
-//! own construction project, gated by research (all but the Gun Platform) and
+//! own construction project, gated by research (all but the Laser Battery) and
 //! by the system's yards, and the station keeps fighting at its old level
 //! while the next one builds.
 //!
 //! §gun-platform (Peter, Oct 30 2026): the founding charter's defense, built
 //! straight after the first pirate raid from kit Alloys and Machinery: one
 //! salvaged gun, half a Defense Platform, needing no research.
+//! §laser-battery (Peter, Nov 1 2026: "a ground based defensive structure
+//! after the initial pirate raid"): level 1 is a Laser Battery standing on the
+//! ground, with the Gun Platform's numbers. The station goes into orbit at
+//! level 2, the Defense Platform, which replaces it. In battle it fires from
+//! the same spot as every level: a ground battery's laser reaches low orbit.
 //!
 //! A station fights through its HARDPOINTS: one at levels 1–2, six at level 6.
 //! Each is a stationary battery in battle with its own hull and its own fit
@@ -69,7 +74,7 @@ pub struct Level {
     /// Weapon reach multiple of every hardpoint (ships run 0.6–1.2).
     pub reach: f64,
     /// The research that unlocks raising a station to this level ("" for
-    /// none: the Gun Platform).
+    /// none: the Laser Battery).
     pub research: &'static str,
     /// A yard the system must already hold, at this tier or better.
     pub yard: Option<(StructureKind, u32)>,
@@ -81,7 +86,7 @@ pub struct Level {
 pub const LEVELS: [Level; 6] = [
     Level {
         level: 1,
-        name: "Gun Platform",
+        name: "Laser Battery",
         hardpoints: 1,
         hull: 300.0,
         aw: 1.5,
@@ -92,7 +97,8 @@ pub const LEVELS: [Level; 6] = [
             costs: &[(Commodity::Alloys, 25.0), (Commodity::Machinery, 10.0)],
             build_ticks: 20 * HZ,
         },
-        description: "One salvaged gun in orbit. Joins every battle within 1,300 su of the system; pirate raiders leave its worlds alone.",
+        // Peter (Nov 9 2026): "too wordy".
+        description: "One ground laser. Pirates leave defended worlds alone.",
     },
     Level {
         level: 2,
@@ -107,7 +113,7 @@ pub const LEVELS: [Level; 6] = [
             costs: &[(Commodity::Alloys, 35.0), (Commodity::Electronics, 15.0), (Commodity::Armaments, 15.0)],
             build_ticks: 22 * HZ,
         },
-        description: "One beam battery in orbit. Joins every battle within 1,300 su of the system and keeps a blockade contested while it fires.",
+        description: "One beam battery in orbit, replacing the Laser Battery. Joins every battle within 1,300 su of the system and keeps a blockade contested while it fires.",
     },
     Level {
         level: 3,
@@ -351,10 +357,14 @@ mod tests {
         let fortress = LEVELS.last().unwrap();
         assert!(total(fortress) >= 3.0 * titan, "three Titans of hull");
         assert!(fire(fortress) >= 2.0 * crate::ship::ShipKind::Titan.attack_weight(), "two Titans of guns");
+        // §hull-ladder (Nov 7 2026): hulls climbed ×5 a rung (a Titan is 130M)
+        // and the station ladder did not move — the whole ladder now costs
+        // about a Cruiser. Defence this cheap next to the capitals it stops is
+        // NOT a settled design: flagged for Peter in docs/hull-ladder-plan.md.
         let cumulative: f64 = LEVELS.iter().map(value).sum();
-        let titan_value: f64 = crate::build::recipe_for(crate::build::BuildKind::Ship { ship: crate::ship::ShipKind::Titan })
+        let cruiser_value: f64 = crate::build::recipe_for(crate::build::BuildKind::Ship { ship: crate::ship::ShipKind::Cruiser })
             .costs.iter().map(|(c, n)| crate::market::base_price(*c) * n).sum();
-        assert!((2.0..3.0).contains(&(cumulative / titan_value)), "about two and a half Titans: {}", cumulative / titan_value);
+        assert!((1.0..1.5).contains(&(cumulative / cruiser_value)), "about a Cruiser: {}", cumulative / cruiser_value);
     }
 
     #[test]

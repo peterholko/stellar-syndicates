@@ -32,7 +32,7 @@ impl TacticalState {
     }
 
     pub(crate) fn set_escorts(&mut self, guards: BTreeMap<EntityId, EntityId>) -> bool {
-        if !matches!(self.rules, Rules::V4 { .. } | Rules::V5 { .. } | Rules::V6 { .. } | Rules::V7 { .. } | Rules::V8 { .. } | Rules::V9 { .. } | Rules::V10 { .. } | Rules::V11 { .. } | Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. }) || self.escorts == guards { return false; }
+        if !matches!(self.rules, Rules::V4 { .. } | Rules::V5 { .. } | Rules::V6 { .. } | Rules::V7 { .. } | Rules::V8 { .. } | Rules::V9 { .. } | Rules::V10 { .. } | Rules::V11 { .. } | Rules::V12 { .. } | Rules::V13 { .. } | Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. } | Rules::V17 { .. }) || self.escorts == guards { return false; }
         self.escorts = guards;
         true
     }

@@ -95,6 +95,8 @@ export interface PictureSiege {
   progress: number | null;
   /** 0..1 of the garrison pinned by bombardment. */
   suppression: number;
+  /** §veil: the ionised sky is up (guns pin nothing, only Transports land). */
+  veil: boolean;
   landing: { id: string; marines: number; defenders: number } | null;
 }
 
@@ -427,6 +429,7 @@ export function deriveSystemPicture(input: SystemPictureInput): SystemPicture {
       progress: blockade && blockade.siege_since !== null
         ? (siegeClock(blockade, input.simTime, galaxy.siege_secs)?.pct ?? 0) / 100 : null,
       suppression: Math.max(0, Math.min(1, dynamic?.ground?.suppression ?? latest?.suppression ?? 0)),
+      veil: !!dynamic?.ground?.veil?.up,
       landing: landingRecord ? {
         id: landingRecord.id,
         marines: latest?.marines_frac ?? 1,

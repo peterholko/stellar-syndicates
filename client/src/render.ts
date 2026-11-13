@@ -5,6 +5,8 @@
 // report, so own and rival positions use the same delayed-picture grammar.
 
 import { blockadeBadge } from "./core/derive/blockade";
+import { shipmentFollowLeft } from "./core/derive/founding";
+import { fmtDur } from "./core/derive/format";
 import { Application, Assets, ColorMatrixFilter, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import { label } from "./icons";
 import { battleRecordMarkKey, reportMarkKey } from "./battlehistory";
@@ -18,7 +20,8 @@ import { StarTextureCache } from "./startextures";
 import { COMBAT_HULL_LENGTH_SCALE, fleetArtKind, shipArtwork, shipArtUrl, type ShipArtKind } from "./shipart";
 import { SHIP_FORMATIONS } from "./ship-art.generated";
 import { beltChunkUrl, beltKind, buildVisualSystem, SystemViewScene, type CameraRect, type SystemBodyDetail, type SystemScenePick } from "./systemview";
-import { TrackingInset, type TrackingTarget, type TrackingWork } from "./trackinginset";
+import { TrackingInset, type TrackingTarget, type TrackingWork, type TrackingVoice } from "./trackinginset";
+import { advisorOnDuty } from "./core/derive/advisor";
 import { deriveSystemPicture, trackedHull, type SystemPicture } from "./systemtraffic";
 import { traderOf } from "./core/derive/trader";
 import { contactBadgePx } from "./core/derive/map-markers";
@@ -28,7 +31,7 @@ import { NEAR_ZONE_SU, ORBIT_TILT, SYSTEM_UNIT_SU, orbitalAngle, planetPeriod, s
 import { ringSlot } from "./systemtrafficlayer";
 import { loadNameLayers, nameLayerOf, type NameLayers } from "./core/map-layers";
 import { terminatorTexture } from "./systembodyfx";
-import { starSpinAngle } from "./systemstarfx";
+import { RollingStar } from "./starroll";
 import { planetArtwork } from "./planetart";
 import { shipKindLabel } from "./core/derive/fleet";
 import { sensorMultiplier } from "./core/derive/equipment";
@@ -67,8 +70,13 @@ const NEBULA_HAZE: Partial<Record<NebulaKind, number>> = {
  * for a raider gone from the picture (destroyed, or lost) before ending. */
 const RAID_CAMERA_MAX_MS = 5 * 60_000;
 const RAID_CAMERA_LOST_MS = 10_000;
+/** §export-follow: the longest the window follows the first shipment out of
+ * the home well (sim founding::EXPORT_FOLLOW_MAX_S). */
+const SHIPMENT_CAMERA_MAX_MS = 90_000;
 /** §raid-camera: its first frame places the hull, then frames its length. */
 const RAID_FIRST_LOOK: TrackingTarget = { x: 0, y: 0, px: 36, lx: 0, ly: 0, title: "", color: 0 };
+/** §charting: the bodies a system scene was built from, by id. */
+const rosterOf = (bodies: readonly BodyView[]): string => bodies.map((b) => b.id).join(",");
 const GALAXY_OVERSHOOT = 1.6; // system handoff: separations keep opening as the galaxy fades
 const SCHEMATIC_GROW_FROM = 0.35; // system handoff: planets arrive outward from their star
 const easeInOut = (t: number): number => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
@@ -627,7 +635,7 @@ export class Renderer {
   private systemBodies = new Map<string, Sprite>();
   /// §system-approach: each star's resolved disc (the System View's own art),
   /// crossfading over its lens flare through the final dive.
-  private systemDiscs = new Map<string, { sprite: Sprite; slug: string }>();
+  private systemDiscs = new Map<string, { sprite: RollingStar; slug: string }>();
   /// The schematic's scale during a system handoff, so the galaxy's orbit
   /// preview of that star draws exactly where the System View draws it.
   private handoffGrowth: { id: string; scale: number } | null = null;
@@ -689,11 +697,18 @@ export class Renderer {
   /// with the orrery's data but never with its camera.
   private trackingInset = new TrackingInset();
   private trackingScene = new SystemViewScene({ tracking: true });
+  /** §charting: the rosters the orrery and the tracking scene were built from. */
+  private systemRoster = "";
+  private trackingRoster = "";
   private trackingInsetOn = false;
-  /// §raid-camera: the incoming raider the tracking window follows, and its home.
-  private raid: { id: string; systemId: string; sinceMs: number; seenMs: number } | null = null;
+  /// §raid-camera: the ship the tracking window follows, an incoming raider
+  /// or (§export-follow) the first shipment leaving home, and its system.
+  private raid: { id: string; systemId: string; kind: "raid" | "shipment"; sinceMs: number; seenMs: number } | null = null;
   /// §raid-frame: the window's note while the raider is still inbound.
   private raidNote: string | null = null;
+  /// §charter-advisor: the Charter Advisor beside the raid's window, its line
+  /// the raid's (Peter, Nov 9 2026); null for a shipment or with no advisor.
+  private raidVoice: TrackingVoice | null = null;
   private mode: MapViewMode = { type: "galaxy" };
   private transition: Transition | null = null;
   /// Semantic progress: 0 = galaxy endpoint, 1 = system/battle endpoint. Timed
@@ -1450,6 +1465,7 @@ export class Renderer {
       this.systemScene.starVisibleDiameterPx(), this.app.renderer.resolution);
     const vis = buildVisualSystem(sys, bodies);
     this.systemScene.setSystem(vis, loaded?.texture ?? null, art);
+    this.systemRoster = rosterOf(bodies);
     // Re-entering a star never resumes an old orrery zoom: the handoff meets
     // the System View at rest, where the galaxy's preview of it stands.
     this.systemScene.resetZoom(true);
@@ -2979,17 +2995,21 @@ export class Renderer {
     }
     let sprite = pooled?.sprite;
     if (!sprite) {
-      sprite = this.bodyLayer.addChild(new Sprite(disc.texture));
+      sprite = this.bodyLayer.addChild(new RollingStar(disc.texture, slug));
       this.systemDiscs.set(id, { sprite, slug });
-    } else if (sprite.texture !== disc.texture) {
-      sprite.texture = disc.texture;
+    } else {
+      if (sprite.texture !== disc.texture) sprite.texture = disc.texture;
+      if (pooled!.slug !== slug) {
+        sprite.setStar(slug);
+        pooled!.slug = slug;
+      }
     }
     const diameter = rendered * (DISC_RESOLVE_FROM + (1 - DISC_RESOLVE_FROM) * shown);
     sprite.anchor.set(disc.art.anchor[0], disc.art.anchor[1]);
     sprite.position.set(s.x, s.y);
     sprite.scale.set(diameter / (disc.art.visualRatio * disc.texture.width));
     sprite.alpha = Math.min(1, shown / DISC_OPAQUE_AT);
-    sprite.rotation = starSpinAngle(slug, performance.now() / 1000);
+    sprite.roll(performance.now() / 1000);
     sprite.visible = true;
     return true;
   }
@@ -2998,8 +3018,8 @@ export class Renderer {
   /// the chart geometry itself is idle (drawSystems skips its rebuild).
   private spinStarDiscs(): void {
     const t = performance.now() / 1000;
-    for (const { sprite, slug } of this.systemDiscs.values()) {
-      if (sprite.visible) sprite.rotation = starSpinAngle(slug, t);
+    for (const { sprite } of this.systemDiscs.values()) {
+      if (sprite.visible) sprite.roll(t);
     }
   }
 
@@ -3319,11 +3339,15 @@ export class Renderer {
    * quiet where it went to ground. Until it is in view again, the map marks
    * the spot: an amber "?" with its name. Oct 30 2026 (Peter: "a Galaxy Map
    * marker that indicates the area of last known pirate contact, i.e. the
-   * hunting area"): ringed by the area an Interceptor lies in wait in. */
+   * hunting area"): ringed by the area an Interceptor lies in wait in.
+   * §den-retreat (Nov 12 2026): a founder with a den sees him go home to it,
+   * so the den's own "☠ PRIVATEER DEN" marks the spot instead. */
   private drawPrivateerLastSeen(state: ViewState): void {
     const f = state.founding;
     const at = f?.privateer_last_seen;
-    const show = !!f && !!at && !!f.privateer && !state.ghosts.some((ghost) => ghost.id === f.privateer);
+    // The server names the privateer only while it is in this view
+    // (`known_privateer`), so a missing id means out of sight, not unknown.
+    const show = !!f && !!at && f.den == null && !state.ghosts.some((ghost) => ghost.id === f.privateer);
     this.lastSeenLayer.visible = show;
     if (!show || !f || !at) return;
     const p = this.worldToScreen(at);
@@ -3423,7 +3447,8 @@ export class Renderer {
   private drawRaidCourse(screenById: Map<string, { x: number; y: number }>): void {
     const g = this.raidCourseGfx;
     g.clear();
-    const raid = this.raid;
+    // §export-follow: a followed shipment shows its own order line to the Hub.
+    const raid = this.raid?.kind === "raid" ? this.raid : null;
     const from = raid ? screenById.get(raid.id) : undefined;
     const home = raid ? this.galaxy?.systems.find((s) => s.id === raid.systemId) : undefined;
     if (!from || !home) return;
@@ -4470,6 +4495,11 @@ export class Renderer {
       const sid = this.systemScene.currentId();
       const dyn = sid ? state.systems.find((s) => s.id === sid) : undefined;
       const fixed = sid ? this.galaxy?.systems.find((s) => s.id === sid) : undefined;
+      // §charting: a body charted while the orrery shows its system joins it.
+      if (fixed && dyn && rosterOf(dyn.bodies) !== this.systemRoster) {
+        this.systemRoster = rosterOf(dyn.bodies);
+        this.systemScene.syncRoster(buildVisualSystem(fixed, dyn.bodies));
+      }
       const picture = fixed && this.galaxy ? deriveSystemPicture({
         system: fixed,
         dynamic: dyn,
@@ -4561,21 +4591,39 @@ export class Renderer {
   private updateRaidCamera(state: ViewState): string | null {
     const raid = this.raid;
     this.raidNote = null;
+    this.raidVoice = null;
+    // §charter-advisor: their face is ready before the raid comes.
+    const onDuty = advisorOnDuty(state.founding);
+    if (onDuty) this.trackingInset.preloadFace(onDuty.portrait);
     if (!raid || !this.galaxy) return null;
     const now = performance.now();
     const ghost = state.ghosts.find((g) => g.id === raid.id);
     if (ghost) raid.seenMs = now;
     const sys = this.galaxy.systems.find((s) => s.id === raid.systemId);
-    if (!sys || now - raid.sinceMs > RAID_CAMERA_MAX_MS || now - raid.seenMs > RAID_CAMERA_LOST_MS) {
+    const maxMs = raid.kind === "raid" ? RAID_CAMERA_MAX_MS : SHIPMENT_CAMERA_MAX_MS;
+    if (!sys || now - raid.sinceMs > maxMs || now - raid.seenMs > RAID_CAMERA_LOST_MS) {
       this.raid = null;
       return null;
     }
     if (!ghost || !this.trackingInsetOn || this.mode.type === "battle") return null;
-    // §raid-frame (Peter, Oct 27 2026): "Raider detected on course for
-    // <System>", until it crosses the hyperlimit to loot.
-    if (Math.hypot(ghost.pos.x - sys.pos.x, ghost.pos.y - sys.pos.y) > this.galaxy.hyperlimit) {
+    const outside = Math.hypot(ghost.pos.x - sys.pos.x, ghost.pos.y - sys.pos.y) > this.galaxy.hyperlimit;
+    if (raid.kind === "shipment") {
+      // §export-follow: the window follows the shipment to the well's edge,
+      // where it warps for the Hub and the follow ends.
+      if (outside) {
+        this.raid = null;
+        return null;
+      }
+      const left = shipmentFollowLeft(state, ghost, sys.pos);
+      this.raidNote = left != null ? `FIRST SHIPMENT · WARP IN ${fmtDur(left)}` : "FIRST SHIPMENT · OUTBOUND";
+    } else if (outside) {
+      // §raid-frame (Peter, Oct 27 2026): "Raider detected on course for
+      // <System>", until it crosses the hyperlimit to loot.
       this.raidNote = `RAIDER DETECTED · ON COURSE FOR ${sys.name.toUpperCase()}`;
     }
+    // §charter-advisor: the officer on duty speaks the raid's line beside it.
+    const advisor = raid.kind === "raid" ? onDuty : null;
+    if (advisor) this.raidVoice = { portrait: advisor.portrait, name: advisor.name, line: advisor.moments.raid };
     const dyn = state.systems.find((s) => s.id === sys.id);
     this.showTrackingSystem(sys, dyn);
     const picture = trackedHull(deriveSystemPicture({
@@ -4596,7 +4644,7 @@ export class Renderer {
     }), ghost, sys.pos);
     const mine = !!dyn && dyn.owner !== null && dyn.owner === state.playerId;
     const frame = (seen: TrackingTarget): boolean => {
-      if (!this.trackingInset.prepare(this.trackingScene, raid.id, seen, this.cameraRect, "center")) return false;
+      if (!this.trackingInset.prepare(this.trackingScene, raid.id, seen, this.cameraRect, "center", this.raidVoice)) return false;
       this.trackingScene.setReport(dyn ?? null, mine);
       this.trackingScene.setPicture(picture);
       this.trackingScene.update(dyn?.owner ?? null, state.playerId, performance.now(), liveSimTime() - picture.age);
@@ -4620,8 +4668,14 @@ export class Renderer {
       this.trackingScene.setSystem(buildVisualSystem(sys, dyn?.bodies ?? []), loaded?.texture ?? null, starArtwork("system", st.slug));
       this.trackingScene.setShipArt((ghost) => this.fleetMarker(ghost), () => this.texBattleOngoing);
       this.trackingScene.setHaze(this.hazeFor(sys));
-    } else if (loaded) {
-      this.trackingScene.setStarArt(loaded.texture, loaded.art);
+      this.trackingRoster = rosterOf(dyn?.bodies ?? []);
+    } else {
+      if (loaded) this.trackingScene.setStarArt(loaded.texture, loaded.art);
+      // §charting: as the orrery does.
+      if (rosterOf(dyn?.bodies ?? []) !== this.trackingRoster) {
+        this.trackingRoster = rosterOf(dyn?.bodies ?? []);
+        this.trackingScene.syncRoster(buildVisualSystem(sys, dyn?.bodies ?? []));
+      }
     }
     this.trackingScene.setDynamic(dyn?.bodies ?? [],
       (dyn?.builds ?? []).map((build) => ({ key: build.key, body_id: build.body_id })), dyn?.habitat_fed ?? true);
@@ -4632,7 +4686,16 @@ export class Renderer {
   /// stop (null).
   trackRaid(id: string | null, systemId: string | null = null): void {
     const now = performance.now();
-    this.raid = id && systemId ? { id, systemId, sinceMs: now, seenMs: now } : null;
+    this.raid = id && systemId ? { id, systemId, kind: "raid", sinceMs: now, seenMs: now } : null;
+  }
+
+  /// §export-follow (Peter, Nov 2 2026): follow the first shipment out of the
+  /// home well in the tracking window (desktop deck), or stop (null) without
+  /// disturbing a raid the window is following.
+  trackShipment(id: string | null, systemId: string | null = null): void {
+    const now = performance.now();
+    if (id && systemId) this.raid = { id, systemId, kind: "shipment", sinceMs: now, seenMs: now };
+    else if (this.raid?.kind === "shipment") this.raid = null;
   }
 
   /// §tracking: draw the tracking scene into the inset, after the live 3D
@@ -4650,6 +4713,12 @@ export class Renderer {
       this.trackingInset.hide();
       console.warn("Tracking inset unavailable this frame.", error);
     }
+  }
+
+  /// §charter-advisor: the Charter Advisor is on screen beside the raid's
+  /// window now (the desktop deck); their raid pop-up then stays down.
+  raidVoiced(): boolean {
+    return this.raid?.kind === "raid" && this.trackingInset.voiced();
   }
 
   /// §tracking: the desktop deck shows the System View's tracking inset.

@@ -1,23 +1,37 @@
-import { postVictoryHandoff } from "../../core/derive/handoff";
+import { postVictoryHandoff, type HandoffGoal } from "../../core/derive/handoff";
 import { operationReward, operationTitle } from "../../core/derive/format";
-import { icon, label } from "../../icons";
+import { label } from "../../icons";
 import { state } from "../../state";
 import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
 
-export function handoffHtml(compact = false): string {
+export function handoffHtml(): string {
   const goals = postVictoryHandoff();
   if (!goals.length) return "";
-  return `<section class="deck-section deck-handoff"><header><div><h3>Your next chapter</h3><p>Found a colony, strengthen your fleet and develop home.</p></div></header>
-    <div class="deck-handoff__goals${compact ? " is-compact" : ""}">${goals.map(g => `<article class="deck-handoff__goal${g.done ? " is-done" : ""}" data-handoff-goal="${g.id}">
-      <header>${icon(g.id === "colony" ? "colony" : g.id === "camp" ? "build" : "corvette", "lg")}<div><h4>${esc(g.title)}</h4><small>${esc(g.status)}</small></div></header>
-      ${compact ? "" : `<p>${esc(g.summary)}</p><ul aria-label="Requirements">${g.requirements.map(r => `<li class="${r.met ? "is-met" : ""}"><span aria-label="${r.met ? "Met" : "Needed"}">${r.met ? "✓" : "○"}</span>${esc(r.text)}</li>`).join("")}</ul>
-      ${g.costs.length ? `<table><caption>Hull costs · local stock</caption><thead><tr><th>Resource</th><th>Cost</th><th>Stock</th></tr></thead><tbody>${g.costs.map(c => `<tr><th>${esc(label(c.commodity))}</th><td>${c.units}</td><td class="${c.stock < c.units ? "is-short" : ""}">${c.stock}</td></tr>`).join("")}</tbody></table>` : ""}
-      <p class="deck-handoff__payoff"><b>${g.id === "colony" ? "Reward" : "Gain"}</b> ${esc(g.payoff)}</p>`}
-      <button type="button" data-deck-act="handoff-open" data-goal="${g.id}" ${g.action ? "" : "disabled"}>${esc(g.actionLabel)}</button>
-      ${!compact && !g.done && g.prospect ? `<button type="button" data-deck-act="handoff-prospect" data-goal="${g.id}">Inspect ${esc(state.galaxy?.systems.find(s => s.id === g.prospect)?.name ?? "prospect")}</button>` : ""}
-      ${!compact && !g.done && g.funding ? `<button type="button" class="deck-handoff__funding" data-deck-act="handoff-contract" data-goal="${g.id}"><span>Fund this · ${esc(operationTitle(g.funding))}</span><small>${esc(operationReward(g.funding))} · ${g.funding.joined ? "active contract" : "view requirements"}</small></button>` : ""}
-    </article>`).join("")}</div>${compact ? `<button type="button" class="deck-section-link" data-deck-act="handoff-details">Requirements &amp; contract rewards</button>` : `<p class="deck-handoff__note">Contract rewards arrive with completion reports. Build costs use received local stock, including docked Freighters.</p>`}</section>`;
+  return `<section class="deck-section deck-handoff"><header><div><h3>Your next chapter</h3></div><b>${goals.filter(g => g.done).length}/${goals.length}</b></header>`
+    + `<div class="deck-handoff__goals">${goals.map(goalRow).join("")}</div></section>`;
+}
+
+/** §ops-compact (Peter, Oct 31 2026): one row per goal. Its checklist, hull
+ * cost and reward ride the tooltip; a shortfall shows while the next step is
+ * building the hull. */
+function goalRow(g: HandoffGoal): string {
+  const tip = [
+    ...g.requirements.map(r => `${r.met ? "✓" : "○"} ${r.text}`),
+    ...(g.costs.length ? [`Hull cost: ${g.costs.map(c => `${c.units} ${label(c.commodity)}`).join(" · ")}`] : []),
+    `${g.id === "colony" ? "Reward" : "Gain"}: ${g.payoff}`,
+  ].join("\n");
+  const short = g.short.length
+    ? ` · <span class="is-short" title="Local stock, docked Freighters included.">Short ${g.short.map(c => `${c.units} ${esc(label(c.commodity))}`).join(" · ")}</span>` : "";
+  const more = [
+    !g.done && g.prospect ? `<button type="button" data-deck-act="handoff-prospect" data-goal="${g.id}">Inspect ${esc(state.galaxy?.systems.find(s => s.id === g.prospect)?.name ?? "prospect")}</button>` : "",
+    !g.done && g.funding ? `<button type="button" data-deck-act="handoff-contract" data-goal="${g.id}" title="${esc(`${operationReward(g.funding)} · ${g.funding.joined ? "active contract" : "view requirements"}`)}">Fund this · ${esc(operationTitle(g.funding))}</button>` : "",
+  ].join("");
+  return `<article class="deck-handoff__goal${g.done ? " is-done" : ""}" data-handoff-goal="${g.id}" title="${esc(tip)}">`
+    + `<div><b>${esc(g.title)}</b><small>${esc(g.status)}${short}</small></div>`
+    + `<button type="button" data-deck-act="handoff-open" data-goal="${g.id}" ${g.action ? "" : "disabled"}>${esc(g.actionLabel)}</button>`
+    + (more ? `<div class="deck-handoff__more">${more}</div>` : "")
+    + `</article>`;
 }
 
 interface HandoffHooks {

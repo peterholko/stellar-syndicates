@@ -52,6 +52,27 @@ fn view_divisor(view_hz: Option<u8>) -> u64 {
     }
 }
 
+/// The subprotocol a handshake answers with. §client-updates (Nov 11 2026): a
+/// tab left open across a protocol bump offers its old `stellar.msgpack.vN`.
+/// Chromium fails a handshake that names none of the offered protocols (code
+/// 1006, which the client retries for ever), so the server names the tab's own
+/// and `handle_socket` closes it with [`wire::PROTOCOL_CLOSE_CODE`], which the
+/// client shows as "Network protocol changed. Reload the game."
+pub(crate) fn accepted_protocol(headers: &HeaderMap) -> std::borrow::Cow<'static, str> {
+    const FAMILY: &str = "stellar.msgpack.v";
+    let offered: Vec<&str> = headers.get_all(axum::http::header::SEC_WEBSOCKET_PROTOCOL).iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .collect();
+    if offered.contains(&wire::SUBPROTOCOL) {
+        return wire::SUBPROTOCOL.into();
+    }
+    offered.into_iter()
+        .find(|p| p.strip_prefix(FAMILY).is_some_and(|n| (1..=5).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit())))
+        .map_or(wire::SUBPROTOCOL.into(), |p| p.to_owned().into())
+}
+
 /// axum handler: upgrade the HTTP request to a WebSocket.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
@@ -66,7 +87,7 @@ pub async fn ws_handler(
     auth.check_origin(&headers)?;
     let session = auth.authenticate(&headers).await?;
     let client = ClientInfo::new(peer.ip(), &headers, auth.device(&headers));
-    Ok(ws.protocols([wire::SUBPROTOCOL])
+    Ok(ws.protocols([accepted_protocol(&headers)])
         .max_message_size(wire::MAX_CLIENT_FRAME)
         .max_frame_size(wire::MAX_CLIENT_FRAME)
         .on_upgrade(move |socket| handle_socket(socket, handle, session, Some((activity, client)))))

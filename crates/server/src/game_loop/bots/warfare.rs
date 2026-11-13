@@ -42,7 +42,7 @@ impl Bot {
 
     fn ready_warship(&self, p: &Observation, f: &GhostView) -> bool {
         f.kind.is_combatant() && f.supplied && !f.stalled && f.guard_target.is_none()
-            && !p.fighting.contains(&f.id) && f.damage.unwrap_or(1.0) <= 0.15
+            && !p.fighting.contains(&f.id) && f.damage.unwrap_or(1.0) <= 0.15 && !p.den_wounded.contains(&f.id)
             && !self.returns.contains_key(&f.id) && self.ready(&format!("fleet:{}", f.id), p.now)
             && f.jump_spool.is_none() && f.jump_presumed.is_none()
     }
@@ -59,7 +59,8 @@ impl Bot {
                 }
                 continue;
             }
-            if f.damage.unwrap_or(0.0) > 0.2 && !p.at_den(f) {
+            // §stash: the den's blast victims are mended whole, as the charter asks.
+            if (f.damage.unwrap_or(0.0) > 0.2 || p.den_wounded.contains(&f.id)) && !p.at_den(f) {
                 // §repair: a Shipyard mends hulls as a Foundry does.
                 let yard = p.sites.iter().filter(|s| sim::build::REPAIR_YARDS.iter().any(|&k| s.system.tier(k) > 0)
                     && p.enough_fuel(f, s.system.pos)).min_by(|a, b|
@@ -191,7 +192,10 @@ impl Bot {
                 let site = p.military_sites.iter().find(|s| s.id == id)?;
                 // Assemble enough troops at a shared berth before committing
                 // any individual transport to a stronger ground garrison.
-                let need = sim::ground::break_even_marines(site.intel.garrison_tier as f64, 0.0) * 1.5;
+                // §veil: assume the worst sky — a Veil III shreds a fifth of a
+                // landing — so a wave is sized for what reaches the ground.
+                let need = sim::ground::break_even_marines(site.intel.garrison_tier as f64, 0.0) * 1.5
+                    / (1.0 - sim::ground::veil_descent_loss(sim::ground::VEIL_MAX_LEVEL));
                 let transports: Vec<_> = p.own().filter(|f| f.kind == H::Transport && f.docked.is_some()
                     && f.docked.as_deref() != Some("hub") && f.captain.is_none() && f.supplied
                     && self.ready(&format!("fleet:{}", f.id), p.now)).collect();
@@ -211,7 +215,8 @@ impl Bot {
                     for troop in p.own().filter(|f| composition(f).get(&H::Transport).copied().unwrap_or(0) > 0) {
                         let key = format!("fleet:{}", troop.id);
                         let marines: u32 = composition(troop).iter().map(|(k, n)| sim::ship::marine_capacity(*k) * n).sum();
-                        let need = sim::ground::break_even_marines(site.intel.garrison_tier as f64, 0.0);
+                        let need = sim::ground::break_even_marines(site.intel.garrison_tier as f64, 0.0)
+                            / (1.0 - sim::ground::veil_descent_loss(sim::ground::VEIL_MAX_LEVEL));
                         if self.ready(&key, p.now) && !p.fighting.contains(&troop.id) && troop.vel.length_sq() < 1.0
                             && troop.pos.distance(site.pos) > sim::transit::HYPERLIMIT
                             && marines as f64 >= need * 1.5 && p.enough_fuel(troop, site.pos) {

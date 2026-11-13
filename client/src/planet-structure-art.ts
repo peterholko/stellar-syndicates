@@ -37,9 +37,13 @@ export function planetStructureImage(key: string, tier: number, sizes: string, o
     return `<img class="icon planet-structure-art is-quarry-art" src="${base}-1280.webp" srcset="${base}-640.webp 640w, ${base}-1280.webp 1280w, ${base}-1672.webp 1672w" sizes="${escapeAttribute(sizes)}" alt="" draggable="false" decoding="async">`;
   }
   // §orbital-defense: the station hangs in the sky as its level's art.
+  // §laser-battery: level 1 is the Laser Battery, a turret on the ground (the
+  // retired Defense Platform's first building).
   if (key === "orbital_defense") {
     const level = Number.isFinite(tier) ? Math.min(6, Math.max(1, Math.floor(tier))) : 1;
-    return sceneImage(`/art/derived/stations/v2/level-${level}`, sizes, "icon planet-structure-art");
+    if (level > 1) return sceneImage(`/art/derived/stations/v2/level-${level}`, sizes, "icon planet-structure-art");
+    key = LASER_BATTERY_ART;
+    tier = 1;
   }
   const shipyard = ["shipyard", "naval_drydock", "capital_slipway"].includes(key);
   const maxTier = shipyard ? 6 : Object.hasOwn(SURFACE_STRUCTURE_TIERS, key) ? SURFACE_STRUCTURE_TIERS[key] : 0;
@@ -56,14 +60,18 @@ export function planetStructureImage(key: string, tier: number, sizes: string, o
   const base = shipyard ? `/art/derived/planet-shipyards/v1/${key}/tier-${level}${variant}`
     : orbital ? `${SURFACE_BASE}/buildings/${key}/orbital-${orbital}`
     : `${SURFACE_BASE}/buildings/${key}/tier-${level}`;
-  const ground = surface && SURFACE_GROUND_LAYERS.includes(surface) && !isOrbitalYard(key) && key !== "service_berth"
+  const ground = surface && SURFACE_GROUND_LAYERS.includes(surface) && !isOrbitalYard(key, level) && key !== "service_berth"
     ? sceneImage(`${SURFACE_BASE}/grounds/${surface}`, sizes, "planet-structure-ground") : "";
   return ground + sceneImage(base, sizes, "icon planet-structure-art");
 }
 
-/** In orbit rather than on the ground: the orbital yards and the station. */
-export function isOrbitalYard(key: string): boolean {
-  return key === "naval_drydock" || key === "capital_slipway" || key === "orbital_defense";
+/** §laser-battery: the ground turret art the Laser Battery stands in. */
+export const LASER_BATTERY_ART = "defense_platform";
+
+/** In orbit rather than on the ground: the orbital yards, and the station from
+ * level 2 (§laser-battery: its level 1 stands on the ground). */
+export function isOrbitalYard(key: string, tier: number): boolean {
+  return key === "naval_drydock" || key === "capital_slipway" || (key === "orbital_defense" && tier >= 2);
 }
 
 /** Fixed image-plane anchors in the starfield above all twelve painted horizons.
@@ -73,7 +81,7 @@ export function isOrbitalYard(key: string): boolean {
  * `painted`: the scene is a painting with space added above its 16:9 ground
  * frame (§planet-orbit), so orbit sits in that band, at negative y. */
 export function orbitalYardAddress(key: string, tier = 1, painted = false): { x: number; y: number; scale: number } | undefined {
-  if (!isOrbitalYard(key)) return undefined;
+  if (!isOrbitalYard(key, tier)) return undefined;
   // §orbital-defense: the station grows with its level (planet-panel.css) and
   // hangs a little lower as it does, clear of the sky's top edge.
   const level = Math.min(6, Math.max(1, Math.floor(tier)));

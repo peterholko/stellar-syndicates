@@ -104,7 +104,7 @@ assert.equal(signals.sendRows(view.signals[2], captains, ghosts, home, now, (b) 
 
 const found = signals.findRows(view.signals[3], "Interceptor", now, (id) => id);
 assert.deepEqual(copy(found), [
-  { label: "Point Defense Screen crate", value: "aboard the Interceptor" },
+  { label: "Point Defense Screen", value: "aboard the Interceptor" },
   { label: "34 Alloys, 8 Machinery", value: "left for a Freighter" },
   { label: "Experience · Mara Venn", value: "+45", tone: "good" },
   { label: "Mara Venn hurt", value: "back in 1h 0m", tone: "warn" },

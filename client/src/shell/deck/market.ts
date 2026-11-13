@@ -1,18 +1,18 @@
+import { goodKnown } from "../../core/derive/fleet";
 import { hubCut, isEmbargoed } from "../../core/derive/season";
 import { hubDockedFleets, shipKindLabel } from "../../core/derive/fleet";
 import { agoLabel, fmt, fmtDur, informationDelay, rejectText, trend } from "../../core/derive/format";
 import { systemName } from "../../core/derive/geo";
 import {
   COMMODITIES,
+  knownCommodities,
   commodityPurpose,
   freightDraft,
   freightDraftEntries,
   marketAverageQuote,
   marketReservations,
-  moduleRecipeValue,
   pruneMarketReservations,
   recentMarketOrders,
-  PAYMENT_MARGIN,
   recordRecentMarketOrder,
   reserveMarketOrder,
   settleMarketReservation,
@@ -41,7 +41,7 @@ import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
 import { transactionsHtml } from "../transactions";
 
-export type DeckMarketTab = "exchange" | "warehouse" | "specialists" | "modules" | "transactions";
+export type DeckMarketTab = "exchange" | "warehouse" | "specialists" | "transactions";
 
 export interface DeckTradeNotice {
   title: string;
@@ -56,8 +56,6 @@ interface MarketHooks {
 }
 
 const MARKET_PROTECTION_FRAC = 0.10;
-const MODULE_BUY_MULT = 2.0;
-const MODULE_SELL_MULT = 0.5;
 
 const SPECIALISTS: { slug: string; icon: IconKey; blurb: string }[] = [
   { slug: "geologist", icon: "extractor", blurb: "mineral extraction" },
@@ -67,7 +65,8 @@ const SPECIALISTS: { slug: string; icon: IconKey; blurb: string }[] = [
   { slug: "naval_architect", icon: "shipyard", blurb: "shipyards, hulls, drives and armaments" },
 ];
 
-import { MODULES, isBlueprintOnly } from "../../core/derive/equipment";
+import { goodsTab, goodsTabsOf, isGoodsTab, pickGoodsTab, type GoodsTab } from "../../core/derive/goods";
+import { goodsTabsHtml } from "./goods-tabs";
 
 /** The routed Market is one served picture: the board, ticket, warehouse,
  * contracts and freight desk all read the same delayed View. Local reservations
@@ -75,14 +74,17 @@ import { MODULES, isBlueprintOnly } from "../../core/derive/equipment";
  * they never pretend that a client estimate is an execution. */
 export class DeckMarketRoutes {
   private tab: DeckMarketTab = "exchange";
+  /** §goods-tabs: the Exchange's and the Warehouse's Resources · Parts · Modules. */
+  private goodsTab: GoodsTab = "resources";
   private side: Side = "buy";
-  private commodity: Commodity = "deuterium";
+  /** §reactors-drives: Uranium, the one fuel every corporation knows from the start. */
+  private commodity: Commodity = "uranium";
   private quantity = 50;
   private limitOn = false;
   private limitPrice = 0;
   private freightDirection: ShipmentDir = "outbound";
   private freightSystem = "";
-  private freightCommodity: Commodity = "deuterium";
+  private freightCommodity: Commodity = "uranium";
   private freightQuantity = 100;
   private freightSellOnArrival = false;
   private feedback = "";
@@ -104,11 +106,11 @@ export class DeckMarketRoutes {
     const state = this.ctx.state;
     const readiness = `${!!this.accountReport()}:${!!state.market?.prices.length}`;
     const signature = sheetFingerprint([
-      route, this.tab, this.side, this.commodity, this.quantity, this.limitOn, this.limitPrice,
+      route, this.tab, this.goodsTab, this.side, this.commodity, this.quantity, this.limitOn, this.limitPrice,
       this.freightDirection, this.freightSystem, this.freightCommodity, this.freightQuantity,
       this.freightSellOnArrival, freightDraftEntries(), this.feedback, Math.floor(liveSimTime()),
       state.market, state.wallet, state.charter, state.freight,
-      state.priceHistory, state.systems.map((system) => [system.id, system.owner, system.stockpile, system.storage_used, system.storage_cap, system.modules]),
+      state.priceHistory, state.systems.map((system) => [system.id, system.owner, system.stockpile, system.storage_used, system.storage_cap]),
       hubDockedFleets().map((fleet) => [fleet.id, fleet.kind, fleet.count_class, fleet.composition, fleet.cargo, fleet.cargo_manifest, state.pendingOrders.get(fleet.id)]),
       marketReservations, recentMarketOrders, state.transactions,
     ]);
@@ -127,7 +129,7 @@ export class DeckMarketRoutes {
   handleAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
     if (route?.name !== "market") return false;
     const action = button.dataset.deckAct;
-    if (!this.accountReport() && ["market-submit", "market-cancel", "market-hire", "market-module-buy", "market-module-sell", "freight-submit"].includes(action ?? "")) {
+    if (!this.accountReport() && ["market-submit", "market-cancel", "market-hire", "freight-submit"].includes(action ?? "")) {
       this.render(route, true);
       return true;
     }
@@ -156,8 +158,8 @@ export class DeckMarketRoutes {
       }
     } else if (action === "market-hire") {
       this.hireSpecialist(button.dataset.specialist);
-    } else if (action === "market-module-buy" || action === "market-module-sell") {
-      this.tradeModule(button.dataset.module, action === "market-module-buy");
+    } else if (action === "market-goods-tab") {
+      if (isGoodsTab(button.dataset.goodsTab)) this.goodsTab = button.dataset.goodsTab;
     } else if (action === "market-hub-fleet") {
       const id = button.dataset.fleet;
       const fleet = id ? hubDockedFleets().find((candidate) => candidate.id === id) : undefined;
@@ -237,7 +239,7 @@ export class DeckMarketRoutes {
     const state = this.ctx.state;
     const account = this.accountReport();
     const stale = state.market?.staleness ?? 0;
-    const tabs = (["exchange", "warehouse", "specialists", "modules", "transactions"] as DeckMarketTab[])
+    const tabs = (["exchange", "warehouse", "specialists", "transactions"] as DeckMarketTab[])
       .map((tab) => `<button type="button" data-deck-act="market-tab" data-tab="${tab}" aria-selected="${this.tab === tab}">${esc(label(tab))}</button>`).join("");
     // Ticker, account and fleet reports arrive independently. A missing account
     // hides only its values and spending actions, never the entire Market. No
@@ -245,18 +247,23 @@ export class DeckMarketRoutes {
     const body = this.tab === "transactions" ? transactionsHtml(state)
       : this.tab === "exchange" ? this.exchangeHtml()
       : this.tab === "warehouse" ? this.warehouseHtml()
-        : this.tab === "specialists" ? this.specialistsHtml()
-          : this.modulesHtml();
+        : this.specialistsHtml();
     return `<section class="deck-page deck-market">` +
       `<div class="deck-stat-grid deck-market__stats">${stat("Credits", state.credits !== null ? `${fmt(spendableMarketCredits())} Cr` : "—")}${stat("Equity", account ? `${fmt(account.valuation)} Cr` : "—")}${stat("Market report", state.market ? informationDelay(stale) : "—", stale > 0.5 ? "stale" : "")}</div>` +
       `<nav class="deck-tabs" aria-label="Market sections">${tabs}</nav>${!account ? `<div class="deck-market-feedback" role="status">Account report pending · balances and trading unlock when its light arrives.</div>` : ""}${this.feedback ? `<div class="deck-market-feedback">${esc(this.feedback)}</div>` : ""}${body}</section>`;
   }
 
   private exchangeHtml(): string {
+    // §reactors-drives: never a ticket for a good research has not opened.
+    if (!goodKnown(this.commodity)) this.commodity = "uranium";
     const market = this.ctx.state.market;
     const account = this.accountReport();
     const stale = (market?.staleness ?? 0) > 0.5;
-    const board = COMMODITIES.map((commodity) => {
+    // §goods-tabs: the board in Resources · Parts · Modules.
+    const known = knownCommodities();
+    const tabs = goodsTabsOf(known);
+    const tab = pickGoodsTab(this.goodsTab, tabs);
+    const board = known.filter((commodity) => goodsTab(commodity) === tab).map((commodity) => {
       const quote = market?.prices.find((entry) => entry.commodity === commodity);
       const history = this.ctx.state.priceHistory[commodity] ?? [];
       const price = quote?.price;
@@ -267,7 +274,7 @@ export class DeckMarketRoutes {
         `<em class="is-${movement.tone}">${price === undefined ? "—" : `${stale ? "~" : ""}${price.toFixed(2)}`} ${movement.glyph}</em>` +
         `<small>${quote ? quote.available_buy === quote.available_sell ? `depth ${quote.available_buy}` : `buy depth ${quote.available_buy} · sell depth ${quote.available_sell}` : "no arrived quote"}</small></button>`;
     }).join("");
-    return `<div class="deck-market-layout"><section class="deck-section deck-market-board"><header><div><h3>Observed prices</h3></div><b class="deck-stale-value">${market ? esc(informationDelay(market.staleness)) : "Awaiting quotes"}</b></header><div class="deck-market-board__head"><span>Commodity</span><span>History</span><span>Price</span><span>Liquidity</span></div>${board}</section>` +
+    return `<div class="deck-market-layout"><section class="deck-section deck-market-board"><header><div><h3>Observed prices</h3></div><b class="deck-stale-value">${market ? esc(informationDelay(market.staleness)) : "Awaiting quotes"}</b></header>${goodsTabsHtml("market-goods-tab", tab, tabs, "Goods")}<div class="deck-market-board__head"><span>Commodity</span><span>History</span><span>Price</span><span>Liquidity</span></div>${board}</section>` +
       `${this.ticketHtml()}</div><div class="deck-market-orders">${this.ordersHtml()}</div>`;
   }
 
@@ -317,7 +324,11 @@ export class DeckMarketRoutes {
 
   private warehouseHtml(): string {
     const account = this.accountReport();
-    const holdings = account ? COMMODITIES.map((commodity) => ({ commodity, units: warehouseUnits(commodity) })).filter((row) => row.units > 0) : [];
+    const held = account ? COMMODITIES.map((commodity) => ({ commodity, units: warehouseUnits(commodity) })).filter((row) => row.units > 0) : [];
+    // §goods-tabs: the Warehouse in Resources · Parts · Modules too.
+    const tabs = goodsTabsOf(held.map((row) => row.commodity));
+    const tab = pickGoodsTab(this.goodsTab, tabs);
+    const holdings = held.filter((row) => goodsTab(row.commodity) === tab);
     const ledger = holdings.map((row) => `<span>${commodityIcon(row.commodity)}<small>${esc(label(row.commodity))}</small><b>${row.units}</b></span>`).join("");
     const berths = hubDockedFleets().map((fleet) => {
       const manifest = fleetCargoManifest(fleet);
@@ -328,7 +339,7 @@ export class DeckMarketRoutes {
       return `<article class="deck-berth"><button type="button" data-deck-act="market-hub-fleet" data-fleet="${esc(fleet.id)}">${icon("manifest", "md")}<span><b>${esc(shipKindLabel(fleet.kind))} fleet</b><small>${esc(count)} · ${esc(cargo)}</small></span><em>›</em></button>${manifest.length ? `<button type="button" data-deck-act="market-hub-unload" data-fleet="${esc(fleet.id)}" ${unloadQueued ? "disabled" : ""}>${icon("unload", "sm")} ${unloadQueued ? "Unload queued" : "Unload all"}</button>` : ""}</article>`;
     }).join("");
     const shipments = (this.ctx.state.freight?.shipments ?? []).map((shipment) => `<div class="deck-order-row"><span>${icon("authorityFreighter", "sm")}<span><b>${shipment.units} ${esc(label(shipment.commodity))} ${shipment.direction === "outbound" ? "→" : "←"} ${esc(systemName(shipment.system))}</b><small>${shipment.aboard ? "aboard" : "awaiting departure"}${shipment.direction === "inbound" && shipment.sell_on_arrival ? " · sells on arrival" : ""}</small></span></span></div>`).join("");
-    return `<div class="deck-market-warehouse"><div class="deck-market-column"><section class="deck-section"><header><h3>Market Warehouse</h3><b>${account ? holdings.reduce((sum, row) => sum + row.units, 0) : "—"}</b></header><div class="deck-ledger">${ledger || (account ? `<span><small>Warehouse</small><b>empty</b></span>` : `<span>Awaiting account report.</span>`)}</div></section>` +
+    return `<div class="deck-market-warehouse"><div class="deck-market-column"><section class="deck-section"><header><h3>Market Warehouse</h3><b>${account ? held.reduce((sum, row) => sum + row.units, 0) : "—"}</b></header>${goodsTabsHtml("market-goods-tab", tab, tabs, "Goods")}<div class="deck-ledger">${ledger || (account ? `<span><small>Warehouse</small><b>empty</b></span>` : `<span>Awaiting account report.</span>`)}</div></section>` +
       `<section class="deck-section"><header><h3>Shipments</h3><b>${this.ctx.state.freight?.shipments.length ?? 0}</b></header>${shipments || `<div class="deck-empty-inline">No freight booked.</div>`}</section></div>` +
       `<div class="deck-market-column"><section class="deck-section"><header><h3>Docked fleets</h3><b>${hubDockedFleets().length}</b></header><div class="deck-berth-list">${berths || `<div class="deck-empty-inline">No fleets reported docked.</div>`}</div></section>` +
       `${this.freightHtml()}</div></div>`;
@@ -363,7 +374,7 @@ export class DeckMarketRoutes {
     const arrival = departures > 1 ? `${fmtDur(wait + flight)}–${fmtDur(finalWait + flight)}` : fmtDur(wait + flight);
     const manifest = entries.map((entry) => `<div class="deck-order-row"><span>${commodityIcon(entry.commodity)}<span><b>${entry.units} ${esc(label(entry.commodity))}</b><small>mixed manifest line</small></span></span><button type="button" data-deck-act="freight-remove" data-commodity="${entry.commodity}">Remove</button></div>`).join("");
     const systems = terms.map((entry) => `<option value="${esc(entry.system)}" ${entry.system === this.freightSystem ? "selected" : ""}>${esc(systemName(entry.system))}</option>`).join("");
-    const commodities = COMMODITIES.map((commodity) => `<option value="${commodity}" ${commodity === this.freightCommodity ? "selected" : ""}>${esc(label(commodity))}</option>`).join("");
+    const commodities = knownCommodities().map((commodity) => `<option value="${commodity}" ${commodity === this.freightCommodity ? "selected" : ""}>${esc(label(commodity))}</option>`).join("");
     return `<section class="deck-section deck-freight"><header><div><h3>Book Authority freight</h3><p>One scheduled physical carrier may combine several manifest lines within its shared departure capacity.</p></div>${icon("authorityFreighter", "md")}</header>` +
       `<div class="deck-segment"><button type="button" data-deck-act="freight-direction" data-direction="outbound" aria-pressed="${this.freightDirection === "outbound"}">Warehouse → system</button><button type="button" data-deck-act="freight-direction" data-direction="inbound" aria-pressed="${this.freightDirection === "inbound"}">System → warehouse</button></div>` +
       `<div class="deck-form-grid deck-form-grid--freight"><label>System<select data-market-input="freight-system">${systems}</select></label><label>Goods<select data-market-input="freight-commodity">${commodities}</select></label><label>Quantity<input data-market-input="freight-quantity" type="number" min="1" step="1" value="${this.freightQuantity}"></label><button type="button" data-deck-act="freight-add">Add cargo</button></div>` +
@@ -378,19 +389,6 @@ export class DeckMarketRoutes {
     const home = this.accountReport() ? this.homeSystemId() : undefined;
     const rows = SPECIALISTS.map((specialist) => `<article class="deck-service-row"><span>${icon(specialist.icon, "md")}<span><b>${esc(label(specialist.slug))}</b><small>${esc(specialist.blurb)}</small></span></span><button type="button" data-deck-act="market-hire" data-specialist="${specialist.slug}" ${home && spendableMarketCredits() >= cost ? "" : "disabled"}>Hire · ${fmt(cost)} Cr</button></article>`).join("");
     return `<section class="deck-section"><header><div><h3>Available specialists</h3><p>Standing Sol contracts ship to your home on a sub-light, raidable personnel liner.</p></div></header><div class="deck-service-list deck-market-services">${rows}</div><div class="deck-ticket-quote">A posted specialist multiplies matching production lines ×1.75.</div></section>`;
-  }
-
-  private modulesHtml(): string {
-    const account = this.accountReport();
-    const home = this.homeSystem();
-    const held = home?.modules ?? {};
-    const rows = MODULES.map((module) => {
-      const value = moduleRecipeValue(module.kind);
-      const buy = value === null || isBlueprintOnly(module.kind) ? null : value * MODULE_BUY_MULT;
-      const sell = value === null ? null : value * MODULE_SELL_MULT;
-      return `<article class="deck-service-row"><span>${icon(module.icon, "md")}<span><b>${esc(module.name)}</b><small>${esc(module.role)} · held ${held[module.kind] ?? 0}</small></span></span><div><button type="button" data-deck-act="market-module-buy" data-module="${module.kind}" ${account && home && buy !== null && spendableMarketCredits() >= buy * (1 + PAYMENT_MARGIN) ? "" : "disabled"}>${isBlueprintOnly(module.kind) ? "Blueprint only" : `Buy ${buy === null ? "—" : `~${fmt(buy)} Cr`}`}</button><button type="button" data-deck-act="market-module-sell" data-module="${module.kind}" ${account && (held[module.kind] ?? 0) > 0 ? "" : "disabled"}>Sell ${sell === null ? "—" : `~${fmt(sell)} Cr`}</button></div></article>`;
-    }).join("");
-    return `<section class="deck-section"><header><div><h3>Combat modules</h3><p>Sol modules ship as physical crates. Local manufacture at an Armaments Complex remains cheaper.</p></div></header><div class="deck-service-list deck-market-services">${rows}</div></section>`;
   }
 
   private submitTrade(): void {
@@ -446,18 +444,6 @@ export class DeckMarketRoutes {
     this.ctx.send({ type: "HireSpecialist", specialist, dest_system: home });
     this.feedback = `${label(specialist)} contract dispatched to ${systemName(home)}.`;
     this.hooks.notice(`<b>Specialist contract sent</b> · ${esc(label(specialist))} → ${esc(systemName(home))}.`);
-  }
-
-  private tradeModule(value: string | undefined, buy: boolean): void {
-    const module = MODULES.find((entry) => entry.kind === value);
-    const home = this.homeSystemId();
-    if (!module || !home) return;
-    if (buy && isBlueprintOnly(module.kind)) return;
-    this.ctx.send(buy
-      ? { type: "BuyModule", module: module.kind, n: 1, dest_system: home }
-      : { type: "SellModule", module: module.kind, n: 1, from_system: home });
-    this.feedback = `${buy ? "Buy" : "Sell"} order dispatched for ${module.name}.`;
-    this.hooks.notice(`<b>Module order sent</b> · ${buy ? "Buy" : "Sell"} ${esc(module.name)}.`);
   }
 
   private applyRouteTab(route: DeckRoute): void {
@@ -610,7 +596,7 @@ export function deckTradeNotice(trade: TradeEvent): DeckTradeNotice {
 }
 
 function isMarketTab(value?: string): value is DeckMarketTab {
-  return value === "exchange" || value === "warehouse" || value === "specialists" || value === "modules" || value === "transactions";
+  return value === "exchange" || value === "warehouse" || value === "specialists" || value === "transactions";
 }
 
 function isCommodity(value?: string): value is Commodity {

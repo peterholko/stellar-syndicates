@@ -8,10 +8,8 @@
    column's own width and keeps the bottom control row clear; the tutorial, and a
    command strip taller than that row, overlap it. */
 .deck-planet-stage { position: fixed; z-index: var(--z-planet); top: var(--deck-topbar-height); left: 0; right: var(--deck-system-rail); bottom: 0; display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; padding: var(--space-3) var(--space-4) calc(var(--deck-control-height) + var(--space-3) * 2); background: var(--bg); pointer-events: auto; }
-@media (prefers-reduced-motion: no-preference) {
-  .deck-planet-stage:not([hidden]) { animation: deck-planet-stage-in .28s ease-out; }
-  @keyframes deck-planet-stage-in { from { opacity: 0; } }
-}
+.deck-planet-stage:not([hidden]) { animation: deck-planet-stage-in .28s ease-out; }
+@keyframes deck-planet-stage-in { from { opacity: 0; } }
 /* Stage body → one scene wrapper (strip above, artwork below). Every level is a
    grid track so the artwork's container-size box stretches to the real remaining
    height instead of collapsing around its absolutely positioned canvas. */
@@ -49,7 +47,7 @@
 /* Haze grows with distance: 0 at full scale, rising as a footprint recedes toward
    the limb. It is derived from the depth scale because both measure the same
    distance. */
-.deck-planet__building, .deck-planet__site, .deck-planet__selection { --planet-footprint: calc(var(--planet-building) * var(--planet-scale, 1)); --planet-haze: clamp(0, (1 - var(--planet-scale, 1)) / .3, 1.5); }
+.deck-planet__building, .deck-planet__site, .deck-planet__selection, .deck-planet__yard-ship { --planet-footprint: calc(var(--planet-building) * var(--planet-scale, 1)); --planet-haze: clamp(0, (1 - var(--planet-scale, 1)) / .3, 1.5); }
 /* The hit target is the building's own box (80% × 72% of the sprite square), the
    same box the address generator keeps apart, so neighbouring footprints never
    steal each other's clicks. The sprite, its shadow and its ring overflow it at
@@ -156,6 +154,14 @@
 .deck-planet__row-name small { color: var(--dim); font-size: var(--fs-fine); }
 .deck-planet__row-values { display: flex; flex-direction: column; align-items: end; gap: var(--space-1); font-variant-numeric: tabular-nums; }
 .deck-planet__staffed-value { display: inline-flex; align-items: center; gap: var(--space-1); }
+/* §power: the row's draw (or a plant's supply), beside output and crew; the
+   bolt sits in the workforce icon's box so the column lines up. */
+.deck-planet__power-value { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+.deck-planet__power-value b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.deck-planet__power-value small { color: var(--dim); font-size: var(--fs-fine); }
+.deck-planet__power-value.is-supply b { color: var(--positive); }
+.deck-planet__power-value.is-short b { color: var(--warn); }
+.deck-planet__power-icon { width: var(--deck-control-height); height: var(--space-6); flex: 0 0 auto; fill: var(--warn); }
 .deck .deck-planet__row-values .icon { width: var(--space-6); height: var(--space-6); }
 .deck-planet__detail { display: grid; min-width: 0; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--deck-radius); background: var(--field-bg); }
 .deck-planet__detail header { display: flex; align-items: center; gap: var(--space-2); }
@@ -211,6 +217,15 @@
 .deck-planet__scene:not(.is-orbital) .deck-planet__siege::before { top: -25.5048%; border-radius: inherit; background: radial-gradient(ellipse at 50% 70%, transparent 52%, rgba(120, 12, 12, .3) 100%); }
 .deck-planet__scene:not(.is-orbital) .deck-planet__siege-banner { top: -24.5%; }
 .deck-planet__scene:not(.is-orbital) .deck-planet__lander { --lander-from: -20%; }
+/* §veil: the ionised sky — an aurora curtain over the world's upper half. */
+.deck-planet__veil-sky { position: absolute; left: -4%; right: -4%; top: -6%; height: 58%; pointer-events: none; mix-blend-mode: screen; opacity: .9; background: linear-gradient(180deg, rgba(125, 249, 198, 0) 0%, rgba(125, 249, 198, .26) 30%, rgba(90, 210, 255, .18) 62%, rgba(90, 210, 255, 0) 100%); mask-image: repeating-linear-gradient(100deg, rgba(0, 0, 0, .35) 0 6%, rgba(0, 0, 0, 1) 10% 16%, rgba(0, 0, 0, .5) 22%); -webkit-mask-image: repeating-linear-gradient(100deg, rgba(0, 0, 0, .35) 0 6%, rgba(0, 0, 0, 1) 10% 16%, rgba(0, 0, 0, .5) 22%); mask-size: 240% 100%; -webkit-mask-size: 240% 100%; }
+.deck-planet__siege.is-veiled::before { background: radial-gradient(ellipse at 50% 62%, transparent 52%, rgba(20, 90, 80, .28) 100%); }
+.deck-planet__siege.is-veiled .deck-planet__siege-banner { border-color: rgba(125, 249, 198, .55); color: #d6fff0; }
+.deck-planet__veil { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 6px; font: 600 11px/1.3 ui-monospace, monospace; letter-spacing: .04em; }
+.deck-planet__veil button { font: inherit; padding: 3px 8px; border-radius: 5px; border: 1px solid rgba(125, 249, 198, .45); background: rgba(10, 30, 26, .6); color: #d6fff0; cursor: pointer; }
+.deck-planet__veil button[aria-pressed="false"] { border-color: rgba(255, 180, 120, .45); color: #ffd9b8; }
+.deck-planet__veil-sky { animation: planet-veil 9s linear infinite; }
+@keyframes planet-veil { from { mask-position: 0 0; -webkit-mask-position: 0 0; } to { mask-position: 240% 0; -webkit-mask-position: 240% 0; } }
 .deck-planet__siege-banner { position: absolute; left: 50%; top: 3.5%; width: max-content; max-width: 96%; box-sizing: border-box; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; padding: 6px 12px; border: 1px solid rgba(255, 77, 77, .55); border-radius: 6px; background: rgba(8, 4, 6, .82); color: #ffd1c8; font: 600 11px/1.3 ui-monospace, monospace; letter-spacing: .04em; pointer-events: auto; }
 .deck-planet__siege-banner b { color: #ff6b5c; }
 .deck-planet__siege-banner span { color: #ffb347; }
@@ -218,15 +233,9 @@
 .deck-planet__impact { position: absolute; left: var(--planet-x); top: var(--planet-y); width: clamp(14px, 3.2cqw, 54px); aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 50%; opacity: 0; background: radial-gradient(circle, rgba(255, 244, 214, .95) 0%, rgba(255, 170, 90, .7) 32%, rgba(120, 40, 20, 0) 70%); }
 .deck-planet__impact::after { content: ""; position: absolute; left: 50%; bottom: 40%; width: 70%; height: 140%; transform: translateX(-50%); border-radius: 50% 50% 40% 40%; background: radial-gradient(ellipse at 50% 80%, rgba(60, 54, 52, .55), rgba(60, 54, 52, 0) 70%); opacity: 0; }
 .deck-planet__lander { position: absolute; left: var(--planet-x); top: 0; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 11px solid #ffe08a; filter: drop-shadow(0 0 4px rgba(255, 224, 138, .8)); opacity: 0; }
-@media (prefers-reduced-motion: no-preference) {
-  .deck-planet__impact { animation: planet-impact 2.8s var(--impact-delay, 0s) infinite ease-out; }
-  .deck-planet__impact::after { animation: planet-smoke 2.8s var(--impact-delay, 0s) infinite ease-out; }
-  .deck-planet__lander { animation: planet-lander 3.4s var(--lander-delay, 0s) infinite cubic-bezier(.4, .1, .7, .9); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .deck-planet__impact { opacity: .5; }
-  .deck-planet__lander { top: calc(var(--lander-y) - 8%); opacity: .8; }
-}
+.deck-planet__impact { animation: planet-impact 2.8s var(--impact-delay, 0s) infinite ease-out; }
+.deck-planet__impact::after { animation: planet-smoke 2.8s var(--impact-delay, 0s) infinite ease-out; }
+.deck-planet__lander { animation: planet-lander 3.4s var(--lander-delay, 0s) infinite cubic-bezier(.4, .1, .7, .9); }
 @keyframes planet-impact { 0% { opacity: 0; transform: translate(-50%, -50%) scale(.25); } 6% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 30% { opacity: .55; } 100% { opacity: 0; transform: translate(-50%, -50%) scale(1.7); } }
 @keyframes planet-smoke { 0%, 8% { opacity: 0; transform: translate(-50%, 0) scale(.6); } 30% { opacity: .75; } 100% { opacity: 0; transform: translate(-50%, -60%) scale(1.5); } }
 @keyframes planet-lander { 0% { top: var(--lander-from, -4%); opacity: 0; } 12% { opacity: 1; } 85% { opacity: 1; } 100% { top: calc(var(--lander-y) - 6%); opacity: 0; } }
@@ -243,6 +252,125 @@
 .deck .deck-planet__orbit-ship:focus-visible { outline: 0; }
 .deck-planet__orbit-ship[aria-pressed="true"] > img { filter: drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 85%, transparent)) drop-shadow(0 2px 3px rgba(0, 0, 0, .6)); }
 .deck-planet__orbit-ship > small { position: absolute; right: 14%; bottom: 22%; padding: 0 5px; border: 1px solid #3b5268; border-radius: 8px; background: rgba(5, 8, 14, .78); color: #dbeaf5; font: 600 10px/1.5 ui-monospace, monospace; }
+/* §yard-repair: a hull in for repairs stands on its yard's pad, having flown
+   down from the sky. */
+.deck .deck-planet__yard-ship { position: absolute; left: var(--planet-x); top: var(--planet-y); z-index: 2; width: calc(var(--planet-footprint) * .56); height: auto; aspect-ratio: 1; min-height: 0; padding: 0; transform: translate(calc(-50% + var(--yard-ship-index, 0) * 40%), -62%); border: 0; background: transparent; pointer-events: auto; }
+.deck .deck-planet__yard-ship:hover { background: transparent; }
+.deck-planet__yard-ship > img { display: block; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 6px 4px rgba(0, 0, 0, .55)); pointer-events: none; }
+.deck-planet__yard-ship:is(:hover, :focus-visible) > img { filter: brightness(1.15) drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 60%, transparent)); }
+.deck-planet__yard-ship > small { position: absolute; left: 50%; bottom: -4%; transform: translateX(-50%); padding: 0 6px; border: 1px solid #3b5268; border-radius: 8px; background: rgba(5, 8, 14, .8); color: #dbeaf5; font: 600 10px/1.5 ui-monospace, monospace; white-space: nowrap; }
+.deck-planet__yard-ship.is-landing { animation: planet-yard-landing 2.4s cubic-bezier(.2, .7, .3, 1) both; }
+@keyframes planet-yard-landing {
+  0% { opacity: 0; translate: 0 -320%; scale: .55; }
+  20% { opacity: 1; }
+  80% { translate: 0 6%; scale: 1.02; }
+  100% { opacity: 1; translate: 0 0; scale: 1; }
+}
+/* §yard-build (Peter, Nov 9 2026): a hull on the ground Shipyard's slip stands
+   as a skeleton (blueprint ribs inside the hull's outline, its poster as the
+   mask); the built hull fills it in stern to nose (the posters face right,
+   engines left) behind an amber weld line, at the frame tick's --build (0-1).
+   §yard-bay (Peter: "have the ship in the 'garage part' of the shipyard, i.e.
+   rotate the interceptor image 90 degrees to the left"): it sits on the open
+   bay's cradle (--bay-x/--bay-y, fractions of the yard's sprite square), the
+   hull turned by --yard-hull-turn: 50° left (Peter chose it over 90°), nose
+   along the bay's rails into the hangar; its tag stays level, below it. */
+.deck .deck-planet__yard-ship.is-building { width: calc(var(--planet-footprint) * .5);
+  left: calc(var(--planet-x) + (var(--bay-x, .5) - .5) * var(--planet-footprint));
+  top: calc(var(--planet-y) + (var(--bay-y, .5) - .5) * var(--planet-footprint));
+  transform: translate(calc(-50% + var(--yard-ship-index, 0) * 30%), -50%); }
+.deck-planet__yard-hull { position: absolute; inset: 0; transform: rotate(var(--yard-hull-turn, -50deg)); pointer-events: none; }
+.deck-planet__yard-frame { position: absolute; inset: 0;
+  background: repeating-linear-gradient(90deg, rgba(127, 227, 255, .95) 0 1px, transparent 1px 4px), rgba(6, 24, 38, .62);
+  -webkit-mask: var(--poster) center / contain no-repeat; mask: var(--poster) center / contain no-repeat; }
+.deck-planet__yard-hull > img.is-hull { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; clip-path: inset(0 calc(88% - var(--build, 0) * 80%) 0 0); filter: drop-shadow(0 4px 3px rgba(0, 0, 0, .5)); }
+.deck-planet__yard-ship.is-building > small { bottom: auto; top: 84%; }
+.deck-planet__weld { position: absolute; left: calc(12% + var(--build, 0) * 80%); top: 30%; width: 2px; height: 42%; border-radius: 1px; background: #ffd08a; box-shadow: 0 0 6px #ffb347, 0 0 14px rgba(255, 170, 60, .75); animation: planet-weld .7s ease-in-out infinite alternate; }
+@keyframes planet-weld { from { opacity: .5; } to { opacity: 1; } }
+
+/* §yard-launch (Peter, Nov 9 2026: "launching into orbit and taking up its
+   regular orbit spot ... some quasi 'launch animation' instead of just
+   tweening it over there"), §takeoff ("launch more like an airplane ... have
+   the interceptor travel horizontally out of the shipyard and then up to
+   orbit"). 6 s from the bay's cradle (--launch-x/-y/-w) to the sky slot:
+   0-8% the engines spool up in the bay; 8-22% it taxis out, turning level;
+   22-43% the takeoff roll along the ground, gathering speed over
+   --launch-run; 43-50% it pitches up and lifts off; then a climb that
+   steepens as it nears the slot (x and y keyed apart), growing to its orbit
+   size, and it levels out there. The runway always points right, the way
+   the hulls' art faces (Peter: "Can we avoid that flip of the image
+   somehow?"): a hull is never mirrored. --launch-elapsed resumes it across
+   redraws. */
+.deck .deck-planet__orbit-ship.is-launching { z-index: 3; pointer-events: none;
+  animation: planet-launch-x 6s linear both, planet-launch-y 6s linear both, planet-launch-w 6s ease-in-out both;
+  animation-delay: var(--launch-elapsed, 0ms); }
+@keyframes planet-launch-x {
+  0%, 8% { left: var(--launch-x); animation-timing-function: ease-in-out; }
+  22% { left: calc(var(--launch-x) + var(--launch-w) * 1.1); animation-timing-function: cubic-bezier(.5, 0, .9, .6); }
+  43% { left: calc(var(--launch-x) + var(--launch-w) * 1.1 + var(--launch-run, 10cqw)); animation-timing-function: cubic-bezier(.2, .55, .45, 1); }
+  100% { left: var(--planet-x); }
+}
+@keyframes planet-launch-y {
+  0%, 44% { top: var(--launch-y); animation-timing-function: cubic-bezier(.5, 0, .75, .6); }
+  84% { top: calc(var(--planet-y) - 1.2%); animation-timing-function: ease-in-out; }
+  100% { top: var(--planet-y); }
+}
+@keyframes planet-launch-w { 0%, 44% { width: var(--launch-w); } 84%, 100% { width: calc(var(--orbit-hull) * 1cqw / .72); } }
+.deck-planet__launch-body { position: absolute; inset: 0; animation: planet-launch-body 6s ease-in-out both; animation-delay: var(--launch-elapsed, 0ms); }
+.deck-planet__launch-body > img { display: block; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .6)); }
+/* Its attitude: the bay's 50°, a shudder as the engines spool, a turn to
+   level for the taxi and the roll (a light rumble on the ground), nose up
+   16° at lift-off, 26° in the climb, level at the slot. Rotation only. */
+@keyframes planet-launch-body {
+  0% { rotate: var(--yard-hull-turn, -50deg); translate: 0 0; }
+  2% { translate: .4px -.3px; } 4% { translate: -.5px .3px; } 6% { translate: .3px .4px; }
+  8% { rotate: var(--yard-hull-turn, -50deg); translate: 0 0; }
+  20% { rotate: 0deg; }
+  28% { translate: 0 .3px; } 32% { translate: 0 -.3px; } 36% { translate: 0 .3px; } 40% { translate: 0 -.2px; }
+  43% { rotate: 0deg; translate: 0 0; }
+  50% { rotate: -16deg; }
+  68% { rotate: -26deg; }
+  86% { rotate: -4deg; }
+  94%, 100% { rotate: 0deg; translate: 0 0; }
+}
+/* The engines' flare, behind the stern (the posters' engines sit left, a
+   little above the middle): it lights as they spool, idles through the
+   taxi, opens up for the roll and the climb, and dies as the hull settles. */
+.deck-planet__plume { position: absolute; left: 3%; top: 34%; width: 22%; height: 11%; border-radius: 50%; transform-origin: 100% 50%;
+  background: radial-gradient(ellipse at 100% 50%, #fff 0, #ffe2a8 22%, rgba(255, 150, 50, .75) 48%, rgba(255, 110, 30, 0) 76%);
+  filter: blur(.6px); animation: planet-plume 6s linear both; animation-delay: var(--launch-elapsed, 0ms); }
+@keyframes planet-plume {
+  0%, 2% { opacity: 0; scale: .2 .6; }
+  6% { opacity: .9; scale: .9 .9; } 9% { opacity: .5; scale: .5 .8; }
+  20% { opacity: .55; scale: .6 .85; } 25% { opacity: 1; scale: 1.8 1.1; }
+  42% { opacity: 1; scale: 2.6 1.2; } 60% { opacity: 1; scale: 2.8 1.2; } 78% { opacity: .85; scale: 2 1; }
+  90%, 100% { opacity: 0; scale: .4 .6; }
+}
+/* A launch folded into "+N in orbit", or climbing away, fades as it gets there. */
+.deck .deck-planet__orbit-ship.is-folding { animation: planet-launch-x 6s linear both, planet-launch-y 6s linear both,
+  planet-launch-w 6s ease-in-out both, planet-launch-fade 6s linear both; animation-delay: var(--launch-elapsed, 0ms); }
+@keyframes planet-launch-fade { 0%, 84% { opacity: 1; } 100% { opacity: 0; } }
+/* §takeoff: a slot behind where it lifts off: the hull climbs away off the
+   top (above) and its parked self fades in at its slot as it goes. */
+.deck .deck-planet__orbit-ship.is-arriving { pointer-events: none; animation: planet-arrive 6s ease-out both; animation-delay: var(--launch-elapsed, 0ms); }
+@keyframes planet-arrive { 0%, 76% { opacity: 0; scale: .7; } 100% { opacity: 1; scale: 1; } }
+/* The engines' glow in the bay as they spool, and the dust the exhaust kicks
+   up behind the hull as it taxis and rolls, drifting back and up. Stage-wide,
+   so the roll's length (in cqw) places each puff. */
+.deck-planet__launch-smoke { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.deck-planet__launch-smoke > b { position: absolute; left: var(--launch-x); top: var(--launch-y); width: calc(var(--launch-w) * 1.2); aspect-ratio: 1; border-radius: 50%; translate: -50% -50%;
+  background: radial-gradient(circle, rgba(255, 236, 190, .8) 0, rgba(255, 170, 70, .45) 30%, rgba(255, 120, 40, 0) 68%);
+  animation: planet-launch-glow 6s ease-out both; animation-delay: var(--launch-elapsed, 0ms); }
+@keyframes planet-launch-glow { 0% { opacity: 0; scale: .3; } 6% { opacity: .75; scale: .8; } 14% { opacity: .35; scale: 1; } 24%, 100% { opacity: 0; scale: 1.2; } }
+.deck-planet__launch-smoke > i { position: absolute;
+  left: calc(var(--launch-x) + var(--launch-w) * var(--at-w, 0) + var(--launch-run, 10cqw) * var(--at-run, 0));
+  top: calc(var(--launch-y) + var(--launch-w) * .14); width: calc(var(--launch-w) * .8); aspect-ratio: 1; border-radius: 50%; translate: -50% -50%; opacity: 0;
+  background: radial-gradient(circle, rgba(226, 222, 214, .75) 0, rgba(176, 172, 165, .45) 42%, rgba(150, 146, 140, 0) 72%);
+  animation: planet-dust 1.8s ease-out both; animation-delay: calc(var(--launch-elapsed, 0ms) + var(--puff, 0ms)); }
+@keyframes planet-dust { 0% { opacity: 0; scale: .3; } 15% { opacity: .85; } 100% { opacity: 0; scale: 2.2; translate: -120% -110%; } }
+
+.deck-planet__repair { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.deck-planet__repair > span { display: grid; }
 .deck-planet__orbit-more { position: absolute; left: var(--planet-x); top: var(--planet-y); transform: translate(-50%, -50%); padding: 2px 8px; border: 1px solid #3b5268; border-radius: 10px; background: rgba(5, 8, 14, .72); color: #cfe6f5; font: 600 11px/1.4 ui-monospace, monospace; white-space: nowrap; }
 
 /* §construction: the world's work slot, pinned under its header while the
@@ -281,6 +409,8 @@
 /* Buildings still rising list beneath the built ones. */
 .deck .deck-planet__row.is-rising { border: 1px dashed var(--border); border-radius: var(--deck-radius); }
 .deck-planet__row.is-rising > .icon { opacity: .5; filter: grayscale(.5); }
+.deck .deck-planet__row.is-rising[aria-pressed="true"] { border-color: var(--accent); }
+.deck-planet__detail.is-rising header > .icon { opacity: .5; filter: grayscale(.5); }
 /* An order's tag in the list, worded as on the planet. */
 .deck-planet__tag { display: inline-block; padding: 0 var(--space-2); border: 1px solid var(--field-bd); border-radius: 999px; color: var(--dim); font-size: 11px; line-height: 16px; white-space: nowrap; }
 .deck-planet__tag.is-active { border-color: color-mix(in srgb, var(--positive) 60%, var(--field-bd)); color: var(--positive); }
@@ -292,10 +422,8 @@
 .deck-planet-scene > .deck-planet__scene { grid-row: 2; grid-column: 1; transition: filter .2s ease; }
 .deck-planet-scene.is-building > .deck-planet__scene { filter: brightness(.42) saturate(.7); pointer-events: none; }
 .deck-bsheet { container: build-sheet / inline-size; grid-row: 2; grid-column: 1; position: relative; z-index: 4; display: flex; flex-direction: column; justify-self: center; width: calc(100% - var(--space-3) * 2); max-width: 1240px; min-height: 0; margin: var(--space-3) 0; border: 1px solid var(--field-bd); border-radius: 10px; background: rgba(9, 14, 26, .9); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 24px 60px rgba(0, 0, 0, .55); overflow: hidden; }
-@media (prefers-reduced-motion: no-preference) {
-  .deck-bsheet { animation: deck-bsheet-in .18s ease-out; }
-  @keyframes deck-bsheet-in { from { opacity: 0; transform: translateY(10px); } }
-}
+.deck-bsheet { animation: deck-bsheet-in .18s ease-out; }
+@keyframes deck-bsheet-in { from { opacity: 0; transform: translateY(10px); } }
 .deck-bsheet__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-3); border-bottom: 1px solid var(--border); }
 .deck-bsheet__head h2 { margin: 0; font-size: var(--fs-title); }
 .deck-bsheet__head > .is-primary { margin-left: auto; }

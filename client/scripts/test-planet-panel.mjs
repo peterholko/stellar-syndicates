@@ -37,6 +37,8 @@ const marketDerive = compile("core/derive/market.ts");
   const curve = name => JSON.parse(rust.match(new RegExp(`pub const ${name}: \\[f64; 6\\] = (\\[[^\\]]+\\]);`))[1].replace(/_/g, ""));
   assert.deepEqual([...marketDerive.TIER_CURVE.cost], curve("TIER_COST_MULT"));
   assert.deepEqual([...marketDerive.TIER_CURVE.time], curve("TIER_TIME_MULT"));
+  // §progression: income structures climb their own curve, served as `earns`.
+  assert.deepEqual([...marketDerive.PRODUCTION_TIER_CURVE], curve("PRODUCTION_TIER_COST_MULT"));
   const slugFn = rust.slice(rust.indexOf("pub fn slug(self) -> &'static str {"), rust.indexOf("pub fn title(self)"));
   const slugs = [...slugFn.matchAll(/StructureKind::\w+ => "([a-z0-9_]+)",/g)].map(m => m[1]);
   assert.ok(slugs.length >= 30);
@@ -44,6 +46,10 @@ const marketDerive = compile("core/derive/market.ts");
   const mine = { key: "mining_complex", label: "Mining Complex", build_secs: 18,
     costs: [{ commodity: "alloys", units: 25 }, { commodity: "machinery", units: 12 }] };
   assert.equal(marketDerive.structureLevel(mine, 2), mine, "tier II keeps the base recipe");
+  const earning = { ...mine, earns: true };
+  assert.deepEqual(marketDerive.structureLevel(earning, 2).costs.map(c => c.units), [88, 42], "an income structure's level II: ×3.5");
+  assert.deepEqual(marketDerive.structureLevel(earning, 4).costs.map(c => c.units), [600, 288], "level IV: ×24");
+  assert.equal(marketDerive.structureLevel(earning, 4).build_secs, 18 * 180, "build times follow the one time curve");
   const third = marketDerive.structureLevel(mine, 3);
   assert.deepEqual(third.costs.map(c => c.units), [40, 19], "×1.6, rounded as the sim rounds");
   assert.equal(third.build_secs, 360);
@@ -74,11 +80,11 @@ deps["../../ship-models.generated"] = compile("ship-models.generated.ts");
     { id: 1, key: "warehouse", body_id: 7, queued: false, start_time: 90, complete_time: 130 },
     { id: 4, key: "warehouse", body_id: 7, queued: true, complete_time: null },
     { id: 9, key: "tiny_freighter", body_id: 7, queued: false, complete_time: 140 },
-    { id: 5, key: "camp_quarters", body_id: 7, queued: true, complete_time: null },
+    { id: 5, key: "camp_workings", body_id: 7, queued: true, complete_time: null },
   ] };
   const line = worldbuild.structureQueue(report, body, catalog, 100);
   assert.deepEqual(plain(line.map(job => [job.key, job.tier, job.position, job.active])),
-    [["warehouse", 2, 1, true], ["academy", 1, 2, false], ["warehouse", 3, 3, false], ["camp_quarters", 1, 4, false]],
+    [["warehouse", 2, 1, true], ["academy", 1, 2, false], ["warehouse", 3, 3, false], ["camp_workings", 1, 4, false]],
     "the active job leads, waiting jobs keep receipt order, hulls never take the slot, and each order builds the next tier");
   assert.deepEqual(plain(line.map(job => [job.startsIn, job.readyIn])), [[0, 30], [30, 70], [70, 670], [670, 910]],
     "estimates chain through the line at this world's construction speed, Warehouse III on the tier curve (×20)");
@@ -102,8 +108,10 @@ deps["../../ship-models.generated"] = compile("ship-models.generated.ts");
   assert.equal(worldbuild.yardStatus({ ...report.builds[3], complete_time: null }, 100), "paused · needs workforce");
   // §build-sheet: the figures the sheet quotes are the sim's own.
   const facts = (option, from, to, world) => plain(worldbuild.structureFacts({ costs: [], build_secs: 20, ...option }, from, to, { structures: {}, ...world }));
-  assert.deepEqual(facts({ key: "habitat" }, 2, 3, { habitat_capacity_mult: 1.5625 }), [{ label: "Houses", from: "78,125", to: "117,188" }],
-    "25,000 people a level × the world's habitat multiplier");
+  assert.deepEqual(facts({ key: "habitat" }, 2, 3, { habitat_capacity_mult: 1.5625 }), [{ label: "Houses", from: "25,000", to: "37,500" }],
+    "§habitat-rebase: 8,000 people a level × the world's habitat multiplier");
+  assert.deepEqual(facts({ key: "habitat" }, 1, 2, { habitat_capacity_mult: 1.5625, founding_camp: { profile: "temperate", completed: [] } }),
+    [{ label: "Houses", from: "12,500", to: "25,000" }], "a camp world's Habitat I is a plain level");
   assert.deepEqual(facts({ key: "warehouse" }, 1, 2, {}), [{ label: "Storage", from: "700", to: "1,100" }]);
   assert.deepEqual(facts({ key: "warehouse" }, 1, 2, { founding_camp: { profile: "temperate", completed: [] } }), [{ label: "Storage", from: "700", to: "1,100" }],
     "§charter-v4: a camp world's Warehouse holds its full amount; the Storehouse enlarges the ship's holds");
@@ -120,15 +128,17 @@ deps["../../ship-models.generated"] = compile("ship-models.generated.ts");
     [{ label: "Supplies", from: "48 MW", to: "68.8 MW" }, { label: "Burns", from: "Deuterium past 17.6 MW", to: "Helium-3 past 17.6 MW" }, { label: "Grid", from: "40 / 48 MW", to: "40 / 68.8 MW" }]);
   // §fuel-overhaul: I–II are Solar Arrays and burn nothing; III starts fusion on Deuterium.
   // The fusion plant keeps the solar fields: it burns only past base + solar
-  // (the base is the Command Center's 1 MW reactor, on its own planet only).
+  // (§charter-v6, Nov 7 2026: the Command Center's reactor runs the colony,
+  // nothing on the grid, so the base is 0 even on its own planet).
   assert.deepEqual(facts({ key: "power_plant" }, 2, 3, { structures: { power_plant: 2 } }).find(fact => fact.label === "Burns"),
     { label: "Burns", from: "Nothing (solar)", to: "Deuterium past 17.6 MW" });
   assert.deepEqual(facts({ key: "power_plant" }, 2, 3, { structures: { power_plant: 2, command_center: 1 } }).find(fact => fact.label === "Burns"),
-    { label: "Burns", from: "Nothing (solar)", to: "Deuterium past 18.6 MW" });
+    { label: "Burns", from: "Nothing (solar)", to: "Deuterium past 17.6 MW" });
   assert.deepEqual(facts({ key: "power_plant" }, 0, 1, {}).find(fact => fact.label === "Burns"), { label: "Burns", from: null, to: "Nothing (solar)" });
   // The heat-heavy works draw double (no furnace fuel); the Antimatter Plant ten times.
   assert.deepEqual(facts({ key: "smelter" }, 1, 2, { structures: { smelter: 1, command_center: 1 }, power: grid(2, 1) }).filter(fact => ["Power", "Grid"].includes(fact.label)),
-    [{ label: "Power", from: "2 MW", to: "4.4 MW" }, { label: "Grid", from: "2 / 1 MW", to: "4.4 / 1 MW · 22%" }], "an upgrade past the reactor warns of the brownout");
+    [{ label: "Power", from: "2 MW", to: "4.4 MW" }, { label: "Grid", from: "2 / 1 MW", to: "4.4 / 0 MW · 0%" }],
+    "§charter-v6: the Command Center's reactor is off the grid, so without a plant the upgrade warns of a dead grid");
   assert.equal(worldbuild.drawMW("antimatter_plant", 1), 10);
   assert.equal(worldbuild.drawMW("uranium_mill", 1), 1);
   assert.equal(worldbuild.gridLine({ structures: {}, power: grid(4.4, 3, .68) }).text, "⚡ 4.4 / 3 MW · Power 68%");
@@ -138,9 +148,9 @@ deps["../../ship-models.generated"] = compile("ship-models.generated.ts");
     "a new mine's rate depends on its deposit, so none is quoted; its draw is");
   // §charter-v4: no free power. The Command Center's reactor gives its own planet 1 MW.
   assert.deepEqual(facts({ key: "mining_complex" }, 0, 1, { structures: { command_center: 1 } }).find(fact => fact.label === "Grid"),
-    { label: "Grid", from: null, to: "1 / 1 MW" }, "the landing world's reactor runs the first mine");
+    { label: "Grid", from: null, to: "1 / 0 MW · 0%" }, "§charter-v6: the first mine waits for the Solar Array; the Command Center's reactor is off the grid");
   assert.deepEqual(facts({ key: "shipyard" }, 0, 1, { structures: { command_center: 1, mining_complex: 1 }, power: grid(1, 1) }).find(fact => fact.label === "Grid"),
-    { label: "Grid", from: null, to: "2 / 1 MW · 50%" }, "a Shipyard needs more than the reactor");
+    { label: "Grid", from: null, to: "2 / 0 MW · 0%" }, "a Shipyard needs a plant (§charter-v6: the reactor is off the grid)");
   assert.equal(worldbuild.baseMW({ structures: {} }), 0, "no planet has free power");
   assert.equal(worldbuild.maxLevel({ key: "service_berth" }), 1);
   assert.equal(worldbuild.maxLevel({ key: "smelter" }), 6);
@@ -250,7 +260,7 @@ assert.match(workspaceSource, /isPopoutRoute\(this\.route\) \|\| this\.route\.na
 // The fixture follows the actual authored catalogue and staffed-kind list.
 const descriptions = Object.fromEntries([...empireSource.slice(empireSource.indexOf("const STRUCTURE_DESCRIPTION"), empireSource.indexOf("import { MODULES"))
   .matchAll(/^  (\w+): "([^"]+)"/gm)].map(([, key, description]) => [key, description]));
-assert.equal(Object.keys(descriptions).length, 34);
+assert.equal(Object.keys(descriptions).length, 35); // §veil: the Veil Projector joined the catalogue
 // §construction: the staffed set lives with the work-slot model now.
 const workforceStructures = new Set(worldbuild.WORKFORCE_STRUCTURES);
 const catalog = [
@@ -308,12 +318,24 @@ for (const surface of [...deps["../../planet-surfaces"].HABITABLE_SURFACES, "ter
     assert.ok(html.includes('class="deck-planet__selection is-space"'));
   }
   // §orbital-defense: the station hangs between the yards, as its level's art.
+  // §laser-battery: level 1 stands on the ground as the turret, on a site of
+  // its own: it takes no building slot, so every free site stays offered.
+  const freeInfrastructure = (html) => (html.match(/class="deck-planet__site is-free is-infrastructure/g) ?? []).length;
+  const unguarded = freeInfrastructure(new deck.PlanetPanel().renderScene(orbitModel));
   for (let level = 1; level <= 6; level++) {
     orbitModel.body.structures.orbital_defense = level;
     const html = new deck.PlanetPanel().renderScene(orbitModel);
-    assert.match(html, new RegExp(`id="planet-spot-orbital_defense"[^>]*class="deck-planet__building is-space is-station"[^>]*--planet-x:50%;--planet-y:${stationY(level)}%;--planet-scale:1;--station-level:${level}"`),
-      "between the yards, sized by its level");
-    assert.ok(html.includes(`/art/derived/stations/v2/level-${level}-256.webp`));
+    if (level === 1) {
+      const tag = html.match(/<button id="planet-spot-orbital_defense"[^>]*>/)[0];
+      assert.doesNotMatch(tag, /is-space|is-station|in orbit/, "the Laser Battery stands on the ground");
+      assert.ok(html.includes("/planet-surface-structures/v2/buildings/defense_platform/tier-1-256.webp"), "as the ground turret");
+      assert.doesNotMatch(html, /stations\/v2\/level-1-/);
+      assert.equal(freeInfrastructure(html), unguarded, "and hides no free Infrastructure site");
+    } else {
+      assert.match(html, new RegExp(`id="planet-spot-orbital_defense"[^>]*class="deck-planet__building is-space is-station"[^>]*--planet-x:50%;--planet-y:${stationY(level)}%;--planet-scale:1;--station-level:${level}"`),
+        "between the yards, sized by its level");
+      assert.ok(html.includes(`/art/derived/stations/v2/level-${level}-256.webp`));
+    }
     assert.match(new deck.PlanetPanel().render(orbitModel), new RegExp(`Level ${level} of 6`), "a station has levels, not tiers");
     assert.equal(html.match(/id="planet-spot-shipyard"[^>]*style="([^"]+)"/)[1], oldGround, "the station never moves a ground building");
   }
@@ -351,6 +373,119 @@ for (const surface of [...deps["../../planet-surfaces"].HABITABLE_SURFACES, "ter
   html = new deck.PlanetPanel().renderScene(sky);
   assert.deepEqual(JSON.parse(JSON.stringify(ships(html)))[0], ["r1", 62, -4, ""], "the selected fleet is always drawn; a capital ship sits by the slipway");
   assert.match(html, /data-fleet="r1" aria-pressed="true"/);
+  // §yard-repair (Peter, Nov 5 2026): a hull the Shipyard mends leaves the sky
+  // and stands on the yard, flying down once; it opens the close-up.
+  sky.docked = [fleet("c1", "convoy"), fleet("i1", "raider", { repairing: 0.64 })];
+  html = new deck.PlanetPanel().renderScene(sky);
+  assert.deepEqual(JSON.parse(JSON.stringify(ships(html))).map((s) => s[0]), ["c1"], "not in the sky");
+  const yardSpot = html.match(/id="planet-spot-shipyard"[^>]*style="(--planet-x:[\d.-]+%;--planet-y:[\d.-]+%)/)[1];
+  assert.match(html, new RegExp(`class="deck-planet__yard-ship is-landing" style="${yardSpot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^"]*" data-deck-act="planet-yard-repair" data-fleet="i1"`), "on the yard's spot, landing");
+  assert.match(html, /data-fleet="i1"[^>]*title="raider · repairing · 64% hull"><img src="\/art\/derived\/ships\/models-v1\/previews\/raider-768\.webp"[^>]*><small>64%<\/small>/);
+  assert.match(new deck.PlanetPanel().renderScene(sky), /class="deck-planet__yard-ship is-landing" style="[^"]*animation-delay:-\d+ms"/, "a redraw resumes the flight, never restarts it");
+  // §yard-build (Peter, Nov 9 2026): a hull on the ground Shipyard's slip
+  // stands on its pad beside the one in for repairs, a skeleton filling in
+  // stern to nose, live between reports; it opens the yard's close-up.
+  const slip = (extra) => ({ id: 9, body_id: sky.body.id, key: "raider", yard: "shipyard", start_time: 100, complete_time: 160, queued: false, ...extra });
+  sky.report = { ...sky.report, builds: [slip(), slip({ id: 10, queued: true, complete_time: null }), slip({ id: 11, key: "destroyer", yard: "naval_drydock" }),
+    slip({ id: 12, body_id: sky.body.id + 99 })] };
+  sky.now = 130;
+  html = new deck.PlanetPanel().renderScene(sky);
+  const building = [...html.matchAll(/class="deck-planet__yard-ship is-building"/g)];
+  assert.equal(building.length, 1, "the slip's hull only: not one waiting, an orbital yard's, or another world's");
+  assert.match(html, new RegExp(`class="deck-planet__yard-ship is-building" style="${yardSpot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^"]*;--bay-x:0\\.\\d+;--bay-y:0\\.\\d+;--yard-ship-index:0;--build:0\\.5000" data-live-build="100 0 1\\.6666666666666667" data-deck-act="planet-yard-build" data-kind="raider"`),
+    "from the Shipyard's spot into its bay (§yard-bay; the hull in for repairs keeps the pad), half built, live");
+  assert.match(html, /data-kind="raider"[^>]*><span class="deck-planet__yard-hull" aria-hidden="true"><i class="deck-planet__yard-frame" style="--poster:url\('\/art\/derived\/ships\/models-v1\/previews\/raider-768\.webp'\)"><\/i><img class="is-hull" src="\/art\/derived\/ships\/models-v1\/previews\/raider-768\.webp"[^>]*><i class="deck-planet__weld"><\/i><\/span><small>50%<\/small><\/button>/,
+    "the skeleton (the hull's outline as a mask), the hull over it, the weld and its share");
+  assert.match(src("shell/deck/empire.ts"), /action === "planet-yard-build" && button\.dataset\.kind\) \{\n\s*this\.hooks\.go\(\{ name: "shipyard", params: \{ id: system\.id, systemLabel: system\.name \}, query: \{ kind: button\.dataset\.kind \} \}\);/,
+    "it opens the yard's close-up on its kind");
+  const yardCss = src("styles/planet-panel.css");
+  assert.match(yardCss, /\.deck-planet__yard-hull > img\.is-hull \{[^}]*clip-path: inset\(0 calc\(88% - var\(--build, 0\) \* 80%\) 0 0\);/, "stern to nose");
+  assert.match(yardCss, /\.deck-planet__yard-hull \{[^}]*transform: rotate\(var\(--yard-hull-turn, -50deg\)\);/, "turned 50° left, along the bay's rails");
+  assert.match(yardCss, /left: calc\(var\(--planet-x\) \+ \(var\(--bay-x, \.5\) - \.5\) \* var\(--planet-footprint\)\);/, "on the bay's cradle");
+  sky.report = { ...sky.report, builds: [] };
+  // §yard-launch (Peter, Nov 9 2026): a hull nearly built leaves the slip and
+  // its new fleet flies from the bay to its sky slot: ignition, climb, settle.
+  sky.docked = [fleet("c1", "convoy")];
+  new deck.PlanetPanel().renderScene(sky);
+  sky.report = { ...sky.report, builds: [slip({ id: 21 })] };
+  sky.now = 157;
+  new deck.PlanetPanel().renderScene(sky);
+  sky.report = { ...sky.report, builds: [] };
+  sky.docked = [fleet("c1", "convoy"), fleet("n1", "raider")];
+  html = new deck.PlanetPanel().renderScene(sky);
+  // §takeoff (Peter, Nov 9 2026: "launch more like an airplane ... travel
+  // horizontally out of the shipyard and then up to orbit"; "Can we avoid
+  // that flip of the image somehow?"): it always rolls right, the way the
+  // hulls' art faces, never mirrored. A slot ahead of where it lifts off: it
+  // flies there. A slot behind (left of it, or overhead): it climbs away over
+  // the top and its parked hull fades in at the slot.
+  const courseOf = (text, id) => {
+    const m = text.match(new RegExp(`<button id="planet-orbit-${id}" type="button" class="deck-planet__orbit-ship is-own (is-launching|is-arriving)" style="--planet-x:([\\d.-]+)%;--planet-y:[\\d.-]+%;--orbit-hull:[\\d.]+;--launch-x:calc\\(([\\d.]+)% \\+ -?[\\d.]+ \\* var\\(--planet-building\\) \\* ([\\d.]+)\\);--launch-y:calc\\([^;]+\\);--launch-w:calc\\(var\\(--planet-building\\) \\* [\\d.]+ \\* \\.5\\);--launch-run:([\\d.]+)cqw;--launch-elapsed:-\\d+ms" data-deck-act="world-fleet-open" data-fleet="${id}"`));
+    assert.ok(m, `${id}: its slot, with its course from the bay's cradle, resuming across redraws`);
+    const [mode, slotX, yardX, scale, run] = [m[1], ...m.slice(2).map(Number)];
+    assert.ok(run >= 3 && run <= 18, `a roll of ${run}% of the stage`);
+    assert.equal(mode === "is-arriving", slotX - (yardX + 1.1 * 7.5 * scale * .5 + run) < 3, "it fades in at a slot behind its lift-off, flies to one ahead");
+    return mode;
+  };
+  const engines = (kind) => `<span class="deck-planet__launch-body"><i class="deck-planet__plume"></i><img src="/art/derived/ships/models-v1/previews/${kind}-768.webp"`;
+  assert.equal(courseOf(html, "n1"), "is-arriving", "a warship's slot (38%) lies behind a yard at 33%");
+  assert.ok(html.includes(`class="deck-planet__orbit-ship is-launching is-folding" style="--planet-x:`) && html.includes(engines("raider")), "it climbs away, engines lit");
+  assert.match(html, /<span id="planet-launch-\d+" class="deck-planet__orbit-ship is-launching is-folding" style="--planet-x:[\d.]+%;--planet-y:-14%;/, "over the top");
+  assert.match(html, /data-fleet="n1"[^>]*><img src="\/art\/derived\/ships\/models-v1\/previews\/raider-768\.webp"/, "its parked self, no engines");
+  assert.equal([...html.matchAll(/class="deck-planet__launch-smoke"/g)].length, 1, "its engines' glow and dust");
+  assert.match(html, /class="deck-planet__launch-smoke" style="[^"]*--launch-run:[\d.]+cqw;[^"]*" aria-hidden="true"><b><\/b>/, "on the hull's own course");
+  assert.equal([...html.matchAll(/<i style="--at-w:[\d.]+;--at-run:[\d.]+;--puff:\d+ms"><\/i>/g)].length, 9, "two wafts in the bay, seven puffs along the roll");
+  assert.doesNotMatch(html, /--launch-dir|is-turn/, "never mirrored, never turned back");
+  assert.doesNotMatch(html, /data-fleet="c1"[^>]*is-launching|is-launching[^>]*data-fleet="c1"/, "the fleet already there stays put");
+  assert.match(new deck.PlanetPanel().renderScene(sky), /data-fleet="n1"/, "a redraw keeps the flight");
+  // A hull cancelled early, or a sky that only changes, launches nothing.
+  sky.report = { ...sky.report, builds: [slip({ id: 22 })] };
+  sky.now = 110;
+  new deck.PlanetPanel().renderScene(sky);
+  sky.report = { ...sky.report, builds: [] };
+  sky.docked = [fleet("c1", "convoy"), fleet("n1", "raider"), fleet("n2", "raider")];
+  assert.doesNotMatch(new deck.PlanetPanel().renderScene(sky), /data-fleet="n2"[^>]*is-(launching|arriving)|is-launching[^"]*"[^>]*data-fleet="n2"/, "a sixth built is no launch");
+  // Its berth is another world (no new fleet in this sky): it climbs away and
+  // fades; if its fleet shows here mid-climb, it heads for the slot instead.
+  sky.docked = sky.docked.filter((entry) => entry.id !== "n2");
+  new deck.PlanetPanel().renderScene(sky);
+  sky.report = { ...sky.report, builds: [slip({ id: 23 })] };
+  sky.now = 158;
+  new deck.PlanetPanel().renderScene(sky);
+  sky.report = { ...sky.report, builds: [] };
+  html = new deck.PlanetPanel().renderScene(sky);
+  assert.match(html, /<span id="planet-launch-\d+" class="deck-planet__orbit-ship is-launching is-folding" style="--planet-x:[\d.]+%;--planet-y:-14%;--orbit-hull:4\.2;--launch-x:[^"]*--launch-elapsed:-0ms" aria-hidden="true">/,
+    "up and away, from the bay");
+  sky.docked = [...sky.docked, fleet("n3", "raider")];
+  html = new deck.PlanetPanel().renderScene(sky);
+  assert.match(html, /<button id="planet-orbit-n3" type="button" class="deck-planet__orbit-ship is-own is-launching"[^>]*--launch-elapsed:-\d+ms"/, "its slot, from where it was");
+  // The start offset is fixed once drawn: a redraw never rewrites it.
+  const offset = (text) => text.match(/id="planet-orbit-n3"[^>]*--launch-elapsed:(-\d+ms)/)?.[1];
+  assert.equal(offset(new deck.PlanetPanel().renderScene(sky)), offset(html), "a redraw keeps the same start");
+  // A capital hull's slot (62%) lies ahead of the same yard: it flies there.
+  sky.docked = [fleet("c1", "convoy")];
+  new deck.PlanetPanel().renderScene(sky);
+  sky.report = { ...sky.report, builds: [slip({ id: 24, key: "battleship" })] };
+  new deck.PlanetPanel().renderScene(sky);
+  sky.report = { ...sky.report, builds: [] };
+  sky.docked = [fleet("c1", "convoy"), fleet("n4", "battleship")];
+  html = new deck.PlanetPanel().renderScene(sky);
+  assert.equal(courseOf(html, "n4"), "is-launching");
+  assert.match(html, /data-fleet="n4"[^>]*><span class="deck-planet__launch-body"><i class="deck-planet__plume"><\/i><img src="\/art\/derived\/ships\/models-v1\/previews\/battleship-768\.webp"/, "its engines lit, all the way to its slot");
+  const launchCss = src("styles/planet-panel.css");
+  for (const frames of ["planet-launch-x", "planet-launch-y", "planet-launch-w", "planet-launch-body", "planet-plume", "planet-dust", "planet-launch-glow", "planet-arrive"]) {
+    assert.match(launchCss, new RegExp(`@keyframes ${frames} \\{`), frames);
+  }
+  // On the ground for the taxi and the roll, then the climb; the hull turns
+  // level for the roll, noses up, and levels out at its slot: rotation only.
+  assert.match(launchCss, /@keyframes planet-launch-y \{\n  0%, 44% \{ top: var\(--launch-y\);/, "no climb before lift-off");
+  assert.match(launchCss, /43% \{ left: calc\(var\(--launch-x\) \+ var\(--launch-w\) \* 1\.1 \+ var\(--launch-run, 10cqw\)\);/, "the roll's end, to the right");
+  const body = launchCss.match(/@keyframes planet-launch-body \{[\s\S]*?\n\}/)[0];
+  assert.match(body, /20% \{ rotate: 0deg; \}[\s\S]*50% \{ rotate: -16deg; \}[\s\S]*94%, 100% \{ rotate: 0deg; translate: 0 0; \}/, "level, nose up, level");
+  assert.doesNotMatch(body, /scale/, "never mirrored");
+  assert.doesNotMatch(launchCss, /--launch-dir|is-turn/);
+  assert.match(launchCss, /\.deck-planet__orbit-ship\.is-arriving \{ pointer-events: none; animation: planet-arrive 6s/, "a slot behind fades in");
+  assert.equal([...launchCss.matchAll(/@keyframes planet-smoke \{/g)].length, 1, "the siege's impact smoke keeps its own keyframes");
   sky.docked = [];
   assert.doesNotMatch(new deck.PlanetPanel().renderScene(sky), /deck-planet__orbit/, "an empty sky draws nothing");
   const giant = { ...structuredClone(initialModel), art: "/art/gas_giant-512.png", docked: [fleet("g1", "convoy")] };
@@ -638,6 +773,23 @@ assert.match(miningRow, /aria-label="\+24 Ferrite Ore per minute"/);
 assert.match(miningRow, /class="deck-planet__staffed-value">2 [\s\S]*alt="Workforce"/, "the same row shows output and assigned workforce");
 const smelterRow = controls.match(/<button id="planet-row-smelter"[\s\S]*?<\/button>/)?.[0];
 assert.match(smelterRow, /No workforce[\s\S]*aria-label="\+0 Alloys per minute"[\s\S]*class="deck-planet__staffed-value">0 /);
+// §power (Peter, Nov 8 2026): the collapsed row shows the draw beside output
+// and crew, with a bolt the workforce icon's size; a Smelter draws double.
+const tierOf = (row) => Number(row.match(/\/tier-(\d)-128/)[1]);
+const drawLabel = (key, row) => `aria-label="Draws ${worldbuild.mw(worldbuild.drawMW(key, tierOf(row)))} MW"`;
+assert.match(smelterRow, /class="deck-planet__staffed-value">0 [\s\S]*class="deck-planet__power-value[^"]*" aria-label="Draws [\s\S]*deck-planet__power-icon[\s\S]*<small>MW<\/small>/);
+assert.ok(smelterRow.includes(drawLabel("smelter", smelterRow)), "the Smelter's draw at its level");
+assert.equal(worldbuild.drawMW("smelter", 2), 2 * worldbuild.drawMW("mining_complex", 2), "a Smelter draws double");
+assert.ok(miningRow.includes(drawLabel("mining_complex", miningRow)), "a mine draws its level's power");
+assert.doesNotMatch(controls.match(/<button id="planet-row-habitat"[\s\S]*?<\/button>/)?.[0] ?? "", /deck-planet__power-value/, "civic structures draw nothing");
+// Peter (Nov 9 2026): "remove the Draws 1 MW from the structures because we
+// have the energy icon now": a structure's detail says nothing of its draw
+// (its row's bolt does); only a short grid still warns there.
+const selectedDetail = controls.match(/<aside id="planet-structure-detail"[\s\S]*?<\/aside>/)?.[0] ?? "";
+assert.ok(selectedDetail.includes("Mining Complex"), "the selected structure's detail");
+assert.doesNotMatch(selectedDetail, /Draws \d|\d MW<\/small>/, "no draw in words");
+assert.match(src("shell/deck/planet.ts"), /POWERED_STRUCTURES\.has\(item\.key\) && \(model\.body\.power\?\.power \?\? 1\) < 0\.999 \? `<small class="deck-planet__warning" title="This planet's grid can't meet its draw">Power \$\{/,
+  "a short grid's warning stays");
 assert.match(controls, /id="planet-row-habitat"/, "non-production structures remain selectable");
 assert.match(html, /aria-label="\+24 Ferrite Ore per minute"/);
 assert.match(html, /aria-label="\+6 Silicates per minute"/);
@@ -804,7 +956,7 @@ function checkWorldRoute(source) {
   let deferBuild = false;
   deps["../dom"] = { setHtml(node, html) { node.html = html; }, renderDeferred(id, callback) { if (deferBuild && id === buildRoot.id) { deferred.push(callback); return true; } return false; } };
   deps["../signature"] = { sheetFingerprint: JSON.stringify };
-  deps["../../core/derive/fleet"] = { dockedAtSystem: (g, id) => g.docked === id || g.docked === `E${id}`, shipKindLabel: kind => kind };
+  deps["../../core/derive/fleet"] = { goodKnown: () => true, dockedAtSystem: (g, id) => g.docked === id || g.docked === `E${id}`, shipKindLabel: kind => kind };
   let simNow = 100;
   deps["../../state"] = { liveSimTime: () => simNow };
   deps["./planet"] = { PlanetPanel };
@@ -826,9 +978,10 @@ function checkWorldRoute(source) {
   const microtasks = [];
   const { DeckEmpireRoutes } = compile("", source, { document: doc, HTMLElement: Element, requestAnimationFrame: callback => callback(),
     queueMicrotask: callback => microtasks.push(callback) });
+  let underlay = null;
   const ui = new DeckEmpireRoutes(originRoot, buildRoot, stageRoot, { state, renderer: { pulseSystemBody() {} },
     send(command) { if (command.type !== "CancelBuild") throw Error("unexpected directive"); commands.push(command); } },
-    { go: route => navigation.push(["go", route]), replace: route => navigation.push(["replace", route]),
+    { go: route => navigation.push(["go", route]), replace: route => navigation.push(["replace", route]), underlay: () => underlay,
       openWorldBuild: (systemId, bodyId, query) => navigation.push(["openWorldBuild", systemId, bodyId, query]), notice() {}, toast() {} });
   ui.planetModel = (system, report, body) => ({ ...fixture, system, report, body, mine: report.owner === state.playerId,
     ...ui.constructionModel(system, report, body) });
@@ -948,6 +1101,9 @@ function checkWorldRoute(source) {
   }
   assert.doesNotMatch(stageRoot.html + originRoot.html, /deck-planet__ring|Under construction|upgrading to|40s<\/b>/, "no ring, no second clock");
   assert.match(originRoot.html, /class="deck-planet__row is-rising"[\s\S]*?Fuel Refinery I[\s\S]*?class="deck-planet__tag is-active">Building</, "the rising row is tagged too");
+  ui.handleAction(action(originRoot, "planet-select", { structure: "fuel_refinery" }), world);
+  assert.match(originRoot.html, /<button id="planet-row-fuel_refinery" type="button" class="deck-planet__row is-rising"[^>]*aria-pressed="true"/, "a rising building can be selected");
+  assert.match(originRoot.html, /class="deck-construction__job is-head is-picked"/, "and marks its order in the card");
   ui.handleAction(action(stageRoot, "planet-select", { structure: "mining_complex" }), world);
   assert.match(originRoot.html, /class="deck-construction__job is-picked"><span class="deck-construction__pos">#2/, "picking a building marks its order in the card");
   delete fixture.report.builds[0].id; delete fixture.report.builds[0].start_time; delete fixture.report.builds[0].complete_time;
@@ -1035,6 +1191,12 @@ function checkWorldRoute(source) {
   assert.match(stageRoot.html, /class="deck-bsheet__where"><span>Your site<\/span>/);
   ui.handleAction(action(stageRoot, "world-builder-queue", { key: "academy" }), world);
   assert.deepEqual(plain(dispatched.at(-1)), ["academy", "home", 3]);
+  // Peter (Nov 4 2026): the column selects what was queued. Not built yet, it
+  // shows its tier, name and description, and no workforce control.
+  assert.match(originRoot.html, /<button id="planet-row-academy" type="button" class="deck-planet__row is-rising"[^>]*aria-pressed="true"/, "the queued building is selected");
+  const risingDetail = originRoot.html.match(/<aside id="planet-structure-detail"[\s\S]*?<\/aside>/)[0];
+  assert.match(risingDetail, /class="deck-planet__detail is-rising"[\s\S]*?<small>Tier 1<\/small><h3>Academy<\/h3><\/div><\/header>\s*<p>Research and officer training\.<\/p>\s*<\/aside>/, "tier, name and description");
+  assert.doesNotMatch(risingDetail, /planet-workers|planet-specialist|planet-train|world-build|Workforce/, "no controls until it stands");
   const placed = footprintAddress(planetSurface(fixture.art), Number(lit[1]));
   const placedAt = `style="--planet-x:${placed.x}%;--planet-y:${placed.y}%;--planet-scale:${placed.scale}"`;
   assert.ok(stageRoot.html.includes(`class="deck-planet__site is-construction is-sent" ${placedAt}`), "the order in flight holds the chosen site");
@@ -1043,9 +1205,32 @@ function checkWorldRoute(source) {
   ui.render(world, true);
   assert.ok(stageRoot.html.includes(`id="planet-construction-academy" class="deck-planet__site is-construction is-waiting" ${placedAt}`), "the received job uses the chosen address");
   assert.match(stageRoot.html, /id="planet-construction-academy"[\s\S]*?class="deck-planet__pill is-waiting">#2</, "a waiting job shows its place in line on the planet");
+  assert.match(originRoot.html, /id="planet-row-academy"[^>]*aria-pressed="true"[\s\S]*?class="deck-planet__tag">#2</, "it stays selected once the report lists it");
   fixture.report.builds.pop();
   ui.handleAction(action(stageRoot, "world-builder-exit"), world);
   assert.equal(ui.worldBuilder, null);
+  assert.match(originRoot.html, /id="planet-row-mining_complex"[^>]*aria-pressed="true"/, "a gone order hands the selection back");
+  // §merchant (Peter, Nov 4 2026): the trader's stall opened from a world
+  // floats over its planet: the scene stays, its build sheet closes.
+  ui.handleAction(action(originRoot, "world-build", { mode: "structures" }), world);
+  assert.match(stageRoot.html, /class="deck-bsheet"/);
+  const stallColumn = originRoot.html;
+  underlay = world;
+  ui.render({ name: "merchant" }, true);
+  assert.equal(stagePanel.hidden, false, "the planet stays beneath the trader's stall");
+  assert.match(stageRoot.html, /class="deck-planet-scene"/);
+  assert.doesNotMatch(stageRoot.html, /class="deck-bsheet"/, "its build sheet closes");
+  assert.equal(ui.worldBuilder, null);
+  assert.equal(originRoot.html, stallColumn, "the column is the stall's to draw");
+  // Peter (Nov 9 2026: "should not zoom out of the planetary view"): the
+  // Shipyard view opened from a world floats over its planet too.
+  ui.render({ name: "shipyard", params: { id: "home" } }, true);
+  assert.equal(stagePanel.hidden, false, "the planet stays beneath the Shipyard view");
+  assert.match(stageRoot.html, /class="deck-planet-scene"/);
+  underlay = null;
+  ui.render({ name: "merchant" }, true);
+  assert.equal(stagePanel.hidden, true, "opened from anywhere else, no planet");
+  ui.render(world, true);
   // Staffing happens in the world's management view: a guide link to a
   // building, or a click on it, closes the sheet so its workforce shows.
   ui.handleAction(action(originRoot, "world-build", { mode: "structures" }), world);
@@ -1137,6 +1322,26 @@ function checkWorldRoute(source) {
   ui.handleAction(action(stageRoot, "world-builder-exit"), world4);
   ui.render(world4, true);
   assert.doesNotMatch(stageRoot.html, /class="deck-bsheet"/);
+  // Peter (Nov 9 2026): the guide's hull Build "should not zoom out of the
+  // planetary view": a world route asking for ships opens that planet's own
+  // workbench on its Ships tab, the hull picked.
+  ui.render({ ...world, query: { build: "ships", select: "raider" } }, true);
+  assert.equal(stagePanel.hidden, false, "the planet stays");
+  assert.equal(buildPanel.hidden, false, "its hull workbench opens over it");
+  assert.deepEqual(plain(ui.worldBuildRoute.query), { body: "3", mode: "ships", select: "raider" });
+  assert.equal(microtasks.length, 1);
+  microtasks.splice(0).forEach(callback => callback());
+  assert.deepEqual(plain(navigation.at(-1)), ["replace", world], "the request is consumed");
+  ui.render(world, true);
+  assert.equal(buildPanel.hidden, false, "the consumed route keeps its workbench");
+  ui.handleAction(action(buildRoot, "build-workbench-close"), world);
+  assert.equal(buildPanel.hidden, true);
+  // Queued from a planet's own builder, the planet stays; from the System
+  // View's builder, the Shipyard view opens on the hull.
+  assert.match(source, /const overPlanet = !!this\.worldBuildRoute;\n\s*this\.closeBuildWorkbench\(route\);\n\s*if \(!overPlanet\) this\.hooks\.go\(\{ name: "shipyard"/);
+  assert.match(source, /data-deck-act="builder-queue-ships" data-coach="queue-build"/, "the guide's coach finds the hull's Queue");
+  assert.match(src("shell/deck/founding-guide.ts"), /if \(mode === "ships" && this\.hooks\.openWorldBuild\) this\.hooks\.openWorldBuild\(system\.id, body\.id, \{ select \}, "ships"\);/,
+    "the guide's hull builds open the yard's world");
   // A completion toast lands on the new building and points at its workforce.
   ui.render({ ...world4, query: { structure: "mining_complex", staff: "1" } }, true);
   microtasks.splice(0).forEach(callback => callback());
@@ -1167,11 +1372,12 @@ assert.throws(() => checkWorldRoute(empireSource.replace("this.worldBuildFor = w
 // never an overlay, so map accelerators stay live and Esc/zoom-out climb one rung.
 const shellAst = ts.createSourceFile("index.ts", src("shell/deck/index.ts"), ts.ScriptTarget.Latest, true);
 const shellClass = shellAst.statements.find(node => ts.isClassDeclaration(node) && node.members.some(member => member.name?.getText(shellAst) === "keyDown"));
-const methods = shellClass.members.filter(member => ["keyDown", "overlayOpen", "escapeOneLayer", "zoomIn", "zoomOut", "zoomFit", "closeWorkspace"].includes(member.name?.getText(shellAst))).map(member => member.getText(shellAst)).join("\n");
+const methods = shellClass.members.filter(member => ["keyDown", "overlayOpen", "escapeOneLayer", "zoomIn", "zoomOut", "zoomFit", "closeWorkspace", "popoutWorld"].includes(member.name?.getText(shellAst))).map(member => member.getText(shellAst)).join("\n");
 assert.doesNotMatch(methods, /deck-world-workbench|closeWorldWorkbench/);
 const nodes = { "deck-help": { hidden: true }, "deck-join": { hidden: true }, "deck-nav-overflow": { hidden: true } };
 const document = { getElementById: id => nodes[id] ?? null, activeElement: null };
-const { Keyboard } = compile("", `export class Keyboard { ${methods} }`, { document, byId: id => nodes[id] });
+// §route-picker: no open goods list here, so Esc goes on to the rungs.
+const { Keyboard } = compile("", `export class Keyboard { ${methods} }`, { document, byId: id => nodes[id], closeIndustryMenu: () => false });
 const keyboard = new Keyboard();
 let backs = 0, exits = 0, routes = 0, zoomOuts = 0, zoomIns = 0, confirms = 0;
 keyboard.ctx = {
@@ -1219,6 +1425,24 @@ assert.equal(closes, 0);
 keyboard.router.current = { name: "market" };
 keyboard.closeWorkspace();
 assert.equal(closes, 1, "anywhere else ✕ still closes");
+// §merchant (Peter, Nov 4 2026): the trader's stall over a planet closes back to it.
+let stallBacks = 0;
+keyboard.ctx.state.pendingIntent = null;
+keyboard.router = { current: { name: "merchant" }, beneath: { name: "world", params: { systemId: "home", bodyId: "12" } },
+  back() { stallBacks++; }, close() { closes++; } };
+keyboard.closeWorkspace();
+key("Escape");
+assert.equal(stallBacks, 2, "✕ and Esc return to the planet");
+assert.equal(closes, 1);
+assert.equal(exits, 1, "the orrery stays beneath");
+// Nov 9 2026: so does the world's own Shipyard view; another system's is no
+// pop-out over this planet.
+keyboard.router.current = { name: "shipyard", params: { id: "home" } };
+keyboard.closeWorkspace();
+assert.equal(stallBacks, 3, "the Shipyard view over a planet returns to it");
+keyboard.router.current = { name: "shipyard", params: { id: "elsewhere" } };
+keyboard.closeWorkspace();
+assert.equal(closes, 2, "another system's yard closes as before");
 // The real router over one tab's history: the climb, and a reload's leftovers.
 const tab = { states: [null], at: 0, listeners: [] };
 const history = {
@@ -1250,6 +1474,15 @@ router.climbTo(freyaSystem);
 assert.equal(router.current?.name, "system", "no system beneath: it takes the world's place");
 router.back();
 assert.equal(router.current, null);
+// §merchant (Peter, Nov 9 2026): the trader's stall asked for again (the next
+// build's shortfall) takes the open one's place; its planet stays beneath.
+router.go(freya12);
+router.go({ name: "merchant", query: { for: "ore" } });
+router.go({ name: "merchant", query: { for: "shipyard" } });
+assert.deepEqual([router.current?.query?.for, router.beneath?.name], ["shipyard", "world"]);
+router.back();
+assert.equal(router.current?.name, "world", "one Back to the planet");
+router.close();
 assert.match(src("shell/mobile/sheets.ts"), /\nlet nextSession = Date\.now\(\);/, "mobile sheets number sessions per load too");
 console.log("PASS: world route beneath its system, map-area scene with workspace column, child construction, world switch by replace, deep links, Esc/zoom ladder; served reports, workforce confirmation, stable footprints, orbit space and docked fleets, and rival privacy.");
 
@@ -1348,11 +1581,12 @@ if (process.argv.includes("--serve")) {
           title: deps["../../icons"].label(key), workers: 1, tier: 1, outputs: [] });
       }
     }
-    // §orbital-defense: a station over every world, its level cycling 1–5.
+    // §orbital-defense: a station at every world, its level cycling 1–6
+    // (§laser-battery: level 1 on the ground).
     initialModel.catalog.push({ key: "orbital_defense", label: "Orbital Defense", costs: [], build_secs: 60,
-      tiers: ["Defense Platform", "Orbital Battery", "Defense Station", "Citadel", "Star Fortress"]
+      tiers: ["Laser Battery", "Defense Platform", "Orbital Battery", "Defense Station", "Citadel", "Star Fortress"]
         .map((label, i) => ({ tier: i + 1, label, costs: [], build_secs: 60, description: "" })) });
-    worlds.forEach((world, index) => { world.structures.orbital_defense = index % 5 + 1; });
+    worlds.forEach((world, index) => { world.structures.orbital_defense = index % 6 + 1; });
   }
   if (process.argv.includes("--surface-structures")) {
     for (const world of surfaceWorlds) world.structures.service_berth = 1;
@@ -1424,6 +1658,13 @@ if (process.argv.includes("--serve")) {
         const dockButton=document.createElement('button');dockButton.id='fixture-docked';dockButton.textContent='Toggle docked ships';dockButton.setAttribute('aria-pressed','false');
         dockButton.onclick=()=>{const on=dockButton.getAttribute('aria-pressed')!=='true';dockButton.setAttribute('aria-pressed',String(on));const at='E'+model.system.id;const g=(id,kind,n)=>({id,kind,owner:'1',own:true,pos:{x:0,y:0},vel:{x:0,y:0},age:0,jumped:false,route:null,passengers:{},cargo:null,count_class:n===1?'one':'two_to_three',composition:[{kind,count:n}],docked:at});state.ghosts=on?[g('fx-cruiser','cruiser',3),g('fx-destroyer','destroyer',1),g('fx-battleship','battleship',1),g('fx-convoy','convoy',2),g('fx-scout','scout',1)]:[];controller.invalidate();};
         document.querySelector('.deck-topbar').append(dockButton);
+        const repairButton=document.createElement('button');repairButton.id='fixture-repair';repairButton.textContent='Toggle repair';repairButton.setAttribute('aria-pressed','false');
+        repairButton.onclick=()=>{const on=repairButton.getAttribute('aria-pressed')!=='true';repairButton.setAttribute('aria-pressed',String(on));const sys=state.systems[0];const yard=sys.bodies.find(b=>(b.structures.shipyard??0)>0);if(yard&&!sys.assignments.some(a=>a.structure==='shipyard'&&a.body_id===yard.id))sys.assignments.push({body_id:yard.id,structure:'shipyard',workers:1,specialists:{},outputs:[]});state.ghosts=state.ghosts.filter(g=>g.id!=='fx-repair');if(on)state.ghosts.push({id:'fx-repair',kind:'raider',owner:'1',own:true,pos:{x:0,y:0},vel:{x:0,y:0},age:0,jumped:false,route:null,passengers:{},cargo:null,count_class:'one',composition:[{kind:'raider',count:1}],docked:'E'+model.system.id,damage:.36});controller.invalidate();};
+        document.querySelector('.deck-topbar').append(repairButton);
+        // §yard-build: an Interceptor on the ground Shipyard's slip, a fifth built.
+        const slipButton=document.createElement('button');slipButton.id='fixture-slip';slipButton.textContent='Toggle ship build';slipButton.setAttribute('aria-pressed','false');
+        slipButton.onclick=()=>{const on=slipButton.getAttribute('aria-pressed')!=='true';slipButton.setAttribute('aria-pressed',String(on));const sys=state.systems[0];const yard=sys.bodies.find(b=>(b.structures.shipyard??0)>0);sys.builds=sys.builds.filter(j=>j.id!==7001);if(on&&yard)sys.builds.push({id:7001,key:'raider',body_id:yard.id,yard:'shipyard',queued:false,start_time:80,complete_time:180});controller.invalidate();};
+        document.querySelector('.deck-topbar').append(slipButton);
         controller.render(current,true);
         setInterval(()=>controller.render(current,false),100);
       ` : undefined }], build: { write: false, minify: false, lib: { entry: "virtual:planet-fixture", formats: ["es"] } } });

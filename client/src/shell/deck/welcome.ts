@@ -119,7 +119,7 @@ export function serverWelcomeHtml(report: WelcomeBackView, underway: string[], s
     (report.happened.length ? `<section><small>While you were away</small>${lines(report.happened)}</section>` : "") +
     (underway.length ? `<section><small>Under way</small><ul>${underway.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></section>` : "") +
     (report.waiting.length ? `<section><small>Waiting</small>${lines(report.waiting)}</section>` : "") +
-    (step ? `<section class="deck-welcome__next"><small>Next</small><b>${esc(step.status ?? step.title)}</b>${step.reason || step.copy ? `<p>${esc(step.reason || step.copy)}</p>` : ""}</section>` : "") +
+    (step ? `<section class="deck-welcome__next"><small>Next</small><b>${esc(step.status ?? step.title)}</b>${step.reason || step.why || step.copy ? `<p>${esc(step.reason || step.why || step.copy)}</p>` : ""}</section>` : "") +
     `<footer>${stepButton}${actions}<button type="button" data-deck-act="welcome-log">Open Log</button></footer></div>`;
 }
 
@@ -130,7 +130,7 @@ function welcomeHtml(report: WelcomeReport): string {
     `<div class="deck-welcome__body">` +
     (report.happened.length ? `<section><small>While you were away</small>${list(report.happened)}${report.partial ? `<p>Older receipts are in Market Hub › Transactions.</p>` : ""}</section>` : "") +
     (report.underway.length ? `<section><small>Under way</small>${list(report.underway)}</section>` : "") +
-    (next ? `<section class="deck-welcome__next"><small>Next</small><b>${esc(next.status ?? next.title)}</b>${next.reason || next.copy ? `<p>${esc(next.reason || next.copy)}</p>` : ""}</section>` : "") +
+    (next ? `<section class="deck-welcome__next"><small>Next</small><b>${esc(next.status ?? next.title)}</b>${next.reason || next.why || next.copy ? `<p>${esc(next.reason || next.why || next.copy)}</p>` : ""}</section>` : "") +
     `<footer>${next ? `<button type="button" class="is-primary" data-deck-act="welcome-next">${esc(next.alternatives?.length ? "Choose in the guide" : next.label)}</button>` : ""}` +
     `<button type="button" data-deck-act="welcome-log">Open Log</button></footer></div>`;
 }

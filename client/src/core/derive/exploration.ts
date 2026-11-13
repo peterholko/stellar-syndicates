@@ -1,7 +1,7 @@
-import type { ExpeditionTask, ExplorationSiteView, GhostView } from "../../protocol";
+import type { Commodity, ExpeditionTask, ExplorationSiteView, GhostView } from "../../protocol";
 import { isPlayerFreighter } from "../../protocol";
 import type { ViewState } from "../../state";
-import { fleetCargoCapacity } from "./fleet";
+import { basketRoom, commodityRoom, fleetCargoCapacity, manifestRoom, ROOM_SCALE } from "./fleet";
 
 export function siteTitle(site: ExplorationSiteView): string { return site.details?.name ?? `Unknown contact ${site.id.replace(/^E/, "")}`; }
 export function siteArt(site: ExplorationSiteView): string | null {
@@ -48,7 +48,9 @@ export function deepExpeditionReason(site: ExplorationSiteView, fleet: GhostView
   const manifest = fleet.cargo_manifest ?? (fleet.cargo ? [fleet.cargo] : []);
   if (Object.entries(o.costs).some(([kind, n]) => manifest.filter(c => c.commodity === kind).reduce((sum, c) => sum + c.units, 0) < n!)) return "Load expedition supplies first";
   if (o.task === "extract" && !Object.values(o.cargo).some(n => n! > 0)) return "Deep cache exhausted";
-  if (o.task === "extract" && manifest.reduce((sum, c) => sum + c.units, 0)
-      - Object.values(o.costs).reduce((sum, n) => sum + (n ?? 0), 0) >= fleetCargoCapacity(fleet)) return "Make room in the hold";
+  // §hold-room: with the supplies spent, a unit of the cache must fit.
+  const free = fleetCargoCapacity(fleet) * ROOM_SCALE - Math.max(0, manifestRoom(manifest) - basketRoom(o.costs));
+  if (o.task === "extract" && !Object.entries(o.cargo).some(([c, n]) => (n ?? 0) > 0 && commodityRoom(c as Commodity) <= free))
+    return "Make room in the hold";
   return "";
 }

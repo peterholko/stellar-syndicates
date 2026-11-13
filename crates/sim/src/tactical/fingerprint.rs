@@ -108,6 +108,7 @@ fn run(s: &Scenario, version: u32) -> Option<u64> {
         13 => TacticalState::open_v13(seed, id, &a, &d, t, 0.0, bearing),
         14 => TacticalState::open_v14(seed, id, &a, &d, t, 0.0, bearing),
         15 => TacticalState::open_v15(seed, id, &a, &d, t, 0.0, bearing),
+        16 => TacticalState::open_v16(seed, id, &a, &d, t, 0.0, bearing),
         _ => TacticalState::open_current(seed, id, &a, &d, t, 0.0, bearing),
     };
     if version == 2 {
@@ -158,11 +159,13 @@ fn run(s: &Scenario, version: u32) -> Option<u64> {
 }
 
 /// The current rules' fingerprint of each scenario.
+/// §shipbuilding-overhaul (Nov 6 2026): re-pinned after the Destroyer's
+/// attack weight became its kit guns' sum (2.4 → 2.5).
 const PINNED: [(&str, u64); 10] = [
-    ("mixed", 0x4a73_95e4_60a6_8698), ("swarm", 0x0286_c755_4006_51c1), ("torpedo", 0xbaf7_9b41_e87f_7305),
-    ("collision", 0x6cc7_5225_d5bb_5fd6), ("formations", 0xa5c8_8450_199c_b850), ("lockdown", 0x0e44_37ba_fe3a_ad1f),
-    ("escorts", 0xede8_a136_7fce_7b66), ("home", 0xd8ac_d459_ac48_d31a), ("citadel", 0xcd76_6e5d_f6fd_ca41),
-    ("convoy", 0x24c1_c633_0d80_ba07),
+    ("mixed", 0x179c_3166_773e_cbd0), ("swarm", 0x0286_c755_4006_51c1), ("torpedo", 0x1915_27d5_f444_07ab),
+    ("collision", 0x6cc7_5225_d5bb_5fd6), ("formations", 0xdb21_bf36_0533_0240), ("lockdown", 0x0e44_37ba_fe3a_ad1f),
+    ("escorts", 0x40b1_395d_cc71_1e5a), ("home", 0x254c_5faf_467c_7bda), ("citadel", 0x51f7_00d1_d3d0_eb19),
+    ("convoy", 0x8f29_d604_4940_be6c),
 ];
 
 #[test]
@@ -172,7 +175,7 @@ fn current_rules_fight_the_same_in_every_build() {
 }
 
 /// The rules version `open_current` opens.
-const CURRENT: u32 = 16;
+const CURRENT: u32 = 17;
 
 /// Each frozen rules version over the same scenarios (debug and release
 /// builds differ for v1–v15; compare like with like).

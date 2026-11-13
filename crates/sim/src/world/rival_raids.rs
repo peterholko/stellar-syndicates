@@ -94,11 +94,9 @@ impl World {
             }
             // Refuelled and repaired first, as far as home can manage.
             let sys = self.systems.iter().find(|s| s.id == home);
-            let (tank, room, fuel) = if f.burns_uranium() {
-                (f.uranium, f.uranium_capacity(), crate::fuel::FISSION_FUEL)
-            } else {
-                (f.fuel, f.fuel_capacity(), crate::fuel::MOVEMENT_FUEL)
-            };
+            // §shipbuilding-overhaul: the fuel of the heaviest hulls aboard.
+            let fuel = f.primary_fuel().unwrap_or(crate::fuel::MOVEMENT_FUEL);
+            let (tank, room) = (f.store(fuel), f.tank_capacity(fuel));
             let fuelled = tank + 1e-6 >= room * 0.98;
             let since = if r.docked_at > 0.0 { r.docked_at } else { self.time };
             let waited = self.time - since >= REPEAT_REPAIR_WAIT_S;

@@ -61,25 +61,53 @@ fn run(w: &mut World) -> Vec<Event> {
     events
 }
 
+/// §charter-v6 (Peter, Nov 7 2026): the Command Center's reactor runs the
+/// colony, nothing on the grid — the first mine waits for the Solar Array.
 #[test]
-fn no_planet_has_free_power_but_a_command_center_runs_a_mine() {
+fn no_planet_has_free_power_and_the_command_center_runs_no_mine() {
     let (mut w, owner, home, solid) = grid_home();
-    // The landing world: its Command Center's reactor runs a Mining Complex I.
     body_mut(&mut w, home, solid[1]).set_tier(K::CommandCenter, 1);
     place(&mut w, home, solid[1], K::MiningComplex, 1);
     place(&mut w, home, solid[1], K::Agroplex, 1);
     // A sibling world with work but no power source: nothing powered runs.
     place(&mut w, home, solid[0], K::MiningComplex, 1);
     let events = run(&mut w);
-    assert_eq!(grid(&w, home, solid[1]).demand, 1.0, "food draws nothing");
-    assert_eq!(grid(&w, home, solid[1]).power, 1.0);
+    assert_eq!(grid(&w, home, solid[1]).demand, 2.0, "§habitat-first: the Agroplex draws like the mine");
+    assert_eq!(grid(&w, home, solid[1]).power, 0.0, "the reactor is off the grid");
     assert_eq!(grid(&w, home, solid[0]).power, 0.0, "no Command Center, no plant");
     assert!(events.iter().any(|e| matches!(e.payload,
         EventPayload::Brownout { owner: o, body, .. } if o == owner && body == solid[0])));
-    // A Shipyard beside the reactor's mine needs a plant.
+    // A Solar Array runs the mine and a Shipyard beside it.
+    body_mut(&mut w, home, solid[1]).set_tier(K::PowerPlant, 1);
     place(&mut w, home, solid[1], K::Shipyard, 1);
     run(&mut w);
-    assert_eq!(grid(&w, home, solid[1]).power, 0.5);
+    assert_eq!(grid(&w, home, solid[1]).power, 1.0);
+}
+
+/// §habitat-first (Nov 8 2026): the food chain draws power like the mine, so
+/// a landing's farms wait for its Solar Array.
+#[test]
+fn the_food_chain_waits_for_the_solar_array() {
+    let (mut w, _, home, _) = grid_home();
+    let farm = w.systems.iter().find(|s| s.id == home).unwrap().bodies.iter()
+        .find(|b| b.deposits.iter().any(|d| d.resource == C::Biomass)).map(|b| b.id).unwrap();
+    // A small colony with room for the harvest (a full store idles a mine),
+    // not a camp (a camp's full larder holds its Bioharvester anyway).
+    let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+    sys.set_population(0.007);
+    sys.stockpile.insert(C::Provisions, 100.0);
+    for b in &mut sys.bodies {
+        b.founding_camp = None;
+    }
+    body_mut(&mut w, home, farm).set_tier(K::CommandCenter, 1);
+    body_mut(&mut w, home, farm).set_tier(K::Warehouse, 1);
+    place(&mut w, home, farm, K::Bioharvester, 1);
+    run(&mut w);
+    assert_eq!(stock(&w, home, C::Biomass), 0.0, "no power, no harvest");
+    body_mut(&mut w, home, farm).set_tier(K::PowerPlant, 1);
+    run(&mut w);
+    assert!(stock(&w, home, C::Biomass) > 0.0, "the Solar Array runs the farm");
+    assert_eq!(grid(&w, home, farm).demand, 1.0);
 }
 
 #[test]
@@ -92,7 +120,7 @@ fn a_planet_past_its_base_browns_out_until_a_solar_array_lifts_it() {
     let events = run(&mut w);
     let g = grid(&w, home, id);
     assert!((g.demand - 4.4).abs() < 1e-9);
-    assert_eq!(g.power, 0.22, "the reactor's 1 MW of 4.4");
+    assert_eq!(g.power, 0.0, "§charter-v6: the reactor is off the grid, nothing of 4.4");
     assert!(events.iter().any(|e| matches!(e.payload,
         EventPayload::Brownout { owner: o, body, no_fuel: false, .. } if o == owner && body == id)));
     // A Solar Array needs no fuel at all: full power, nothing burned.
@@ -144,22 +172,22 @@ fn planets_never_share_power() {
 fn a_brownout_slows_the_planets_factories_by_its_share() {
     // The same Fuel Refinery, browned out and then fully powered: its input
     // draw (output per Volatile is fixed) falls by exactly the grid's share.
+    // §charter-v6: the reactor is off the grid, so the dim case is a Solar
+    // Array I (8 MW) under 12 MW of work; a Solar Array II (17.6) covers it.
     let draw = |powered: bool| {
         let (mut w, _, home, solid) = grid_home();
         body_mut(&mut w, home, solid[0]).set_tier(K::CommandCenter, 1);
-        place(&mut w, home, solid[0], K::FuelRefinery, 2);
-        place(&mut w, home, solid[0], K::MiningComplex, 2);
-        if powered {
-            body_mut(&mut w, home, solid[0]).set_tier(K::PowerPlant, 1);
-        }
+        place(&mut w, home, solid[0], K::FuelRefinery, 4);
+        place(&mut w, home, solid[0], K::MiningComplex, 4);
+        body_mut(&mut w, home, solid[0]).set_tier(K::PowerPlant, if powered { 2 } else { 1 });
         set_stock(&mut w, home, C::Volatiles, 1_000.0);
         run(&mut w);
-        assert_eq!(grid(&w, home, solid[0]).power, if powered { 1.0 } else { 0.22 });
+        assert_eq!(grid(&w, home, solid[0]).power, if powered { 1.0 } else { 0.66 });
         1_000.0 - stock(&w, home, C::Volatiles)
     };
     let (dim, full) = (draw(false), draw(true));
     assert!(full > 0.0);
-    assert!((dim / full - 0.22).abs() < 1e-9, "{dim} / {full}");
+    assert!((dim / full - 0.66).abs() < 1e-9, "{dim} / {full}");
 }
 
 #[test]
@@ -182,7 +210,9 @@ fn a_dry_colony_still_refines_its_own_fuel() {
 #[test]
 fn the_fusion_tiers_need_fusion_reactors_and_burn_helium3() {
     use crate::build::max_buildable_tier;
-    assert_eq!(max_buildable_tier(K::PowerPlant, 0), 4, "Deuterium plants to tier IV");
+    // §reactors-drives: Solar I–II need no research; Bunkerage (unlock 3) opens the Deuterium plants.
+    assert_eq!(max_buildable_tier(K::PowerPlant, 0), 2, "solar only without research");
+    assert_eq!(max_buildable_tier(K::PowerPlant, 3), 4, "Deuterium plants to tier IV");
     let mut research = crate::research::ResearchState::default();
     research.completed.insert(crate::power::FUSION_RESEARCH.into());
     let unlocked = crate::research::unlocked_structure_tier(&research, K::PowerPlant);
@@ -241,9 +271,13 @@ fn a_plant_takes_no_slot_and_stands_on_gas_giants_but_not_belts() {
 fn the_ladder_is_solar_then_fusion_with_the_authoritys_cores() {
     use crate::build::{recipe_for_tier, BuildKind};
     let plant = BuildKind::Upgrade { upgrade: K::PowerPlant };
-    let cores = |tier| recipe_for_tier(plant, tier).costs.iter()
-        .find(|(c, _)| *c == C::FusionCore).map(|(_, n)| *n).unwrap_or(0.0);
-    assert_eq!((cores(1), cores(2), cores(3), cores(4), cores(5), cores(6)), (0.0, 0.0, 1.0, 1.0, 1.0, 1.0));
+    let cores = |tier, reactor| recipe_for_tier(plant, tier).costs.iter()
+        .find(|(c, _)| *c == reactor).map(|(_, n)| *n).unwrap_or(0.0);
+    // §shipbuilding-overhaul: Deuterium plants take a Fusion Reactor, the
+    // Helium-3 plants an Advanced Fusion Reactor.
+    let (fr, afr) = (C::FusionReactor, C::AdvancedFusionReactor);
+    assert_eq!((cores(1, fr), cores(2, fr), cores(3, fr), cores(4, fr), cores(5, fr), cores(6, fr)), (0.0, 0.0, 1.0, 1.0, 0.0, 0.0));
+    assert_eq!((cores(4, afr), cores(5, afr), cores(6, afr)), (0.0, 1.0, 1.0));
     assert_eq!(K::PowerPlant.tier_title(2), "Solar Array");
     assert_eq!(K::PowerPlant.tier_title(3), "Fusion Plant");
     assert_eq!(crate::power::plant_fuel(2), None);

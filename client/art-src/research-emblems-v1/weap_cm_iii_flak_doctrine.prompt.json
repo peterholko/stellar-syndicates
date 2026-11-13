@@ -1,0 +1,30 @@
+{
+  "key": "weap_cm_iii_flak_doctrine",
+  "name": "Flak Doctrine",
+  "mode": "built-in image_gen",
+  "source_brief": "client/art-src/research-emblems-v1/prompts.json",
+  "prompt": "Use case: stylized-concept. Asset type: one transparent research emblem for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw ONE new emblem. Do not copy any of the six motifs.\nEmblem: Flak Doctrine, a Weapons research programme.\nMotif: A point-defense turret in the lower left spraying a wide fan of red tracer flak upward-right at two small INCOMING missiles in the upper right. Both missiles point nose-first diagonally DOWN-LEFT toward the turret; their engine flames trail behind them toward the upper right. The flak intercepts their approach.\nBadge: exactly Image 1's badge: a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. The motif sits inside the rim, centred, about 70% of the face's width. Nothing crosses the rim.\nColour: silver metal with a signal-red accent and a small orange-yellow flash. Everything else stays in the family's navy, charcoal and silver.\nFraming: square 1:1 canvas, 1254 x 1254 pixels. The hexagon is centred: its top and bottom points about 6% from the canvas edges (88% of the canvas height), its flat sides about 80% of the canvas width apart.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. One clear motif that still reads at 48 px: a few large forms, restrained small detail.\nBackground: genuinely transparent PNG with real alpha outside the hexagon. No drop shadow, outer glow, grey backdrop or vignette around the badge.\nConstraints: exactly one badge. No text, letters, numbers, Roman numerals, labels, logos, watermark, second badge, frame or UI.",
+  "references": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png",
+      "sha256": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+    }
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-b0f12d80-b67b-4ac3-ba37-901286ed45e8.png",
+  "sheet_override": "weapons-02",
+  "reason": "Incoming missiles point toward the defending turret.",
+  "verification": {
+    "width": 1254,
+    "height": 1254,
+    "hasAlpha": true,
+    "badge": {
+      "left": 143,
+      "top": 66,
+      "width": 969,
+      "height": 1120
+    },
+    "sha256": "10b73104c2c0bd126748e44355eed664bd91e061246243e1bea804ade205f3bd",
+    "nativeBytesPreserved": true
+  }
+}

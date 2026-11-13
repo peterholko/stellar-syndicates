@@ -1,0 +1,54 @@
+{
+  "name": "materials-04",
+  "mode": "built-in image_gen",
+  "source_brief": "docs/research-emblem-sheets.md",
+  "prompt": "Use case: stylized-concept. Asset type: a sheet of four transparent research emblems for Stellar Syndicates, a premium dark sci-fi strategy game. They join an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw FOUR new emblems. Do not copy any of Image 1's six motifs, and ignore Image 1's grey backdrop.\nField: Materials. Colour, all four badges: charcoal gunmetal with a molten orange-amber glow. Everything else stays in the family's navy, charcoal and silver.\nLayout: square 1024 x 1024 canvas, two columns and two rows. Four identical hexagon badges, each about 450 px tall, centred in its own 512 x 512 cell, with clear empty space between badges and around the sheet. Badges never touch or overlap.\nBadge (every one the same): a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. Each motif sits inside its rim, centred, about 70% of the face's width. Nothing crosses a rim.\nMotifs, reading left to right, top row then bottom row:\n1. Top left: A thick glowing orange-gold ore vein running diagonally through dark rock, a small three-pointed crown floating above it.\n2. Top right: Two construction cranes side by side, each lowering a glowing orange girder at the same moment, sparks between them.\n3. Bottom left: A small rocky planet with two newly lit orange building pads on its surface and a small three-pointed crown floating above it.\n4. Bottom right: A slim magnetic containment bottle held between two orange-lit coil rings, a tiny brilliant white spark of antimatter floating at its centre.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. Each motif is one clear subject that still reads at 48 px: a few large forms, restrained small detail. The four must look clearly different from each other at a glance: vary silhouette, scale and composition, never the same object twice.\nBackground: genuinely transparent PNG with real alpha everywhere outside the hexagons. No drop shadow, outer glow, grey backdrop, panel, vignette, cell borders or grid lines.\nConstraints: exactly four badges. No text, letters, numbers, Roman numerals, captions, labels, logos, watermark, frames or UI.",
+  "keys": [
+    "mat_deepcrust_v_crown_vein",
+    "mat_foundry_v_flash_forges",
+    "mat_foundry_v_crown_project",
+    "mat_foundry_vi_antimatter_synthesis"
+  ],
+  "references": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png",
+      "sha256": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+    }
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-b3dc9e41-d6c7-4e25-9d3d-71699c151e28.png",
+  "edits": [],
+  "verification": {
+    "width": 1254,
+    "height": 1254,
+    "hasAlpha": true,
+    "badges": [
+      {
+        "left": 89,
+        "top": 54,
+        "width": 475,
+        "height": 543
+      },
+      {
+        "left": 690,
+        "top": 54,
+        "width": 475,
+        "height": 543
+      },
+      {
+        "left": 90,
+        "top": 656,
+        "width": 474,
+        "height": 543
+      },
+      {
+        "left": 690,
+        "top": 656,
+        "width": 475,
+        "height": 543
+      }
+    ],
+    "sha256": "67d8654629d594b2d6937e8be5a89fd1a5b2b2c2fe1c7bf5bf74de30160baa9d",
+    "nativeBytesPreserved": true
+  }
+}

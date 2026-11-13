@@ -751,6 +751,16 @@ impl BattleRecord {
         }
     }
 
+    /// §shipbuilding-overhaul Phase 5: the fleets' magazines are an input like
+    /// a roster change — recorded when they differ from what the engine holds
+    /// (a dock reload mid-battle, a rack lost with its hull), never every tick.
+    pub fn sync_magazines(&mut self, tick: u64, state: &mut crate::tactical::TacticalState,
+        magazines: BTreeMap<EntityId, crate::munitions::Magazine>) {
+        if state.set_magazines(magazines.clone()) {
+            if let Some(replay) = &mut self.replay { replay.magazines(tick, magazines); }
+        }
+    }
+
     pub fn step_tactical(
         &mut self, tick: u64, state: &mut crate::tactical::TacticalState,
         raid: bool, mods: [crate::tactical::SideMods; 2],

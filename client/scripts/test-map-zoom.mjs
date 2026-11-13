@@ -277,7 +277,7 @@ for (const [file, className, opened] of [['shell/deck/map.ts', 'DeckMapInteracti
   map.applyResult({ kind: 'select', target: { type: 'systemBody', detail: { id: '12', name: 'Freya 12' } } }, false, false);
   assert.deepEqual(calls, ['deselect', opened], `${file}: the world takes the one selection`);
 }
-for (const file of ['shell/deck/index.ts', 'shell/deck/command.ts', 'shell/mobile/parity.ts']) {
+for (const file of ['shell/deck/index.ts', 'shell/deck/founding-guide.ts', 'shell/mobile/parity.ts']) {
   const lines = source(file).split('\n');
   const pulses = lines.flatMap((line, i) => line.includes('pulseSystemBody(') ? [i] : []);
   assert.ok(pulses.length, `${file} pulses a world`);

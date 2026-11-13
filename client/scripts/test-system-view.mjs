@@ -37,8 +37,14 @@ class Text extends Container {
   get width() { return String(this.text).length * 6; }
   get height() { return 12; }
 }
+// The rolling star's mesh pieces (src/starroll.ts): recorded, never drawn.
+class MeshGeometry { constructor(options) { Object.assign(this, options); } destroy() {} }
+class Mesh extends Container { constructor(options) { super(); Object.assign(this, options); } }
+class Shader { constructor(options) { this.glProgram = options.glProgram; this.resources = { ...options.resources }; } destroy() {} }
+class UniformGroup { constructor(structure) { this.uniforms = Object.fromEntries(Object.entries(structure).map(([k, v]) => [k, v.value])); } }
 const pixi = { Container, Graphics, Sprite, Text, TextStyle: class { constructor(style) { Object.assign(this, style); } },
-  Texture: { EMPTY: { width: 1 } }, Assets: { load: () => new Promise(() => {}) } };
+  Texture: { EMPTY: { width: 1 } }, Assets: { load: () => new Promise(() => {}) },
+  Mesh, MeshGeometry, Shader, UniformGroup, GlProgram: { from: (options) => options } };
 
 const prng = load("prng.ts");
 const stars = load("stars.ts", { "./prng": prng });
@@ -46,14 +52,15 @@ const planetArt = load("planetart.ts", { "./planet-art.generated": load("planet-
 const protocol = load("protocol.ts");
 const layout = load("systemlayout.ts");
 const bodyFx = load("systembodyfx.ts", { "pixi.js": pixi, "./systemlayout": layout });
-const starFx = load("systemstarfx.ts", { "pixi.js": pixi, "./systembodyfx": bodyFx, "./systemlayout": layout });
+const starRoll = load("starroll.ts", { "pixi.js": pixi });
+const starFx = load("systemstarfx.ts", { "pixi.js": pixi, "./systembodyfx": bodyFx, "./systemlayout": layout, "./starroll": starRoll });
 const history = load("battlehistory.ts");
 const blockadeModule = load("core/derive/blockade.ts", { "./format": { fmtDur: secs => `${Math.round(secs)}s` } });
 const traffic = load("systemtraffic.ts", { "./battlehistory": history, "./systemlayout": layout, "./core/derive/blockade": blockadeModule });
 const shipart = load("shipart.ts", { "./ship-art.generated": load("ship-art.generated.ts") });
 const trafficLayer = load("systemtrafficlayer.ts", { "pixi.js": pixi, "./protocol": protocol, "./systemlayout": layout, "./systembodyfx": bodyFx, "./shipart": shipart });
 const systems = load("systemview.ts", { "pixi.js": pixi, "./prng": prng, "./stars": stars, "./planetart": planetArt,
-  "./systemlayout": layout, "./systembodyfx": bodyFx, "./systemstarfx": starFx, "./systemtrafficlayer": trafficLayer,
+  "./systemlayout": layout, "./systembodyfx": bodyFx, "./systemstarfx": starFx, "./starroll": starRoll, "./systemtrafficlayer": trafficLayer,
   "./planet-structure-art": { hasOrbitalShipConstruction: (builds, body) => builds.some((b) => b.body_id === body && b.key === "cruiser") },
   "./icons": { label: (s) => s.replace(/_/g, " ") } });
 
@@ -569,6 +576,31 @@ assert.ok(scene.traffic.textPool.some((t) => t.visible && t.text === "+4 docked"
   assert.equal(rects().length, 1);
   inset.prepare(cam, "p1", fleet(36, 46, 0), { ...area, h: 500 }, "center");
   assert.equal(inset.box.y, 84);
+  // §charter-advisor (Peter, Nov 9 2026: "the advisor's portrait much larger
+  // integrated into the Pirate Warning with some text"): a column on the raid
+  // window's left, face over name and line, the two centred together.
+  const voice = { portrait: "/art/derived/advisors/v1/veteran-320.webp", name: "Commander Imara Okafor",
+    line: "Typical pirates, preying on the weak and disorganized." };
+  assert.equal(inset.prepare(cam, "p1", fleet(36, 46, 0), area, "center", voice), true);
+  assert.deepEqual(plain(inset.box), { x: 299 + 88, y: 221, w: 450, h: 279 }, "the window shifts right by half the column");
+  inset.faceTex.set(voice.portrait, { width: 320 });
+  inset.render(gpu, {}, { ...fleet(36, 46, 0), color: 0xe08a2c }, raidNote);
+  assert.equal(inset.voiced(), true);
+  assert.deepEqual([inset.voiceName.text, inset.voiceLine.text], ["COMMANDER IMARA OKAFOR", voice.line]);
+  assert.ok(inset.voiceFace.visible && inset.voiceFace.width >= 120, `a large face: ${inset.voiceFace.width} px`);
+  assert.ok(inset.voiceFace.position.x >= 387 - 176 && inset.voiceFace.position.x + inset.voiceFace.width <= 387, "inside its column");
+  assert.ok(inset.voiceLine.position.y + inset.voiceLine.height <= 221 + 279, "its line inside the window's height");
+  const frame = inset.frame.commands.find((c) => c[0] === "roundRect");
+  assert.deepEqual(frame.slice(1, 3), [387 - 176 + 0.5, 221.5], "one frame round the column and the window");
+  assert.ok(inset.contains(387 - 100, 300) && !inset.contains(387 - 190, 300), "its clicks are its own, column too");
+  assert.deepEqual(rects(), [[387, 221, 450, 20], [387, 221 + 279 - 22, 450, 22]], "the window's own bands stay on the window");
+  // A selected fleet's corner window, or no voice, has no column.
+  inset.prepare(cam, "t1", fleet(36, 0, 0), area, "corner", voice);
+  inset.render(gpu, {}, fleet(36, 0, 0));
+  assert.equal(inset.voiced(), false);
+  assert.equal(inset.voiceName.visible, false);
+  inset.hide();
+  assert.equal(inset.voiced(), false);
   // Wiring: its scene is built on demand for the system it shows (the
   // orrery's, or the raided home) from the orrery's data (never its camera),
   // drawn after the live 3D hulls, on the desktop deck, and nothing on it
@@ -581,7 +613,11 @@ assert.ok(scene.traffic.textPool.some((t) => t.visible && t.text === "+4 docked"
   }
   assert.match(renderSrc, /let tracked: string \| null = this\.updateRaidCamera\(state\);/, "an incoming raid takes the window first");
   assert.match(renderSrc, /tracked = this\.updateTrackingScene\(state, dyn, report, mine, shown, observed\);/);
-  assert.match(renderSrc, /prepare\(this\.trackingScene, raid\.id, seen, this\.cameraRect, "center"\)/, "the raid's window is centred");
+  assert.match(renderSrc, /prepare\(this\.trackingScene, raid\.id, seen, this\.cameraRect, "center", this\.raidVoice\)/, "the raid's window is centred, the advisor beside it");
+  assert.match(renderSrc, /const onDuty = advisorOnDuty\(state\.founding\);\n\s*if \(onDuty\) this\.trackingInset\.preloadFace\(onDuty\.portrait\);/,
+    "the face loads before the raid");
+  assert.match(renderSrc, /const advisor = raid\.kind === "raid" \? onDuty : null;\n\s*if \(advisor\) this\.raidVoice = \{ portrait: advisor\.portrait, name: advisor\.name, line: advisor\.moments\.raid \};/,
+    "the officer on duty, with the raid's line; never on a shipment");
   const raidCamera = renderSrc.slice(renderSrc.indexOf("private updateRaidCamera("), renderSrc.indexOf("private showTrackingSystem("));
   assert.ok(raidCamera.includes("trackedHull(deriveSystemPicture(") && !raidCamera.includes("shipModels.add"),
     "the raider at its true place; pirate culture art never goes live 3D");
@@ -603,8 +639,16 @@ assert.ok(scene.traffic.textPool.some((t) => t.visible && t.text === "+4 docked"
   // window only, while the raider is outside the hyperlimit; a notice on mobile.
   const raidTop = renderSrc.slice(renderSrc.indexOf("private updateRaidCamera("), renderSrc.indexOf("private showTrackingSystem("));
   assert.match(raidTop, /this\.raidNote = null;/, "cleared every frame");
-  assert.match(raidTop, /> this\.galaxy\.hyperlimit\) \{\n\s*this\.raidNote = `RAIDER DETECTED · ON COURSE FOR \$\{sys\.name\.toUpperCase\(\)\}`;/,
+  assert.match(raidTop, /const outside = Math\.hypot\(ghost\.pos\.x - sys\.pos\.x, ghost\.pos\.y - sys\.pos\.y\) > this\.galaxy\.hyperlimit;/, "the hyperlimit decides the note");
+  assert.match(raidTop, /\} else if \(outside\) \{\n(\s*\/\/.*\n)*\s*this\.raidNote = `RAIDER DETECTED · ON COURSE FOR \$\{sys\.name\.toUpperCase\(\)\}`;/,
     "until it crosses the hyperlimit to loot");
+  // §export-follow (Peter, Nov 2 2026): the same window follows the first
+  // shipment out of the well, counting down to its warp, and lets go at the
+  // hyperlimit; a shipment never draws the raid's course line.
+  assert.match(raidTop, /if \(raid\.kind === "shipment"\) \{[\s\S]*?if \(outside\) \{\n\s*this\.raid = null;\n\s*return null;/, "the follow ends at the hyperlimit");
+  assert.match(raidTop, /FIRST SHIPMENT · WARP IN \$\{fmtDur\(left\)\}/, "it counts down to the warp");
+  assert.match(renderSrc, /const raid = this\.raid\?\.kind === "raid" \? this\.raid : null;\n\s*const from = raid \? screenById\.get\(raid\.id\) : undefined;/, "course line: raids only");
+  assert.match(renderSrc, /trackShipment\(id: string \| null, systemId: string \| null = null\): void \{[\s\S]*?else if \(this\.raid\?\.kind === "shipment"\) this\.raid = null;/, "stopping a shipment follow leaves a raid alone");
   assert.match(renderSrc, /this\.trackingInset\.render\(this\.app\.renderer, this\.trackingScene\.root, target, id === this\.raid\?\.id \? this\.raidNote : null, work\);/,
     "never on a selected fleet's window");
   assert.match(source("shell/mobile/index.ts"),
@@ -633,16 +677,23 @@ assert.ok(scene.traffic.textPool.some((t) => t.visible && t.text === "+4 docked"
 // Star FX: a pulsar's flash is a soft additive glow, never a magnified polygon,
 // and flare shapes tessellate at screen-like size before scaling back down.
 {
-  const fx = load("systemstarfx.ts", { "pixi.js": pixi, "./systembodyfx": { glowSpriteTexture: () => ({ width: 128 }) }, "./systemlayout": layout });
+  const fx = load("systemstarfx.ts", { "pixi.js": pixi, "./systembodyfx": { glowSpriteTexture: () => ({ width: 128 }) }, "./systemlayout": layout, "./starroll": starRoll });
   const pulsar = new fx.StarFx();
   pulsar.configure("neutron_star", 0.085);
-  pulsar.update(0, null); // a beam faces the viewer: full flash
+  // §star-roll: the beams swing round the north–south axis; a quarter turn
+  // from their painted pose one faces the viewer: full flash.
+  pulsar.update(7 / 4, null);
   const flash = pulsar.over.children.find((c) => c instanceof Sprite && c.blendMode === "add");
   assert.ok(flash?.visible && Math.abs(flash.alpha - 0.6) < 1e-9, "the pulsar flashes as a soft additive glow");
   const shapes = pulsar.over.children.find((c) => c instanceof Graphics);
   assert.equal(shapes.commands.filter(([op]) => op === "circle").length, 0, "no disc is drawn for the flash");
-  pulsar.update(7 / 4, null); // beams side-on
+  pulsar.update(0, null); // the painted pose: beams side-on
   assert.ok(flash.alpha < 1e-6, "dark between sweeps");
+  // The star artwork turns with it: the surface's roll, never a clock spin.
+  const star = new starRoll.RollingStar({ width: 1254, height: 1254, source: {} }, "neutron_star");
+  pulsar.update(7 / 4, star);
+  close(star.turn, Math.PI / 2, "a quarter of the pulsar's 7 s turn");
+  assert.equal(star.rotation, 0, "the painting never turns in the screen's plane");
   const magnetar = new fx.StarFx();
   magnetar.configure("magnetar", 0.085);
   magnetar.update(1, null);
@@ -827,12 +878,14 @@ assert.equal(scenery.markers.children.length, 0);
 
 // §orbital-defense: a world's station is drawn once in orbit, larger and a
 // little farther out at each level; legacy platform tiers keep their ring.
+// §laser-battery: level 1 stands on the ground, so nothing orbits for it.
 const stationOf = level => bodyFx.orbitalItems({ orbital_defense: level }, 7).filter(item => item.kind === "orbital_defense");
-for (let level = 1; level <= 6; level++) {
+assert.equal(stationOf(1).length, 0, "the Laser Battery is on the ground");
+for (let level = 2; level <= 6; level++) {
   const [item, ...extra] = stationOf(level);
   assert.equal(extra.length, 0, "one station per world");
   assert.equal(item.tier, level);
-  if (level > 1) {
+  if (level > 2) {
     const [lower] = stationOf(level - 1);
     assert.ok(item.px > lower.px && item.orbit > lower.orbit, `level ${level} outgrows level ${level - 1}`);
   }
@@ -900,6 +953,24 @@ assert.equal(bodyFx.orbitalItems({ defense_platform: 3 }, 7).filter(item => item
   const chunks = beltScene.beltChunks.children;
   assert.ok(chunks.length === 0 || chunks.every((c) => c.tint === 0xffffff || c.tint === systems.BELT_META.metallic.tint
     || c.tint === systems.BELT_META.icy.tint), "chunks use their type's art or its fallback tint");
+}
+
+// §charting (Peter, Nov 4 2026): a belt charted while its system is shown (the
+// den's, as the Interceptor's report reaches command) joins the scene at once.
+{
+  const scene = new systems.SystemViewScene();
+  scene.setSystem(systems.buildVisualSystem(system, []), null);
+  scene.layout(1200, 800, { x: 0, y: 40, w: 900, h: 640 });
+  const charted = [wireBody(body(20, { kind: "asteroid_belt", size: "large", belt: { kind: "metallic", radius: 0.84, width: 0.05 } }))];
+  scene.setSystem(systems.buildVisualSystem(system, charted), null);
+  assert.equal(scene.vis.asteroidBelts.length, 0, "setSystem keeps the picture of a system already shown");
+  scene.syncRoster(systems.buildVisualSystem(system, charted));
+  assert.equal(scene.vis.asteroidBelts.length, 1, "the charted belt joins it");
+  scene.syncRoster(systems.buildVisualSystem({ ...system, id: "elsewhere" }, []));
+  assert.equal(scene.vis.asteroidBelts.length, 1, "another system's roster never replaces it");
+  const render = source("render.ts");
+  assert.match(render, /this\.systemScene\.syncRoster\(buildVisualSystem\(fixed, dyn\.bodies\)\)/, "the orrery follows its report's roster");
+  assert.match(render, /this\.trackingScene\.syncRoster\(buildVisualSystem\(sys, dyn\?\.bodies \?\? \[\]\)\)/, "so does the tracking scene");
 }
 
 // §charting (Oct 28 2026): a known pirate base is drawn on the system's belt,

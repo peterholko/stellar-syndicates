@@ -335,7 +335,6 @@ let cameraHint: HTMLDivElement | null = null;
 let battleModels: BattleModels | null = null;
 let modelFx: ReadonlySet<string> = new Set();
 let modelWrecks: ReadonlySet<string> = new Set(); // wreck sections the 3D renderer drew
-let reducedMotion = false;
 /// The whole viewer (2D and 3D) renders at one cap, so hulls, labels and
 /// weapon paths always advance together: 60 fps on a desktop stage (fast
 /// hulls zoomed in move half as far per frame as at 30), 30 where the shell
@@ -382,7 +381,22 @@ const CAM_ZOOM_MAX = 12;
 let following = true;
 let followCid: number | null = null;
 const FOLLOW_GLIDE_S = 0.6;
-let followGlide: { x: number; y: number; t: number } | null = null;
+/// A glide to the followed hull; `zoom` eases the camera in with it.
+let followGlide: { x: number; y: number; t: number; zoom?: [number, number] } | null = null;
+/// §follow-zoom (Peter, Nov 5 2026: "The Camera Following didn't appear to
+/// work in the Live Battle or the Replay Battle"): the overview frames the
+/// whole arena, so its centre can't move to follow anything. Following a hull
+/// from there closes in to this many overviews, and the camera tracks it.
+const FOLLOW_ZOOM = 2.4;
+/// Whether the camera has room to move: zoomed in past the overview.
+const cameraCanFollow = () => camZoom > overviewZoom() * 1.05;
+/// Close in on a hull just picked to follow, from the overview or near it.
+function closeIn(): void {
+  const to = overviewZoom() * FOLLOW_ZOOM;
+  if (camZoom >= to) return;
+  followGlide = { x: camX, y: camY, t: 0, zoom: [camZoom, to] };
+  cameraOverview = false;
+}
 /// The press under way has moved past DRAG_START_PX: a drag, not a click.
 /// Below that a click keeps its wobble (a trackpad tap moves a pixel or two).
 let dragMoved = false;
@@ -493,6 +507,11 @@ function followCamera(dt: number, frac: number): void {
   if (followGlide) {
     followGlide.t = Math.min(1, followGlide.t + Math.max(0, dt) / FOLLOW_GLIDE_S);
     const k = followGlide.t * followGlide.t * (3 - 2 * followGlide.t);
+    if (followGlide.zoom) {
+      // Zoom first, so the clamp below opens the room the glide needs.
+      camZoom = followGlide.zoom[0] + (followGlide.zoom[1] - followGlide.zoom[0]) * k;
+      [x, y] = clampToOverview(m.x, m.y);
+    }
     x = followGlide.x + (x - followGlide.x) * k;
     y = followGlide.y + (y - followGlide.y) * k;
     if (followGlide.t >= 1) followGlide = null;
@@ -505,7 +524,8 @@ function followCamera(dt: number, frac: number): void {
 /// changes (the transport re-attaches the theater every frame).
 function syncCameraHint(): void {
   if (!cameraHint) return;
-  const v = following && st && followCid !== null ? st.ships.find((s) => s.inUse && s.cid === followCid) : undefined;
+  // §follow-zoom: "following" only while the camera can actually move.
+  const v = following && cameraCanFollow() && st && followCid !== null ? st.ships.find((s) => s.inUse && s.cid === followCid) : undefined;
   const who = v && st ? `${v.side === st.rec.own_side ? "your " : ""}${theaterShipAppearance(st.rec, v.side, v.kind, st.pirateId).label}` : "";
   const tap = coarsePointer ? "tap" : "click";
   const text = who ? `following ${who} · ${tap} another ship to switch · drag to look around`
@@ -538,6 +558,7 @@ function pickAt(mx: number, my: number): void {
   if (best.cid !== followCid || !following) followGlide = { x: camX, y: camY, t: 0 };
   followCid = best.cid ?? null;
   following = true;
+  closeIn();
 }
 
 /// The selected hull as the viewer shows it now: the one followed, or the
@@ -574,7 +595,7 @@ export function theaterSelection(): TheaterShipInfo | null {
     : v.entered && st.frac < 0.5 ? "arriving" : "fighting";
   return {
     cid: v.cid, side: v.side, own: v.side === st.rec.own_side, kind: v.kind,
-    label: v.station ? `${stationName(v.station)} hardpoint` : v.plat ? "Defense Platform" : appearance.label,
+    label: v.station === 1 ? stationName(1) : v.station ? `${stationName(v.station)} hardpoint` : v.plat ? "Defense Platform" : appearance.label,
     art: v.plat ? null : appearance.url, hull: v.hp, reps: v.reps, station: v.station, plat: v.plat,
     fits: (side?.loadouts ?? []).filter((l) => l.kind === v.kind && l.modules.length > 0).map((l) => [...l.modules]),
     flagship: v.kind === "titan" ? side?.flagship_name ?? null : null,
@@ -587,6 +608,7 @@ export function theaterFollow(on: boolean): void {
   if (on && !following) followGlide = { x: camX, y: camY, t: 0 };
   following = on && followCid !== null;
   if (!following) followGlide = null;
+  else closeIn();
 }
 
 function syncViewToggle(): void {
@@ -874,7 +896,6 @@ export function theaterAttach(
         fastRetryWait = 20;
       }
       app.ticker.maxFPS = targetFps;
-      reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
       app.ticker.start();
     },
     () => {
@@ -1097,9 +1118,11 @@ function bindRecord(rec: BattleRecordView, pirateId: PlayerId | null, scenerySou
 /// §orbital-defense: each side's station, drawn once beneath its hardpoints
 /// (which fight as stationary batteries). Its level comes from the record.
 let arenaStations: { side: number; level: number; sprite: Sprite; x: number; y: number }[] = [];
-/// Across, in arena units, by level (Defense Platform … Star Fortress).
-// §gun-platform: the Gun Platform below the Defense Platform.
+/// Across, in arena units, by level (Laser Battery … Star Fortress).
 const STATION_SPAN = [55, 70, 90, 130, 180, 320];
+/// §laser-battery: how far out on the world's disc the ground battery stands,
+/// as a share of its radius (on the face toward the fight, inside the limb).
+const GROUND_BATTERY_AT = 0.9;
 /// A hardpoint's turret marker (ship-local px at zoom 1).
 const HARDPOINT_PX = 6;
 
@@ -1123,8 +1146,18 @@ function stationLayout(rec: BattleRecordView): StationLayout {
       .sort((a, b) => (a.cid ?? 0) - (b.cid ?? 0));
     if (!mounts.length) continue;
     const level = Math.max(...mounts.map((v) => v.station ?? 1));
-    const x = mounts.reduce((sum, v) => sum + v.x, 0) / mounts.length;
-    const y = mounts.reduce((sum, v) => sum + v.y, 0) / mounts.length;
+    let x = mounts.reduce((sum, v) => sum + v.x, 0) / mounts.length;
+    let y = mounts.reduce((sum, v) => sum + v.y, 0) / mounts.length;
+    // §laser-battery: level 1 stands on the ground, so it draws on its world's
+    // face toward the fight and fires from there. The engine keeps it at the
+    // station's spot, so its reach and the fight are unchanged.
+    // Not on another world the fight stands beside (a strike on the second).
+    const world = frame.world;
+    if (level === 1 && world && world.side === side && backdropPlan?.world?.battery !== false) {
+      const d = Math.hypot(x - world.x, y - world.y) || 1;
+      x = world.x + ((x - world.x) / d) * world.r * GROUND_BATTERY_AT;
+      y = world.y + ((y - world.y) / d) * world.r * GROUND_BATTERY_AT;
+    }
     centers.set(side, { x, y, level });
     const r = mounts.length > 1 ? STATION_SPAN[level - 1] * 0.26 : 0;
     mounts.forEach((v, k) => {
@@ -1550,7 +1583,7 @@ function showTip(v: ShipVis): void {
   const side = st.rec.sides[v.side];
   const fits = (side?.loadouts ?? []).filter((l) => l.kind === v.kind && l.modules.length > 0);
   const fitLine = fits.length ? fits.map((f) => f.modules.join("+")).join(" · ") : "unfitted";
-  const label = v.station ? `${stationName(v.station)} hardpoint` : v.plat ? "Defense Platform tier"
+  const label = v.station === 1 ? stationName(1) : v.station ? `${stationName(v.station)} hardpoint` : v.plat ? "Defense Platform tier"
     : `${theaterShipAppearance(st.rec, v.side, v.kind, st.pirateId).label} ×${v.reps}`;
   tooltip.textContent = `${label} — ${Math.round(v.hp * 100)}% hull · ${v.plat ? "station" : fitLine}`;
   tooltip.style.display = "block";
@@ -2138,7 +2171,7 @@ function frame(dt: number): void {
   // replay clock and every recorded fact are untouched).
   const targetTilt = viewAngled ? THEATER_TILT : 1;
   if (tiltY !== targetTilt) {
-    tiltY = reducedMotion ? targetTilt : tiltY + (targetTilt - tiltY) * (1 - Math.exp(-Math.max(0, dt) * 9));
+    tiltY += (targetTilt - tiltY) * (1 - Math.exp(-Math.max(0, dt) * 9));
     if (Math.abs(targetTilt - tiltY) < 1e-3) tiltY = targetTilt;
   }
   rebuildWindow();
@@ -2641,7 +2674,7 @@ function drawAfterlife(tex: FxTextures, zs: number): void {
         const lx = (jitter(e.seed ^ Math.imul(f + 1, 0x7a3b)) - 0.5) * 0.25;
         if (jitter(e.seed ^ Math.imul(f + 1, 0x19)) > 0.35 + heat) continue; // fires spread as it burns
         const p = hullPoint(hx, hy, heading, k, lx, lz, zs);
-        const flick = reducedMotion ? 1 : 0.7 + 0.6 * noise1(e.seed ^ (f + 31), T0 * 11);
+        const flick = 0.7 + 0.6 * noise1(e.seed ^ (f + 31), T0 * 11);
         const size = width * (1.2 + 1.4 * heat) * flick;
         light.draw(tex.hot, p.x, p.y, size, size, 0, 0xff6a22, 0.6);
         light.draw(tex.soft, p.x, p.y, size * 0.55, size * 0.55, 0, 0xffe2a8, 0.85);
@@ -2691,7 +2724,7 @@ function drawAfterlife(tex: FxTextures, zs: number): void {
           const lz = -1 + 2 * (bounds[i] + (bounds[i + 1] - bounds[i]) * jitter(e.seed ^ (i * 4099))) + pc.oz;
           const p = hullPoint(hx, hy, heading, k, pc.ox + (jitter(e.seed ^ (i * 271)) - 0.5) * 0.2, lz, zs);
           const fx0 = p.x, fy0 = p.y;
-          const flick = reducedMotion ? 1 : 0.7 + 0.6 * noise1(e.seed ^ (i + 97), T0 * 9);
+          const flick = 0.7 + 0.6 * noise1(e.seed ^ (i + 97), T0 * 9);
           const size = width * 1.4 * burn * flick;
           light.draw(tex.hot, fx0, fy0, size, size, 0, 0xff6a22, 0.55 * pc.alpha);
           light.draw(tex.soft, fx0, fy0, size * 0.5, size * 0.5, 0, 0xffe0a0, 0.8 * pc.alpha);
@@ -2999,7 +3032,7 @@ function battleModelFrame(): BattleModelFrame {
       }
     }
   }
-  return { width: CANVAS_W, height: CANVAS_H, tier: perfTier, reducedMotion, bursts, wrecks: wreckPieces,
+  return { width: CANVAS_W, height: CANVAS_H, tier: perfTier, bursts, wrecks: wreckPieces,
     pitch: hullPitch(), ringTilt: ringTilt(), depthSlope: depthSlope(),
     ships: st!.ships.flatMap((v, id) => v.inUse ? [{ id, kind: v.kind, x: v.root.position.x,
       y: v.root.position.y, angle: screenHeading(v.spin.rotation - Math.PI / 2), canvasPx: v.modelPx * zs,
@@ -3148,7 +3181,7 @@ function updateEngines(v: ShipVis): void {
   for (let i = 0; i < n; i++) {
     const p = v.plumes[i];
     const nozzle = v.flames[2 * i], flame = v.flames[2 * i + 1];
-    const flick = reducedMotion ? 1 : 0.85 + 0.3 * noise1(v.fxSeed ^ Math.imul(i + 1, 0x27d4eb2f), T * 9);
+    const flick = 0.85 + 0.3 * noise1(v.fxSeed ^ Math.imul(i + 1, 0x27d4eb2f), T * 9);
     nozzle.visible = perfTier < 2; // ladder: flames only
     nozzle.position.set(p.x, p.y);
     nozzle.scale.set((p.r * (2.4 + 1.6 * thrust)) / nozzle.texture.width);
@@ -3421,7 +3454,7 @@ function drawTorpedoes(fx: FxWindow, tex: FxTextures, zs: number, wjit: number):
           light.draw(tex.soft, sx(px), sy(py), wake, wake, 0, 0xff8a4a, 0.5 * (1 - k / 4));
         }
       }
-      const flick = reducedMotion ? 1 : 0.8 + 0.4 * noise1(wjit ^ Math.imul(ai + 1, 7919), T * 14);
+      const flick = 0.8 + 0.4 * noise1(wjit ^ Math.imul(ai + 1, 7919), T * 14);
       light.draw(tex.soft, hsx, hsy, 8 * zs * flick, 8 * zs * flick, 0, sideLaserColor(a.side), 0.6);
       light.draw(tex.soft, hsx, hsy, 3 * zs, 3 * zs, 0, 0xffffff, 0.95);
     }
@@ -3493,7 +3526,7 @@ function drawTorpTracks(fx: FxWindow, tex: FxTextures, zs: number, wjit: number)
         }
       }
       const hsx = sx(hx), hsy = sy(hy);
-      const flick = reducedMotion ? 1 : 0.8 + 0.4 * noise1(wjit ^ Math.imul(key + 1, 7919), T * 14);
+      const flick = 0.8 + 0.4 * noise1(wjit ^ Math.imul(key + 1, 7919), T * 14);
       light.draw(tex.soft, hsx, hsy, 8 * zs * flick, 8 * zs * flick, 0, sideLaserColor(t.side), 0.6 * a);
       light.draw(tex.soft, hsx, hsy, 3 * zs, 3 * zs, 0, 0xffffff, 0.95 * a);
       if (t.end === "launch" && f - t.t0 < 0.1) {
@@ -3653,7 +3686,7 @@ function drawDamage(tex: FxTextures, zs: number): void {
           0.3 * Math.min(1, age / 0.08) * Math.pow(1 - u, 1.3));
       }
       if (burning && e < 2) {
-        const flick = reducedMotion ? 1 : 0.75 + 0.5 * noise1(v.fxSeed ^ (e + 11), T * 10);
+        const flick = 0.75 + 0.5 * noise1(v.fxSeed ^ (e + 11), T * 10);
         const fire = Math.max(3, v.halfW * 0.7) * zs * flick;
         light.draw(tex.hot, emx, emy, fire * 1.6, fire * 1.6, 0, 0xff6a22, 0.55);
         light.draw(tex.soft, emx, emy, fire * 0.8, fire * 0.8, 0, 0xffe0a0, 0.8);
@@ -3687,7 +3720,6 @@ function applyShakeAndBanner(): void {
     if (e.cls === 3 && b >= 0 && b < 1.4) titan = e;
   }
   const sb = hashId(`${st.rec.id}:${st.round}`) ^ Math.floor(st.frac * 60);
-  if (reducedMotion) shake = 0;
   app.stage.position.set(shake ? (jitter(sb) - 0.5) * 2 * shake : 0, shake ? (jitter(sb ^ 0x55aa) - 0.5) * 2 * shake : 0);
   if (banner) {
     banner.style.display = titan ? "block" : "none";

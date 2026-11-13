@@ -14,4 +14,13 @@ export function tickLiveProgress(root: ParentNode, now: number): void {
     const fill = bar.firstElementChild as HTMLElement | null;
     if (line && fill) fill.style.width = `${progressAt(line, now).toFixed(2)}%`;
   }
+  // §yard-build: a hull on the planet's yard pad fills in, its tag counting up.
+  for (const hull of root.querySelectorAll<HTMLElement>("[data-live-build]")) {
+    const line = readLiveProgress(hull.dataset.liveBuild);
+    if (!line) continue;
+    const pct = progressAt(line, now);
+    hull.style.setProperty("--build", (pct / 100).toFixed(4));
+    const tag = hull.querySelector("small");
+    if (tag) tag.textContent = `${Math.floor(pct)}%`;
+  }
 }

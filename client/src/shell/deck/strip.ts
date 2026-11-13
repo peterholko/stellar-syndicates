@@ -1,4 +1,4 @@
-import { slowCapable, guardCapable, jumpCapable, shipKindLabel } from "../../core/derive/fleet";
+import { slowCapable, guardCapable, hasJumpDrive, jumpCapable, JUMP_MIXED_REASON, shipKindLabel } from "../../core/derive/fleet";
 import { gravityWellAt, nearestKnownDock } from "../../core/derive/geo";
 import { intentSummary } from "../../core/derive/orders";
 import { intentReadinessWarnings } from "../../core/derive/readiness";
@@ -248,7 +248,7 @@ export class DeckCommandStrip {
     const queue = this.ctx.state.pendingOrders.get(fleet.id) ?? [];
     const pending = (kind: (typeof queue)[number]["kind"]) => queue.some((order) => !order.lost && order.kind === kind);
     const jumpReason = !jumpCapable(fleet)
-      ? "All hulls must carry compatible jump drives."
+      ? JUMP_MIXED_REASON
       : fleet.docked
         ? "Undock before spooling."
         : gravityWellAt(fleet.pos, this.ctx.state)
@@ -266,7 +266,10 @@ export class DeckCommandStrip {
     return [
       this.verb("move", "Move", "Click map", pending("move") ? "Move order already in flight." : ""),
       this.verb("dock", "Dock", dock ? dock.name : "Nearest berth", dockReason),
-      this.verb("jump", "Jump", this.ctx.state.galaxy ? `${Math.round(jumpRangeAt(this.ctx.state.galaxy, fleet.pos)).toLocaleString()} su` : "Range unavailable", jumpReason),
+      // Peter, Nov 12 2026: no Jump until a Maelstrom Drive is aboard.
+      hasJumpDrive(fleet)
+        ? this.verb("jump", "Jump", this.ctx.state.galaxy ? `${Math.round(jumpRangeAt(this.ctx.state.galaxy, fleet.pos)).toLocaleString()} su` : "Range unavailable", jumpReason)
+        : "",
       this.verb("guard", "Guard", "Choose fleet", guardReason),
       this.verb("hold", "Hold", "Cancel course", holdReason),
       this.verb("recall", blockading ? "Lift" : "Recall", blockading ? "End the blockade · come home" : "Break off", recallReason),

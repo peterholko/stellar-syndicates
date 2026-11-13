@@ -26,7 +26,7 @@ const { planetStructureImage, isOrbitalYard } = await compile("planet-structure-
 const { SURFACE_STRUCTURE_TIERS: families, SURFACE_GROUND_LAYERS: biomes, SURFACE_ORBITAL_ART: orbitalArt } = deps["./planet-surface-structure-art.generated"];
 const manifestFile = new URL("public/art/derived/planet-surface-structures/v2/manifest.json", client);
 const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
-assert.equal(Object.keys(manifest.assets).length, 163, "148 ground buildings + 13 shared biomes + 2 orbital plants; shipyards already have their own pipeline");
+assert.equal(Object.keys(manifest.assets).length, 166, "151 building sprites + 13 shared biomes + 2 orbital plants; shipyards already have their own pipeline");
 const empire = await source("shell/deck/empire.ts");
 const descriptions = empire.slice(empire.indexOf("const STRUCTURE_DESCRIPTION"), empire.indexOf("import { MODULES"));
 const catalogue = [...descriptions.matchAll(/^  (\w+): "/gm)].map(match => match[1]);
@@ -74,7 +74,7 @@ for (const tier of [4, 5, 6]) {
   assert.equal(manifest.assets[`buildings/agroplex/tier-${tier}`].source, `${masters}/tier-${tier}-v2.png`);
   assert.ok((await stat(new URL(`${masters}/tier-${tier}.png`, client))).size > 0, `original Agroplex ${tier} kept`);
 }
-assert.equal(Object.values(allFamilies).reduce((sum, count) => sum + count, 0), 172);
+assert.equal(Object.values(allFamilies).reduce((sum, count) => sum + count, 0), 175);
 const { HABITABLE_SURFACES } = await compile("planet-surfaces.ts");
 assert.deepEqual([...biomes].sort(), [...HABITABLE_SURFACES, "terrestrial", "desert", "ocean", "ice", "lava", "barren", "marginal"].sort(), "every painted surface has its ground");
 
@@ -139,7 +139,7 @@ for (const [family, maxTier] of Object.entries(allFamilies).filter(([family]) =>
       const html = planetStructureImage(family, tier, '100px" onerror="bad', true, biome);
       assert.match(html, /sizes="100px&quot; onerror=&quot;bad"/, "attributes remain escaped");
       assert.doesNotMatch(html, /src="[^\"]*\.png|\/structures\/2026|command-center\/v1/, "no masters or old menu art in scene");
-      const terrain = biome && !isOrbitalYard(family) && family !== "service_berth";
+      const terrain = biome && !isOrbitalYard(family, tier) && family !== "service_berth";
       assert.equal(html.includes('class="planet-structure-ground"'), Boolean(terrain));
       if (terrain) assert.ok(html.includes(`/grounds/${biome}-256.webp`));
       const variant = family === "naval_drydock" ? "-occupied" : "";

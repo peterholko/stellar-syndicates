@@ -16,7 +16,7 @@ import { renderer } from "../../render";
 import { liveSimTime, state, type PendingIntent } from "../../state";
 import { emplacementLabel, systemName } from "./geo";
 import { projectedBand } from "./research";
-import { estimatedFuelForLeg, fleetBaseSpeed, jumpAntimatter, regimeStore, shipKindLabel, transitLabel, transitSpeedMultiplier, WARP_FACTOR } from "./fleet";
+import { estimatedFuelForLeg, fleetBaseSpeed, jumpAntimatter, regimeStore, shipKindLabel, transitLabel, transitSpeedMultiplier, WARP_FACTOR, REACTOR_ENERGY } from "./fleet";
 import { signalInfo } from "./signals";
 import { traderOf } from "./trader";
 import { doneAtLocal, fmt, fmtDur } from "./format";
@@ -129,9 +129,9 @@ export function intentSummary(intent: PendingIntent): string {
     const distance = Math.hypot(intent.dest!.x - ship.pos.x, intent.dest!.y - ship.pos.y);
     const flight = distance / Math.max(1, fleetBaseSpeed(ship) * WARP_FACTOR * transitSpeedMultiplier(ship));
     const eta = ship.age + flight;
-    const fuel = estimatedFuelForLeg(ship, intent.dest!);
-    // §fuel-overhaul: the store this fleet's mode burns (Uranium on Slow).
-    const store = regimeStore(ship), aboard = store.fuel === "uranium" ? ship.uranium : ship.fuel;
+    // §shipbuilding-overhaul: the leg in the primary tank's fuel.
+    const store = regimeStore(ship), aboard = store.served;
+    const fuel = estimatedFuelForLeg(ship, intent.dest!) / REACTOR_ENERGY[store.grade];
     const tank = aboard == null ? "" : ` / ${fmt(aboard)} aboard`;
     const warning = aboard != null && fuel > aboard + 1e-6 ? " · FUEL SHORT" : "";
     return `${fmt(distance)} su · ETA ~${fmtDur(eta)} (signal ${fmtDur(ship.age)} + flight ${fmtDur(flight)}) · ${label(store.fuel)} ~${fmt(fuel)}${tank}${warning}`;

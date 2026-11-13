@@ -33,7 +33,7 @@ impl World {
             Some(f) if self.in_gravity_well(f.pos) || self.in_interdiction_field(f.pos) =>
                 Some(OrderRejectReason::InterdictorInGravityWell),
             Some(_) if self.interdiction_ready_at(id).is_some() => Some(OrderRejectReason::InterdictorRecharging),
-            Some(f) if f.fuel < FIELD_FUEL => Some(OrderRejectReason::InterdictorLowFuel),
+            Some(f) if f.energy_aboard() < FIELD_FUEL => Some(OrderRejectReason::InterdictorLowFuel),
             Some(_) => None,
         };
         if let Some(reason) = reason {
@@ -46,7 +46,9 @@ impl World {
         let engaged = self.engagements.values().any(|e| e.attackers.contains(&id) || e.defenders.contains(&id));
         let field = self.alloc_entity_id();
         let fleet = self.fleets.get_mut(&id).unwrap();
-        fleet.burn_fusion(FIELD_FUEL);
+        // §shipbuilding-overhaul: the field's charge, in energy, from whatever
+        // the hulls burn (a fusion Destroyer pays a quarter of it in Deuterium).
+        fleet.burn_energy(FIELD_FUEL);
         // The generator holds station: the field collapses if it leaves.
         if !engaged {
             fleet.order = FleetOrder::Idle;
@@ -141,7 +143,9 @@ mod tests {
         let field = w.interdictions.values().next().expect("a field");
         assert_eq!((field.owner, field.fleet, field.pos, field.radius), (owner, id, w.fleets[&id].pos, FIELD_RADIUS));
         assert!(w.in_interdiction_field(field.pos + Vec2::new(FIELD_RADIUS - 1.0, 0.0)));
-        assert_eq!(w.fleets[&id].fuel, fuel - FIELD_FUEL);
+        // §shipbuilding-overhaul: the charge is energy; a fusion Destroyer
+        // pays a quarter of it in Deuterium.
+        assert!((w.fleets[&id].fuel - (fuel - FIELD_FUEL / crate::fuel::ReactorGrade::Fusion.energy_per_unit())).abs() < 1e-9);
         assert!(events.iter().any(|e| matches!(e.payload, EventPayload::InterdictionRaised { .. })));
         assert!(w.interdiction_ready_at(id).is_some(), "recharging");
         // Its world state survives a save.
@@ -236,7 +240,7 @@ mod tests {
         assert!(rejected(&deliver(&mut w, owner, id)).is_none(), "ready again");
         // Dry tanks.
         let (mut w, owner, id) = scene();
-        w.fleets.get_mut(&id).unwrap().fuel = FIELD_FUEL - 1.0;
+        w.fleets.get_mut(&id).unwrap().fuel = FIELD_FUEL / crate::fuel::ReactorGrade::Fusion.energy_per_unit() - 0.1;
         assert_eq!(rejected(&deliver(&mut w, owner, id)), Some(OrderRejectReason::InterdictorLowFuel));
         assert!(w.interdictions.is_empty());
     }

@@ -18,7 +18,9 @@ pub const FIELD_RADIUS: f64 = 1_500.0;
 pub const FIELD_SECONDS: f64 = 600.0;
 /// How long the fleet's generator needs between fields (from raising one).
 pub const FIELD_COOLDOWN_S: f64 = 1_800.0;
-/// Fuel a field burns from the fleet's tanks (a lone destroyer carries 70).
+/// ENERGY a field burns from the fleet's tanks, in Uranium (§shipbuilding-
+/// overhaul): a lone destroyer's tank holds 70, so about a third of it; a
+/// fusion Destroyer pays five Deuterium.
 pub const FIELD_FUEL: f64 = 20.0;
 
 /// One field in space.

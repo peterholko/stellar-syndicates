@@ -46,14 +46,13 @@ impl Bot {
 
     pub(super) fn preferred_freighter(&self, p: &Observation) -> H {
         [H::BulkFreighter, H::HeavyFreighter, H::LargeFreighter, H::Convoy,
-            H::SmallFreighter, H::TinyFreighter].into_iter().find(|h|
-            !sim::ship::requires_hull_unlock(*h) || sim::research::has_hull(&p.research, *h))
+            H::SmallFreighter, H::TinyFreighter].into_iter().find(|h| p.hull_ready(*h))
             .unwrap_or(H::TinyFreighter)
     }
 
     pub(super) fn preferred_warship(&self, p: &Observation) -> H {
         [H::Titan, H::Dreadnought, H::Battleship, H::Cruiser, H::Destroyer, H::Corvette, H::Raider]
-            .into_iter().find(|h| !sim::ship::requires_hull_unlock(*h) || sim::research::has_hull(&p.research, *h))
+            .into_iter().find(|h| p.hull_ready(*h))
             .unwrap_or(H::Raider)
     }
 
@@ -145,6 +144,8 @@ impl Bot {
             K::ServiceBerth => 10.0,
             // §vault: cheap cover for the dearest goods once pirates come calling.
             K::Vault => if p.threatened(p.home.system.pos) { 90.0 } else { 15.0 },
+            // §veil: the defender's build against a siege, once research opens it.
+            K::VeilProjector => if p.threatened(p.home.system.pos) { 120.0 } else { 30.0 * profile.military },
             // §season: computer-run corporations stay loyal.
             K::AssemblyHall => 0.0,
             K::CommandCenter => if p.home.system.bodies.iter().any(|b| b.tier(kind) > 0
@@ -180,14 +181,17 @@ impl Bot {
         // select a benefit/cost goal, not a finite list ending at tier two.
         let in_charter = p.local_opening && p.founding_stage != sim::FoundingStage::Complete;
         if p.home.system.id == p.capital {
-            // §charter-v5: the landing's own buildings in the guide's order;
-            // then, once the raid has struck and the ore is sold, the Solar
-            // Array the Shipyard needs, the Interceptor for the privateer, a
-            // Freighter for Hub trade and the expansion's mine. The Uranium
-            // Mill (the home's slow-freight fuel) follows the Academy: the kit
-            // carries the charter's goods, not the mill's.
-            for project in [p.structure(K::Bioharvester, 1), p.structure(K::Habitat, 1),
-                p.structure(K::Agroplex, 1), p.structure(K::MiningComplex, 1)] {
+            // §charter-v5: the landing's own buildings in the guide's order
+            // (§charter-v6: the Solar Array before the mine, the Smelter after
+            // it; §habitat-first: the Habitat first, the Solar Array before the
+            // farms); then, once the raid has struck and the ore is sold, the
+            // Interceptor for the privateer, a Freighter for Hub trade and the
+            // expansion's mine. The Uranium Mill (the home's slow-freight fuel)
+            // follows the Academy: the kit carries the charter's goods, not
+            // the mill's.
+            for project in [p.structure(K::Habitat, 1), self.landing_plant(p), p.structure(K::Bioharvester, 1),
+                p.structure(K::Agroplex, 1), p.structure(K::MiningComplex, 1),
+                in_charter.then(|| p.structure(K::Smelter, 1)).flatten()] {
                 if project.is_some() { return project; }
             }
             if let Some(project) = self.gun_platform(p) { return Some(project); }
@@ -195,17 +199,19 @@ impl Bot {
             // §charter-v5: the Freighter waits for the privateer's bounty, so
             // its Hub-trip reserve never starves the Interceptor.
             // §charter-crates: and for the export's crate, which carries its core.
-            let freight = !in_charter || p.founding_stage.step() >= sim::FoundingStage::PrepareExport.step();
-            for project in [self.landing_plant(p), p.structure(K::Shipyard, 1),
+            // §stash: its first job is the den's loot, from the den's fall on.
+            let freight = !in_charter || p.founding_stage.step() >= sim::FoundingStage::RepairInterceptor.step();
+            for project in [p.structure(K::Shipyard, 1),
                 self.charter_escort(p),
                 (freight && p.own().all(|f| !f.kind.is_player_freighter())).then(|| p.ship(H::TinyFreighter, 1)).flatten(),
                 // §charter-v4: the Academy waits for its step; until then the
                 // trader's semiconductors go to the Interceptor.
                 (!in_charter || p.founding_stage.step() >= sim::FoundingStage::FirstResearch.step())
                     .then(|| p.structure(K::Academy, 1)).flatten(),
-                // §refining: the Smelter, once its step and Enrichment are in.
-                (in_charter && p.founding_stage.step() >= sim::FoundingStage::BuildSmelter.step())
-                    .then(|| p.structure(K::Smelter, 1)).flatten(),
+                // §freight-frames: the hull the charter's research unlocks,
+                // once that research is in (`ship` waits for the unlock).
+                (in_charter && p.founding_stage == sim::FoundingStage::BuildSmallFreighter)
+                    .then(|| p.ship(H::SmallFreighter, 1)).flatten(),
                 self.charter_expansion(p),
                 // §charter-crates: the mill's goods come in the Reach crate.
                 (!in_charter || p.founding_stage.step() >= sim::FoundingStage::BuildBarge.step())
@@ -254,7 +260,7 @@ impl Bot {
                         choices.push((value + 40.0, storage));
                     }
                 } else { choices.push((value, project)); }
-            } else if !sim::ship::requires_hull_unlock(kind) || sim::research::has_hull(&p.research, kind) {
+            } else if p.hull_ready(kind) {
                 let (yard, tier) = sim::build::yard_for(kind);
                 if let Some(project) = self.yard_project(p, yard, tier) { choices.push((value + 10.0, project)); }
             }

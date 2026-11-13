@@ -40,12 +40,15 @@ pub mod information;
 pub mod industry;
 pub mod interdiction;
 pub mod leave;
+pub mod licence;
+pub mod claims;
 pub mod market;
 pub mod math;
 pub mod merchant;
 pub mod migration;
 pub mod module;
 pub mod movement;
+pub mod munitions;
 pub mod nebula;
 pub mod sites;
 pub mod node;
@@ -112,7 +115,7 @@ pub use production::{Assignment, SuspendReason};
 pub use rankings::{RankingCategory, RankingRow, RankingStats};
 pub use rng::Rng;
 pub use ship::{
-    ALL_SHIP_KINDS, CountClass, DefenseEngagement, DockSite, FLAGSHIP_PRECEDENCE, Fleet,
+    ALL_SHIP_KINDS, CountClass, DefenseEngagement, DockSite, FLAGSHIP_PRECEDENCE, Fleet, HoldRoom,
     FleetOrder, ShipKind, TradeMission, TransitMode, fitting_points, hull_affinity,
 };
 pub use specialist::SpecialistKind;

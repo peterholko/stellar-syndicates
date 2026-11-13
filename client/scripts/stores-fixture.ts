@@ -14,8 +14,19 @@ import { state, syncRenderClock } from "../src/state";
 const FLOWS: [Commodity, number, number][] = [
   ["provisions", 1_150, 18], ["metallic_ore", 660, 40], ["alloys", 282, 6], ["machinery", 113, 3],
   ["electronics", 54, -2], ["uranium", 120, 0], ["deuterium", 116, -4], ["polymers", 40, 0], ["crystalline_ore", 210, 12],
+  // §goods-tabs: parts and a module, for the Resources · Parts · Modules strip.
+  ["fission_reactor", 4, 0], ["zephyr_drive", 3, 0], ["torpedo_rack", 2, 0], ["whipple_armor", 1, 0],
+  // The Nov 8 2026 goods art: Hull Sections, a heavy and a capital part, more modules.
+  ["hull_sections", 6, 0], ["heavy_fission_reactor", 1, 0], ["capital_zephyr_drive", 1, 0],
+  ["lance_array", 1, 0], ["stasis_web", 1, 0], ["survey_drive", 1, 0], ["cargo_pods", 1, 0],
 ];
 const NOW = 2_000;
+/** §stores-flows: what the economy makes and uses a minute (net = the FLOWS
+ * rate); `?measured` leaves them out to show the measured fallback. */
+const SPLIT: Partial<Record<Commodity, [number, number]>> = {
+  provisions: [30, 12], metallic_ore: [52, 12], alloys: [6, 0], machinery: [3, 0], electronics: [0, 2], deuterium: [0, 4], crystalline_ore: [12, 0],
+};
+const MEASURED = new URLSearchParams(location.search).has("measured");
 
 function system(id: string, cap: number, scale: number, t: number): SystemStateView {
   const stockpile = FLOWS.map(([commodity, start, perMinute]) => {
@@ -24,8 +35,9 @@ function system(id: string, cap: number, scale: number, t: number): SystemStateV
     return { commodity, units: Math.max(0, Math.floor((start + perMinute * (t - (NOW - 300)) / 60) * scale) + unload) };
   });
   const used = stockpile.reduce((sum, slot) => sum + slot.units, 0);
+  const flows = MEASURED ? undefined : Object.entries(SPLIT).map(([commodity, [made, usedUp]]) => ({ commodity, made: made * scale, used: usedUp * scale }));
   return {
-    id, owner: "me", stockpile, storage_used: used, storage_cap: cap, builds: [], bodies: [], assignments: [],
+    id, owner: "me", stockpile, flows, storage_used: used, storage_cap: cap, builds: [], bodies: [], assignments: [],
     industry: { reservations: [{ target: { kind: "orbital_assembly" }, goods: { alloys: 40 } }], outpost: null, projects: [] },
   } as unknown as SystemStateView;
 }

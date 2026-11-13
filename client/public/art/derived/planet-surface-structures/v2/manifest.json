@@ -30,6 +30,7 @@
     "sensor_array": 6,
     "service_berth": 1,
     "smelter": 6,
+    "veil_projector": 3,
     "volatile_harvester": 6,
     "warehouse": 6
   },
@@ -3946,6 +3947,84 @@
           "bytes": 90326,
           "sha256": "db89e6725345bb280a3b0962800048d6d53e0e2ffbe7aaebc2dfbd72ee8bb501",
           "url": "/art/derived/planet-surface-structures/v2/buildings/power_plant/tier-6-512.webp"
+        }
+      ]
+    },
+    "buildings/veil_projector/tier-1": {
+      "source": "art-src/planet-surface-structures-v2/buildings/veil_projector/tier-1.png",
+      "sourceSha256": "f880c9a0b8615140e15d51df761c1e4865520ae20c47a337876c58172ad6812e",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 10548,
+          "sha256": "aa6a45fa70c05937067e9fc4d93882c75d010601e3c742b1a6e15cc8f2a30ccf",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/veil_projector/tier-1-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 28594,
+          "sha256": "c0f68cd42910b009fcbf3aa21bc6c60c20f614f8f8e19340315d713c02c5ffd0",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/veil_projector/tier-1-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 79536,
+          "sha256": "11a3c2876bd14e73e3d17ee9b2c419337f3e140e925b35e871b65a6350d1a67a",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/veil_projector/tier-1-512.webp"
+        }
+      ]
+    },
+    "buildings/veil_projector/tier-2": {
+      "source": "art-src/planet-surface-structures-v2/buildings/veil_projector/tier-2.png",
+      "sourceSha256": "fecae8ce618f857886cc217ecc2921f775eeaedcf4a65f2aa4dcb7938473fdd0",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 11172,
+          "sha256": "88c0c9a1d235a5557957b8cdc57984333d411ae10feaad61a1dca60d953dd860",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/veil_projector/tier-2-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 32068,
+          "sha256": "5edb8c2a368a995f260d4b3fcf657e5986a27e3936fa14bfe55fad5e2b49ab01",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/veil_projector/tier-2-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 90890,
+          "sha256": "030a6cdb7635f664a622b6fdaf10dfdec683a582ec38ae5baaf117f5e43d6d5d",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/veil_projector/tier-2-512.webp"
+        }
+      ]
+    },
+    "buildings/veil_projector/tier-3": {
+      "source": "art-src/planet-surface-structures-v2/buildings/veil_projector/tier-3.png",
+      "sourceSha256": "329a27e13a7672f009e2cdfe7b3c5d59dc379b091d9d8900346570522feedfb3",
+      "width": 1254,
+      "height": 1254,
+      "levels": [
+        {
+          "size": 128,
+          "bytes": 12250,
+          "sha256": "5dd7d6b3592895c51cdb5941f267812395f47c4862529ada91f7613377ade584",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/veil_projector/tier-3-128.webp"
+        },
+        {
+          "size": 256,
+          "bytes": 33784,
+          "sha256": "e1af46329d4930dcf9ba0fb51111ea4210dfa66534e673ca1a4167b5c3010d88",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/veil_projector/tier-3-256.webp"
+        },
+        {
+          "size": 512,
+          "bytes": 95778,
+          "sha256": "30a50d7b4cfe111eaf92ce888babc8d52a9a0cf7eb05a300275927749826fbc0",
+          "url": "/art/derived/planet-surface-structures/v2/buildings/veil_projector/tier-3-512.webp"
         }
       ]
     },

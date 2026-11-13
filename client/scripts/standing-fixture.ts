@@ -7,6 +7,7 @@ import { DeckStrategicRoutes } from "../src/shell/deck/strategic";
 import type { DeckRoute } from "../src/shell/deck/router";
 import type { CoreContext } from "../src/shell/types";
 import { state, syncRenderClock } from "../src/state";
+import { coach, CONTRACT_COACH } from "../src/shell/coach";
 
 const DAY = 86_400;
 const now = 8 * DAY + 3_600 * 4;
@@ -51,6 +52,16 @@ state.explorationSites = [];
 const root = document.getElementById("deck-workspace-body")!;
 const ctx = { state, send: (message: unknown) => console.log("send", message) } as unknown as CoreContext;
 let route = { name: "rankings" } as DeckRoute;
+// §privateer-contract: ?charter=1 pins the Authority's contract on the
+// privateer on top of Operations, its Accept ringed as the guide does.
+const charter = new URLSearchParams(location.search).has("charter");
+if (charter) {
+  state.operations.unshift({ ...op("50", { kind: "privateer_patrol", pos: { x: 6_600, y: 0 } } as unknown as OperationView["kind"],
+    "offered", 0, 1, 8_000, 0), issuer: "authority", board_day: null, expires_at: Number.MAX_VALUE,
+    briefing: { follow_up: "founder_privateer", title: "Eliminate Milo Quill", difficulty: "One raider", suitable_fleets: "One Interceptor",
+      summary: "Milo Quill raided your colony. Last seen lying in wait nearby.", variant: 0 } } as unknown as OperationView);
+  route = { name: "operations" } as DeckRoute;
+}
 const pages = new DeckStrategicRoutes(root, ctx, {
   go: (next: DeckRoute) => { route = next; pages.render(route, true); },
   back() {}, notice: (html: string) => console.log("notice", html), openBattleViewer() {}, selectFleets() {}, openWorld() {},
@@ -67,3 +78,4 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-fixture
   });
 }
 pages.render(route, true);
+if (charter) coach("contract-accept", CONTRACT_COACH);

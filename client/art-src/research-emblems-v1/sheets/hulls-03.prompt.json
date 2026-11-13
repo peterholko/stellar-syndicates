@@ -1,0 +1,72 @@
+{
+  "name": "hulls-03",
+  "mode": "built-in image_gen",
+  "source_brief": "docs/research-emblem-sheets.md",
+  "prompt": "Use case: stylized-concept. Asset type: a sheet of six transparent research emblems for Stellar Syndicates, a premium dark sci-fi strategy game. They join an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw SIX new emblems. Do not copy any of Image 1's six motifs, and ignore Image 1's grey backdrop.\nField: Hulls. Colour, all six badges: cool steel grey and silver; the only colour is a faint cyan engine glow where a ship has engines. Everything else stays in the family's navy, charcoal and silver.\nLayout: landscape 1536 x 1024 canvas, three columns and two rows, exactly Image 1's arrangement. Six identical hexagon badges, each about 450 px tall, centred in its own 512 x 512 cell, with clear empty space between badges and around the sheet. Badges never touch or overlap.\nBadge (every one the same): a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. Each motif sits inside its rim, centred, about 70% of the face's width. Nothing crosses a rim.\nMotifs, reading left to right, top row then bottom row:\n1. Top left: A small corvette in front of a freighter, a curved shield arc projected between them.\n2. Top centre: A small raider ship slipping backward out of a broken chain, the links snapping apart.\n3. Top right: A small freighter darting through a gap in a line of three blockading warships.\n4. Bottom left: The Cruiser from Image 2.\n5. Bottom centre: Three small warships sheltering under the broad armoured wing of a defense station.\n6. Bottom right: A salvage claw pulling a square module crate out of a drifting broken wreck.\nImage 2 is the game's own render of the Cruiser: use it ONLY for that design's silhouette and details, drawn once, in an elevated three-quarter view, as motif 4, in Image 1's emblem rendering. Ignore its own lighting and background.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. Each motif is one clear subject that still reads at 48 px: a few large forms, restrained small detail. The six must look clearly different from each other at a glance: vary silhouette, scale and composition, never the same object twice.\nBackground: genuinely transparent PNG with real alpha everywhere outside the hexagons. No drop shadow, outer glow, grey backdrop, panel, vignette, cell borders or grid lines.\nConstraints: exactly six badges. No text, letters, numbers, Roman numerals, captions, labels, logos, watermark, frames or UI.",
+  "keys": [
+    "hull_line_iv_fleet_escorts",
+    "hull_corsair_iv_slip_anchors",
+    "hull_corsair_iv_blockade_runners",
+    "hull_line_v_cruiser",
+    "hull_line_v_fortress_doctrine",
+    "hull_corsair_v_salvage_rigs"
+  ],
+  "references": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png",
+      "sha256": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+    },
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/cruiser-768.webp",
+      "sha256": "4979a81ddbb390c9036f6a23afdbc4645d18327596aa38625ab34f1d71b852fa"
+    }
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-04617a23-325a-4c89-8d19-9b0ff65abe25.png",
+  "edits": [],
+  "verification": {
+    "width": 1536,
+    "height": 1024,
+    "hasAlpha": true,
+    "badges": [
+      {
+        "left": 111,
+        "top": 50,
+        "width": 379,
+        "height": 429
+      },
+      {
+        "left": 578,
+        "top": 50,
+        "width": 380,
+        "height": 429
+      },
+      {
+        "left": 1044,
+        "top": 49,
+        "width": 380,
+        "height": 431
+      },
+      {
+        "left": 110,
+        "top": 533,
+        "width": 381,
+        "height": 432
+      },
+      {
+        "left": 577,
+        "top": 533,
+        "width": 382,
+        "height": 432
+      },
+      {
+        "left": 1043,
+        "top": 533,
+        "width": 382,
+        "height": 433
+      }
+    ],
+    "sha256": "867e7f141a34e3a4038a41852a9000f5beef67e36ced578ef10139837a2b2f3f",
+    "nativeBytesPreserved": true
+  }
+}

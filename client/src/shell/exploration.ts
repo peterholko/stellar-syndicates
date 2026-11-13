@@ -52,6 +52,14 @@ function navigation(st: ViewState): string {
     `<button type="button" ${attrs(`tab-${tab}`)} aria-pressed="${ui(st).tab === tab}">${label(tab)}</button>`).join("")}</nav>`;
 }
 
+/** §ops-compact (Oct 31 2026): desktop Operations carries only this row; each
+ * view opens in place of the page, as Journal does. */
+export function explorationLinkHtml(st: ViewState): string {
+  const contacts = st.explorationSites.length;
+  return `<nav class="deck-exploration-link" aria-label="Exploration"><b>Exploration</b>${["contacts", "journal", "blueprints"].map(tab =>
+    `<button type="button" ${attrs(`tab-${tab}`)}>${label(tab)}${tab === "contacts" && contacts ? ` · ${contacts}` : ""}</button>`).join("")}</nav>`;
+}
+
 /** Shared shells, received reports only. No clock can reveal a type, empty a
  * site or claim an outpost. Fleet buttons keep identity stable across Views. */
 export function explorationHtml(st: ViewState): string {

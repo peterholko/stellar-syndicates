@@ -519,6 +519,10 @@ pub struct TacticalState {
     /// v14 onward: the defended world, when the battle is fought at one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub world: Option<super::v14::WorldBody>,
+    /// v17 onward: each player fleet's magazines, drawn down as it fires
+    /// (`crate::munitions`). A fleet absent here fights as before v17.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) magazines: BTreeMap<EntityId, crate::munitions::Magazine>,
     /// §research-wiring: this step's research in battle, set as each step
     /// begins (the recorder keeps the mods; this is never stored).
     #[serde(skip)]
@@ -624,6 +628,7 @@ impl TacticalState {
             wrecks: Vec::new(),
             formations: BTreeMap::new(),
             world: None,
+            magazines: BTreeMap::new(),
             research: StepResearch::default(),
         };
         st.deploy_side(0, a);
@@ -747,7 +752,7 @@ impl TacticalState {
     /// the battle); v14 battles bring joining hulls in on that side.
     pub(crate) fn sync_recorded(&mut self, desired: [&[(EntityId, Ship)]; 2], arrivals: &BTreeMap<EntityId, Vec2>)
         -> ([u32; 2], Vec<RosterDelta>) {
-        let v14 = matches!(self.rules, super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. });
+        let v14 = matches!(self.rules, super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. });
         let mut scouts = [0u32; 2];
         let mut changes = Vec::new();
         for side in 0..2u8 {
@@ -942,24 +947,24 @@ impl TacticalState {
         let mut out = StepOutcome::default();
 
         // 1. MOVEMENT: seek/arrive toward each role's desired point.
-        let bodies = matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. });
-        let slots = if let super::Rules::V10 { maneuver_seed } | super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } = self.rules {
+        let bodies = matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. });
+        let slots = if let super::Rules::V10 { maneuver_seed } | super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } | super::Rules::V17 { maneuver_seed } = self.rules {
             super::v10::update_formations(self, maneuver_seed)
         } else { Vec::new() };
         let avoid = if bodies { super::v9::avoidance(self) } else { Vec::new() };
         // v11: webs slow their targets this step; interceptors close on hulls
         // trying to leave.
-        let v11 = matches!(self.rules, super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. });
+        let v11 = matches!(self.rules, super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. });
         // v12: one shot per weapon; heavier dreadnoughts and armour.
-        let v12 = matches!(self.rules, super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. });
+        let v12 = matches!(self.rules, super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. });
         // v15: station hardpoints, the siege class and the station research.
-        let v15 = matches!(self.rules, super::Rules::V15 { .. } | super::Rules::V16 { .. });
+        let v15 = matches!(self.rules, super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. });
         // v16: sin, cos, atan2 and powf in software.
         let math = self.math();
         // v13: capitals track small hulls poorly; each side's fortune scales
         // every hit it deals for the whole battle.
         let (tracking, fortunes) = match self.rules {
-            super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } =>
+            super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } | super::Rules::V17 { maneuver_seed } =>
                 (super::v13::tracking(), [super::v13::fortune(maneuver_seed, 0), super::v13::fortune(maneuver_seed, 1)]),
             _ => ((1.0, 1.0), [1.0; 2]),
         };
@@ -989,7 +994,7 @@ impl TacticalState {
                     slots[i].unwrap_or_else(|| super::v8::desired_point(self, i, maneuver_seed)) + avoid[i]),
                 // v11: an interceptor holding a leaving hull steers to it, and
                 // a leaving hull heads straight out.
-                super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } => super::v9::clear_of_wreckage(self, i,
+                super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } | super::Rules::V17 { maneuver_seed } => super::v9::clear_of_wreckage(self, i,
                     tackle[i].or_else(|| super::v11::exit_point(self, &self.combatants[i])).or(slots[i])
                         .unwrap_or_else(|| super::v8::desired_point(self, i, maneuver_seed)) + avoid[i]),
             })
@@ -1049,7 +1054,7 @@ impl TacticalState {
 
         // V4's one prioritized long-range volley precedes ordinary PD. The
         // version guard leaves archived v1–v3 dice, geometry and order intact.
-        if matches!(self.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+        if matches!(self.rules, super::Rules::V4 { .. } | super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) {
             super::v4::intercept_linked(self, mods, &mut out);
         }
         // 2. TORPEDOES: fly, cross PD bubbles (intercept rolls), strike.
@@ -1072,7 +1077,7 @@ impl TacticalState {
                     Vec2::new(0.0, 0.0)
                 };
             // v9: wreckage in its path stops it (it detonates on the wreck).
-            if matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. })
+            if matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. })
                 && let Some(at) = super::v9::torpedo_blocked(&self.wrecks, from, t.pos) {
                 t.pos = at;
                 dead_torps.push(ti);
@@ -1166,9 +1171,15 @@ impl TacticalState {
             } else {
                 // Only new battles know discovery weapons. Saved kernels must
                 // never consult the mutable live equipment balance catalog.
-                if matches!(self.rules, super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) { super::v5::offense(&lo) }
+                if matches!(self.rules, super::Rules::V5 { .. } | super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) { super::v5::offense(&lo) }
                 else { offense(&lo) }
             };
+            // v17: a hull whose fleet's rack or driver magazine is dry falls
+            // back to its kit beams; its crystals temper every beam shot.
+            let magazine = self.magazine_of(i);
+            let dry = magazine.is_some() && self.magazine_dry(magazine, family);
+            let (family, mult) = if dry { (DamageType::Beam, 1.0) } else { (family, mult) };
+            let beam_guns = if plat { 0.0 } else { super::v17::beam_guns(kind, &lo) };
             let cd = match family {
                 DamageType::Beam => cds.beam,
                 DamageType::Driver => cds.driver,
@@ -1209,7 +1220,7 @@ impl TacticalState {
             {
                 let d = (e.pos - pos).length();
                 if d <= band {
-                    let weight = if matches!(self.rules, super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+                    let weight = if matches!(self.rules, super::Rules::V6 { .. } | super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) {
                         super::v6::target_weight(self, &self.combatants[i], e)
                     } else { e.max_hp.max(1.0) };
                     cands.push((e.cid, weight, d, e.speed(), e.platform));
@@ -1222,7 +1233,9 @@ impl TacticalState {
             if v11 && !plat && super::v11::fires_batteries(kind, &lo, family) {
                 let opening = if self.step <= OPENING_STEPS && mods[side as usize].opening_bonus { OPENING_BONUS } else { 1.0 };
                 let base = mult * aw * HIT_DMG_CAL * hull_affinity(kind, crate::module::Family::Beam) * opening
-                    * if raid { RAID_DMG_MULT } else { 1.0 } * (mods[side as usize].damage() * self.research_dealt(i, DamageType::Beam));
+                    * if raid { RAID_DMG_MULT } else { 1.0 } * (mods[side as usize].damage() * self.research_dealt(i, DamageType::Beam))
+                    * self.crystal_factor(magazine);
+                self.fire_round(magazine, DamageType::Beam, beam_guns);
                 let reflect = if v12 { super::v12::REFLECT_BLUNT } else { super::rules_v1::REFLECT_BLUNT };
                 super::v11::battery_volley(self, i, &cands, base * fortunes[side as usize], reflect, &mut out);
                 self.combatants[i].cooldowns.beam = BEAM_COOLDOWN;
@@ -1230,9 +1243,11 @@ impl TacticalState {
             }
             // v12: every weapon carried fires its own shot.
             if v12 {
-                let (shots, per_gun) = if plat && mount.is_none() { (1, mult) } else { super::v12::guns(&lo) };
+                let (shots, per_gun) = if plat && mount.is_none() { (1, mult) }
+                    else if dry { (1, 1.0) } // the kit beam
+                    else { super::v12::guns(&lo) };
                 let volley = super::v12::Volley {
-                    family, shots, per_gun, aw,
+                    family, shots, per_gun, aw, magazine, beam_guns,
                     aff: if plat { 1.0 } else { hull_affinity(kind, crate::module::weapon_family(family)) },
                     opening: if self.step <= OPENING_STEPS && mods[side as usize].opening_bonus { OPENING_BONUS } else { 1.0 },
                     raid: if raid { RAID_DMG_MULT } else { 1.0 },
@@ -1356,7 +1371,7 @@ impl TacticalState {
                 y: c.pos.y as f32,
                 cid: Some(c.cid),
             });
-            if let super::Rules::V9 { maneuver_seed } | super::Rules::V10 { maneuver_seed } | super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } = self.rules {
+            if let super::Rules::V9 { maneuver_seed } | super::Rules::V10 { maneuver_seed } | super::Rules::V11 { maneuver_seed } | super::Rules::V12 { maneuver_seed } | super::Rules::V13 { maneuver_seed } | super::Rules::V14 { maneuver_seed } | super::Rules::V15 { maneuver_seed } | super::Rules::V16 { maneuver_seed } | super::Rules::V17 { maneuver_seed } = self.rules {
                 super::v9::spawn_wreck(self, &c, maneuver_seed);
             }
             if c.platform {
@@ -1440,7 +1455,7 @@ impl TacticalState {
             gunfire: None,
             torps: Some(torps),
             torp_ends: None,
-            wrecks: matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }).then(|| self.wrecks.iter().map(|w| crate::combat::KfWreck {
+            wrecks: matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }).then(|| self.wrecks.iter().map(|w| crate::combat::KfWreck {
                 hull: w.hull, piece: w.piece, x: w.pos.x as f32, y: w.pos.y as f32, r: w.radius as f32,
             }).collect()),
             rams: None,
@@ -1466,8 +1481,8 @@ impl TacticalState {
             *count += 1;
             *count <= crate::combat::KEYFRAME_TORPEDO_CAP_PER_SIDE
         }).collect());
-        if matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) { frame.rams = Some(outcome.rams); }
-        if matches!(self.rules, super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) {
+        if matches!(self.rules, super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) { frame.rams = Some(outcome.rams); }
+        if matches!(self.rules, super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) {
             frame.tackles = Some(outcome.tackles.into_iter().take(crate::combat::KEYFRAME_LINK_CAP).collect());
             frame.webs = Some(outcome.webs.into_iter().take(crate::combat::KEYFRAME_LINK_CAP).collect());
         }
@@ -1706,7 +1721,7 @@ impl TacticalState {
     /// A hull's beam/driver reach as a multiple of the stock ranges: v7 sizes
     /// it by hull class; platforms and every older rule set use exactly 1.
     pub(super) fn reach_of(&self, kind: ShipKind, platform: bool) -> f64 {
-        if !platform && matches!(self.rules, super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. }) { super::v7::reach(kind) } else { 1.0 }
+        if !platform && matches!(self.rules, super::Rules::V7 { .. } | super::Rules::V8 { .. } | super::Rules::V9 { .. } | super::Rules::V10 { .. } | super::Rules::V11 { .. } | super::Rules::V12 { .. } | super::Rules::V13 { .. } | super::Rules::V14 { .. } | super::Rules::V15 { .. } | super::Rules::V16 { .. } | super::Rules::V17 { .. }) { super::v7::reach(kind) } else { 1.0 }
     }
 
     pub(super) fn nearest_enemy(&self, i: usize) -> Option<Vec2> {

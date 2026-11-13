@@ -26,6 +26,37 @@ use crate::cargo::Commodity;
 pub const TIER_THROUGHPUT: [f64; 7] = [0.0, 1.0, 2.2, 3.8, 6.0, 8.6, 11.5];
 
 /// The throughput of a built tier (clamped into the table).
+/// §stores-flows (Peter, Nov 5 2026: the Stores panel's in, out and net for
+/// each good): what a system's economy makes and uses of a good, per second,
+/// smoothed (`StarSystem::fold_flows`). Production lines, food, power, upkeep,
+/// repairs and research count; transfers (freight, trade, builds, raids,
+/// refuelling) do not.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct Flow {
+    pub made: f64,
+    pub used: f64,
+}
+/// §stores-flows: the smoothing's time constant. A new line shows most of its
+/// rate within a minute. Tunable.
+pub const FLOW_SMOOTHING_S: f64 = 20.0;
+/// §stores-flows: the reported grain, per second (0.1 a minute): a finer
+/// change makes no new site report.
+pub const FLOW_QUANTUM: f64 = 1.0 / 600.0;
+/// A flow rounded to the reported grain.
+pub fn quantized_flow(f: Flow) -> Flow {
+    let q = |x: f64| (x / FLOW_QUANTUM).round() * FLOW_QUANTUM;
+    Flow { made: q(f.made), used: q(f.used) }
+}
+
+/// §progression (Peter, Nov 11 2026; docs/balance/progression.md): what
+/// gathering and making pay, against everything a corporation buys. Every
+/// extraction and value-making converter runs at this share of its tuned rate
+/// (the heavy and capital part assemblies, which only repackage light parts,
+/// keep theirs), and a person eats this share too
+/// (`colony::PROVISIONS_PER_MILLION_PER_S`), so no world starves. Early income
+/// stays low, so basic gear stays a decision. Tunable.
+pub const OUTPUT_SCALE: f64 = 0.05;
+
 pub fn tier_throughput(tier: u32) -> f64 {
     TIER_THROUGHPUT[(tier as usize).min(TIER_THROUGHPUT.len() - 1)]
 }
@@ -212,33 +243,33 @@ impl Converter {
 pub const ORE_REFINING: [Converter; 11] = [
     CONVERTERS[0],
     Converter { structure: StructureKind::Smelter, output: Commodity::ConductiveMetals,
-        rate: 0.75, inputs: &[(Commodity::CupriteOre, 1.0)] },
+        rate: 0.75 * OUTPUT_SCALE, inputs: &[(Commodity::CupriteOre, 1.0)] },
     Converter { structure: StructureKind::Smelter, output: Commodity::Titanium,
-        rate: 0.5, inputs: &[(Commodity::TitaniumOre, 0.4)] },
+        rate: 0.5 * OUTPUT_SCALE, inputs: &[(Commodity::TitaniumOre, 0.4)] },
     Converter { structure: StructureKind::Smelter, output: Commodity::Silicates,
-        rate: 1.0, inputs: &[(Commodity::CrystallineOre, 1.5)] },
+        rate: 1.0 * OUTPUT_SCALE, inputs: &[(Commodity::CrystallineOre, 1.5)] },
     Converter { structure: StructureKind::Smelter, output: Commodity::RareElements,
-        rate: 0.4, inputs: &[(Commodity::RareMetalOre, 0.05)] },
+        rate: 0.4 * OUTPUT_SCALE, inputs: &[(Commodity::RareMetalOre, 0.05)] },
     // §belt-ores. Olivine: Silicates with half an Alloy per batch.
     Converter { structure: StructureKind::Smelter, output: Commodity::Silicates,
-        rate: 1.0, inputs: &[(Commodity::OlivineOre, 1.5)] },
+        rate: 1.0 * OUTPUT_SCALE, inputs: &[(Commodity::OlivineOre, 1.5)] },
     // Bornite: Conductive Metals with a Rare Elements trace — two of the three
     // Electronics inputs from one ore.
     Converter { structure: StructureKind::Smelter, output: Commodity::ConductiveMetals,
-        rate: 0.75, inputs: &[(Commodity::BorniteOre, 1.25)] },
+        rate: 0.75 * OUTPUT_SCALE, inputs: &[(Commodity::BorniteOre, 1.25)] },
     // Ilmenite: iron-titanium ore. Alloys first, with a quarter of Titanium —
     // Titanium nearer the core than Titanium ore, at half the Smelter rate.
     Converter { structure: StructureKind::Smelter, output: Commodity::Alloys,
-        rate: 1.0, inputs: &[(Commodity::IlmeniteOre, 1.5)] },
+        rate: 1.0 * OUTPUT_SCALE, inputs: &[(Commodity::IlmeniteOre, 1.5)] },
     // §pockets: the rare pocket ores, each into its own top-end material.
     // Rarer is denser: five Helium-3 a unit of ice, ten Iridium a unit of ore,
     // twenty Exotic Matter a Void crystal.
     Converter { structure: StructureKind::Smelter, output: Commodity::Helium3,
-        rate: 0.5, inputs: &[(Commodity::Helium3Ice, 0.2)] },
+        rate: 0.5 * OUTPUT_SCALE, inputs: &[(Commodity::Helium3Ice, 0.2)] },
     Converter { structure: StructureKind::Smelter, output: Commodity::Iridium,
-        rate: 0.4, inputs: &[(Commodity::IridiumOre, 0.1)] },
+        rate: 0.4 * OUTPUT_SCALE, inputs: &[(Commodity::IridiumOre, 0.1)] },
     Converter { structure: StructureKind::Smelter, output: Commodity::ExoticMatter,
-        rate: 0.3, inputs: &[(Commodity::VoidCrystal, 0.05)] },
+        rate: 0.3 * OUTPUT_SCALE, inputs: &[(Commodity::VoidCrystal, 0.05)] },
 ];
 
 /// Ore units a BULK refining batch draws — the density every other ore is
@@ -269,28 +300,252 @@ pub fn assigned_converter(kind: StructureKind, assignment: Option<&Assignment>) 
         let ore = assignment.and_then(|a| a.refining_ore).unwrap_or(Commodity::MetallicOre);
         return ORE_REFINING.iter().find(|r| r.inputs[0].0 == ore);
     }
-    // §fuel-overhaul: a Drive Works line makes Warp Cores unless set to Fusion
-    // Cores (the same per-line recipe field as the Smelter's ore).
-    if kind == StructureKind::DriveWorks
-        && assignment.and_then(|a| a.refining_ore) == Some(Commodity::FusionCore)
+    // §shipbuilding-overhaul: a works with several products runs the one its
+    // line is set to (the same per-line recipe field as the Smelter's ore),
+    // else its first.
+    let products = products_of(kind);
+    if let Some(product) = assignment.and_then(|a| a.refining_ore)
+        && let Some(conv) = products.iter().find(|c| c.output == product)
     {
-        return Some(&FUSION_CORE_CONVERTER);
+        return Some(conv);
     }
-    converter_for(kind)
+    products.first().or_else(|| converter_for(kind))
 }
 
-/// §fuel-overhaul: what a Drive Works line may make.
+/// §shipbuilding-overhaul: every recipe a works can run, default first. The
+/// Smelter's ores live in `ORE_REFINING`; a single-recipe structure lists its
+/// one converter.
+pub fn products_of(kind: StructureKind) -> &'static [Converter] {
+    match kind {
+        StructureKind::DriveWorks => &DRIVE_WORKS_PRODUCTS,
+        StructureKind::HullFabricator => &HULL_FABRICATOR_PRODUCTS,
+        StructureKind::ElectronicsFabricator => &ELECTRONICS_FABRICATOR_PRODUCTS,
+        StructureKind::ArmamentsComplex => &ARMAMENTS_COMPLEX_PRODUCTS,
+        _ => converter_for(kind).map(std::slice::from_ref).unwrap_or(&[]),
+    }
+}
+
+/// A works with a recipe picker.
+pub fn has_product_picker(kind: StructureKind) -> bool {
+    kind == StructureKind::Smelter || products_of(kind).len() > 1
+}
+
+/// May a line of `kind` be set to make `c`?
+pub fn is_product_of(kind: StructureKind, c: Commodity) -> bool {
+    if kind == StructureKind::Smelter {
+        return c.is_smeltable();
+    }
+    products_of(kind).iter().any(|conv| conv.output == c)
+}
+
+/// Every recipe in the web: the defaults, the Smelter's ores, the Drive
+/// Works' products and the kit parts.
+pub fn all_converters() -> impl Iterator<Item = &'static Converter> {
+    CONVERTERS.iter().chain(ORE_REFINING.iter()).chain(DRIVE_WORKS_PRODUCTS.iter()).chain(PART_RECIPES.iter())
+        .chain(MUNITION_RECIPES.iter()).chain(SIZED_HULL_SECTIONS.iter())
+}
+
+/// The converter that makes `c` anywhere in the web (the first found).
+pub fn converter_for_output(c: Commodity) -> Option<&'static Converter> {
+    all_converters().find(|conv| conv.output == c)
+}
+
+/// §shipbuilding-overhaul: the kit parts' second recipes. The Hull Fabricator
+/// adds Cargo Bays; the Semiconductor Fab adds Nav Computers (the first part a
+/// corporation can make, at Signal Libraries); the Armaments Complex adds the
+/// two guns, each carrying its Weapon Mounts. One recipe at a time on each
+/// works, like a Smelter. Tunable.
+pub const PART_RECIPES: [Converter; 4] = [
+    Converter {
+        structure: StructureKind::HullFabricator,
+        output: Commodity::CargoBay,
+        rate: 0.25 * OUTPUT_SCALE,
+        inputs: &[(Commodity::Alloys, 3.0), (Commodity::Polymers, 1.0), (Commodity::Machinery, 0.5)],
+    },
+    Converter {
+        structure: StructureKind::ElectronicsFabricator,
+        output: Commodity::NavComputer,
+        rate: 0.10 * OUTPUT_SCALE,
+        inputs: &[(Commodity::Electronics, 2.0), (Commodity::PrecisionComponents, 1.0), (Commodity::RareElements, 0.2)],
+    },
+    Converter {
+        structure: StructureKind::ArmamentsComplex,
+        output: Commodity::PulseLaser,
+        rate: 0.20 * OUTPUT_SCALE,
+        inputs: &[(Commodity::Armaments, 1.0), (Commodity::Electronics, 0.5), (Commodity::PrecisionComponents, 0.25)],
+    },
+    Converter {
+        structure: StructureKind::ArmamentsComplex,
+        output: Commodity::BeamBattery,
+        rate: 0.05 * OUTPUT_SCALE,
+        inputs: &[(Commodity::Armaments, 4.0), (Commodity::Electronics, 2.0), (Commodity::PrecisionComponents, 1.0),
+            (Commodity::Machinery, 1.0)],
+    },
+];
+
+/// §shipbuilding-overhaul Phase 5: the munitions, three more Armaments Complex
+/// recipes after Munitions Lines. Torpedoes want Weapon Mounts, Precision
+/// Components and Volatiles; Slugs Alloys and Titanium, cheap and heavy; Beam
+/// Crystals Crystalline Ore and Rare Elements — Crystalline Ore's first use
+/// beyond Silicates. One unit is one shot (one crystal one gun). Tunable.
+pub const MUNITION_RECIPES: [Converter; 3] = [
+    Converter {
+        structure: StructureKind::ArmamentsComplex,
+        output: Commodity::Torpedoes,
+        rate: 0.30 * OUTPUT_SCALE,
+        inputs: &[(Commodity::Armaments, 0.5), (Commodity::PrecisionComponents, 0.3), (Commodity::Volatiles, 0.5)],
+    },
+    Converter {
+        structure: StructureKind::ArmamentsComplex,
+        output: Commodity::Slugs,
+        rate: 0.60 * OUTPUT_SCALE,
+        inputs: &[(Commodity::Alloys, 0.5), (Commodity::Titanium, 0.1)],
+    },
+    Converter {
+        structure: StructureKind::ArmamentsComplex,
+        output: Commodity::BeamCrystals,
+        rate: 0.20 * OUTPUT_SCALE,
+        inputs: &[(Commodity::CrystallineOre, 2.0), (Commodity::RareElements, 0.05)],
+    },
+];
+
+pub const HULL_FABRICATOR_PRODUCTS: [Converter; 4] = [CONVERTERS[10], PART_RECIPES[0], SIZED_HULL_SECTIONS[0], SIZED_HULL_SECTIONS[1]];
+pub const ELECTRONICS_FABRICATOR_PRODUCTS: [Converter; 2] = [CONVERTERS[2], PART_RECIPES[1]];
+pub const ARMAMENTS_COMPLEX_PRODUCTS: [Converter; 6] = [CONVERTERS[8], PART_RECIPES[2], PART_RECIPES[3],
+    MUNITION_RECIPES[0], MUNITION_RECIPES[1], MUNITION_RECIPES[2]];
+
+/// §shipbuilding-overhaul: what a Drive Works line may make.
 pub fn is_drive_works_product(c: Commodity) -> bool {
-    matches!(c, Commodity::WarpCore | Commodity::FusionCore)
+    is_product_of(StructureKind::DriveWorks, c)
 }
 
-/// §fuel-overhaul: the Drive Works' second recipe — a Fusion Plant's core,
-/// slower than a Warp Core; the basket clears by about a fifth.
-pub const FUSION_CORE_CONVERTER: Converter = Converter {
+/// §reactors-drives: the research a Drive Works line needs to make a part,
+/// and the Drive Works tier. Rung 1 (Fission Reactor, Zephyr Drive) at tier I
+/// (the structure's own gate, Autoforges); rung 2 (Fusion Reactor, Gale Drive)
+/// at tier II; rung 3 (Advanced Fusion Reactor, Tempest Drive) after Helium-3
+/// Cycle; rung 4 (Antimatter Reactor, Maelstrom Drive) after Antimatter
+/// Synthesis. Buying waits for the same research (`crate::fuel::known_after`).
+pub fn drive_works_gate(c: Commodity) -> (u32, Option<&'static str>) {
+    // §hull-ladder: a sized part takes its light base's gate; its size's
+    // programme is `size_gate`.
+    let c = c.light_base();
+    match c {
+        Commodity::FissionReactor | Commodity::ZephyrDrive => (1, None),
+        Commodity::FusionReactor | Commodity::GaleDrive => (2, None),
+        Commodity::AdvancedFusionReactor | Commodity::TempestDrive => (1, Some(crate::power::FUSION_RESEARCH)),
+        Commodity::AntimatterReactor | Commodity::MaelstromDrive => (1, Some("mat_foundry_vi_antimatter_synthesis")),
+        _ => (u32::MAX, None),
+    }
+}
+
+/// §hull-ladder: the research a sized part's SIZE needs at a works (heavy:
+/// the Cruiser's line; capital: the Dreadnought's), besides its rung's.
+pub fn size_gate(c: Commodity) -> Option<&'static str> {
+    crate::fuel::size_known_after(c)
+}
+
+/// §reactors-drives: the Drive Works' eight recipes — a reactor and a drive
+/// of each rung. Rates are slow on purpose (Nov 6 2026: a Drive Works at
+/// 0.12/s against the Hub's unbounded demand was a credit faucet): one
+/// Fission Reactor every 3 min 20 s at tier I, the others slower in
+/// proportion to their inputs. Baskets sit ~20–30% under the Hub price
+/// (`market::base_price`). Tunable.
+pub const LIGHT_DRIVE_WORKS_PRODUCTS: [Converter; 8] = [
+    Converter {
+        structure: StructureKind::DriveWorks,
+        output: Commodity::FissionReactor,
+        rate: 0.005 * OUTPUT_SCALE,
+        inputs: &[(Commodity::PrecisionComponents, 3.72), (Commodity::Composites, 2.33), (Commodity::Machinery, 1.40)],
+    },
+    Converter {
+        structure: StructureKind::DriveWorks,
+        output: Commodity::ZephyrDrive,
+        rate: 0.008 * OUTPUT_SCALE,
+        inputs: &[(Commodity::PrecisionComponents, 1.40), (Commodity::Composites, 1.40), (Commodity::Machinery, 1.40)],
+    },
+    FUSION_REACTOR_CONVERTER,
+    Converter {
+        structure: StructureKind::DriveWorks,
+        output: Commodity::GaleDrive,
+        rate: 0.005 * OUTPUT_SCALE,
+        inputs: &[(Commodity::PrecisionComponents, 2.79), (Commodity::Composites, 2.33), (Commodity::Titanium, 1.40)],
+    },
+    Converter {
+        structure: StructureKind::DriveWorks,
+        output: Commodity::AdvancedFusionReactor,
+        rate: 0.003 * OUTPUT_SCALE,
+        inputs: &[(Commodity::PrecisionComponents, 10.23), (Commodity::Composites, 4.65), (Commodity::Iridium, 3.72),
+            (Commodity::Titanium, 2.33)],
+    },
+    Converter {
+        structure: StructureKind::DriveWorks,
+        output: Commodity::TempestDrive,
+        rate: 0.004 * OUTPUT_SCALE,
+        inputs: &[(Commodity::PrecisionComponents, 4.65), (Commodity::Composites, 2.79), (Commodity::Iridium, 1.40),
+            (Commodity::Titanium, 1.40)],
+    },
+    Converter {
+        structure: StructureKind::DriveWorks,
+        output: Commodity::AntimatterReactor,
+        rate: 0.002 * OUTPUT_SCALE,
+        inputs: &[(Commodity::PrecisionComponents, 11.62), (Commodity::Composites, 6.98), (Commodity::Iridium, 3.72),
+            (Commodity::ExoticMatter, 2.33)],
+    },
+    Converter {
+        structure: StructureKind::DriveWorks,
+        output: Commodity::MaelstromDrive,
+        rate: 0.003 * OUTPUT_SCALE,
+        inputs: &[(Commodity::PrecisionComponents, 5.58), (Commodity::Composites, 2.79), (Commodity::Iridium, 1.86),
+            (Commodity::ExoticMatter, 2.33)],
+    },
+];
+
+/// The Drive Works' plant-reactor recipe — a Deuterium Fusion Plant's heart.
+pub const FUSION_REACTOR_CONVERTER: Converter = Converter {
     structure: StructureKind::DriveWorks,
-    output: Commodity::FusionCore,
-    rate: 0.08,
-    inputs: &[(Commodity::PrecisionComponents, 2.0), (Commodity::Composites, 0.6), (Commodity::Iridium, 0.4)],
+    output: Commodity::FusionReactor,
+    rate: 0.005 * OUTPUT_SCALE,
+    // §hull-ladder: baskets ×4.65 with the engine price (1,300 at the Hub).
+    inputs: &[(Commodity::PrecisionComponents, 9.30), (Commodity::Composites, 2.80), (Commodity::Iridium, 1.85)],
+};
+
+/// §hull-ladder: a heavy part is assembled from 25 light ones, a capital part
+/// from 25 heavy — one every 10 and 50 minutes on a line. Tunable.
+const fn assembly(structure: StructureKind, output: Commodity, from: &'static [(Commodity, f64)], rate: f64) -> Converter {
+    Converter { structure, output, rate, inputs: from }
+}
+macro_rules! sized_pairs {
+    ($(($heavy:ident, $capital:ident, $light:ident)),* $(,)?) => {
+        pub const SIZED_DRIVE_WORKS_PRODUCTS: [Converter; 16] = [
+            $(assembly(StructureKind::DriveWorks, Commodity::$heavy, &[(Commodity::$light, 25.0)], 1.0 / 600.0),)*
+            $(assembly(StructureKind::DriveWorks, Commodity::$capital, &[(Commodity::$heavy, 25.0)], 1.0 / 3000.0),)*
+        ];
+    };
+}
+sized_pairs!(
+    (HeavyFissionReactor, CapitalFissionReactor, FissionReactor),
+    (HeavyFusionReactor, CapitalFusionReactor, FusionReactor),
+    (HeavyAdvancedFusionReactor, CapitalAdvancedFusionReactor, AdvancedFusionReactor),
+    (HeavyAntimatterReactor, CapitalAntimatterReactor, AntimatterReactor),
+    (HeavyZephyrDrive, CapitalZephyrDrive, ZephyrDrive),
+    (HeavyGaleDrive, CapitalGaleDrive, GaleDrive),
+    (HeavyTempestDrive, CapitalTempestDrive, TempestDrive),
+    (HeavyMaelstromDrive, CapitalMaelstromDrive, MaelstromDrive),
+);
+/// The frame's two sizes, at the Hull Fabricator.
+pub const SIZED_HULL_SECTIONS: [Converter; 2] = [
+    assembly(StructureKind::HullFabricator, Commodity::HeavyHullSections, &[(Commodity::HullSections, 25.0)], 1.0 / 600.0),
+    assembly(StructureKind::HullFabricator, Commodity::CapitalHullSections, &[(Commodity::HeavyHullSections, 25.0)], 1.0 / 3000.0),
+];
+
+/// Every Drive Works product: the eight light parts, then the sixteen sized.
+pub const DRIVE_WORKS_PRODUCTS: [Converter; 24] = {
+    let mut all = [LIGHT_DRIVE_WORKS_PRODUCTS[0]; 24];
+    let mut i = 0;
+    while i < 8 { all[i] = LIGHT_DRIVE_WORKS_PRODUCTS[i]; i += 1; }
+    let mut k = 0;
+    while k < 16 { all[8 + k] = SIZED_DRIVE_WORKS_PRODUCTS[k]; k += 1; }
+    all
 };
 
 /// One default conversion per industrial structure. Smelters may instead run
@@ -304,7 +559,7 @@ pub const CONVERTERS: [Converter; 14] = [
     Converter {
         structure: StructureKind::Smelter,
         output: Commodity::Alloys,
-        rate: 1.0,
+        rate: 1.0 * OUTPUT_SCALE,
         inputs: &[(Commodity::MetallicOre, 1.5)],
     },
     // §fuel-overhaul: the Uranium Mill sifts fissile grains out of Ferrite Ore —
@@ -312,13 +567,13 @@ pub const CONVERTERS: [Converter; 14] = [
     Converter {
         structure: StructureKind::UraniumMill,
         output: Commodity::Uranium,
-        rate: 0.05,
+        rate: 0.05 * OUTPUT_SCALE,
         inputs: &[(Commodity::MetallicOre, 0.5)],
     },
     Converter {
         structure: StructureKind::ElectronicsFabricator,
         output: Commodity::Electronics,
-        rate: 0.5,
+        rate: 0.5 * OUTPUT_SCALE,
         // §ore-ladder: the dear refined goods are needed in TENTHS of a unit —
         // "a little goes a long way" is what makes a rare-metal haul worth the
         // trip without repricing every end product above it.
@@ -327,19 +582,19 @@ pub const CONVERTERS: [Converter; 14] = [
     Converter {
         structure: StructureKind::ChemicalWorks,
         output: Commodity::Polymers,
-        rate: 0.8,
+        rate: 0.8 * OUTPUT_SCALE,
         inputs: &[(Commodity::Volatiles, 1.0), (Commodity::Biomass, 0.8)],
     },
     Converter {
         structure: StructureKind::FuelRefinery,
         output: Commodity::Deuterium,
-        rate: 0.8,
+        rate: 0.8 * OUTPUT_SCALE,
         inputs: &[(Commodity::Volatiles, 1.0)],
     },
     Converter {
         structure: StructureKind::Agroplex,
         output: Commodity::Provisions,
-        rate: 1.2,
+        rate: 1.2 * OUTPUT_SCALE,
         inputs: &[(Commodity::Biomass, 1.0)],
     },
     // §gaia: Living Terraces farm their own gardens — the Agroplex's rate with
@@ -347,13 +602,13 @@ pub const CONVERTERS: [Converter; 14] = [
     Converter {
         structure: StructureKind::LivingTerraces,
         output: Commodity::Provisions,
-        rate: 1.2,
+        rate: 1.2 * OUTPUT_SCALE,
         inputs: &[],
     },
     Converter {
         structure: StructureKind::MachineWorks,
         output: Commodity::Machinery,
-        rate: 0.3,
+        rate: 0.3 * OUTPUT_SCALE,
         inputs: &[
             (Commodity::Alloys, 1.2),
             (Commodity::Electronics, 0.6),
@@ -362,7 +617,7 @@ pub const CONVERTERS: [Converter; 14] = [
     Converter {
         structure: StructureKind::ArmamentsComplex,
         output: Commodity::Armaments,
-        rate: 0.35,
+        rate: 0.35 * OUTPUT_SCALE,
         inputs: &[
             (Commodity::Alloys, 1.0),
             (Commodity::Electronics, 0.5),
@@ -374,36 +629,30 @@ pub const CONVERTERS: [Converter; 14] = [
     Converter {
         structure: StructureKind::CompositeWorks,
         output: Commodity::Composites,
-        rate: 0.30,
+        rate: 0.30 * OUTPUT_SCALE,
         inputs: &[(Commodity::Alloys, 1.0), (Commodity::Polymers, 0.75), (Commodity::Silicates, 0.4)],
     },
     Converter {
         structure: StructureKind::HullFabricator,
         output: Commodity::HullSections,
-        rate: 0.18,
+        rate: 0.18 * OUTPUT_SCALE,
         inputs: &[(Commodity::Composites, 1.2), (Commodity::Machinery, 0.5), (Commodity::Titanium, 0.4)],
     },
     Converter {
         structure: StructureKind::PrecisionWorks,
         output: Commodity::PrecisionComponents,
-        rate: 0.20,
+        rate: 0.20 * OUTPUT_SCALE,
         inputs: &[(Commodity::Electronics, 1.0), (Commodity::Machinery, 0.5), (Commodity::RareElements, 0.1)],
     },
-    Converter {
-        structure: StructureKind::DriveWorks,
-        output: Commodity::WarpCore,
-        rate: 0.12,
-        // §rare-materials: Iridium for the hot end, in place of Composites at
-        // equal base value. §fuel-overhaul: no furnace fuel (double power).
-        inputs: &[(Commodity::PrecisionComponents, 1.25), (Commodity::Composites, 0.82),
-            (Commodity::Iridium, 0.1)],
-    },
+    // §shipbuilding-overhaul: the Fission Core, the Drive Works' default line
+    // (`DRIVE_WORKS_PRODUCTS[0]`). §fuel-overhaul: no furnace fuel (double power).
+    DRIVE_WORKS_PRODUCTS[0],
     // §fuel-overhaul: the last tech's factory. Two Deuterium and ten times a
     // factory's power per unit: antimatter is always a net energy loss.
     Converter {
         structure: StructureKind::AntimatterPlant,
         output: Commodity::Antimatter,
-        rate: 0.005,
+        rate: 0.005 * OUTPUT_SCALE,
         inputs: &[(Commodity::Deuterium, 2.0)],
     },
 ];
@@ -687,5 +936,40 @@ mod tests {
             food_factor(StructureKind::ArmamentsComplex, Rationing),
             0.85
         );
+    }
+}
+
+#[cfg(test)]
+mod product_tests {
+    use super::*;
+
+    /// §shipbuilding-overhaul: the indices the product tables borrow from
+    /// `CONVERTERS` point at the works they name.
+    #[test]
+    fn multi_product_works_list_their_default_first() {
+        assert_eq!(HULL_FABRICATOR_PRODUCTS[0].output, Commodity::HullSections);
+        assert_eq!(ELECTRONICS_FABRICATOR_PRODUCTS[0].output, Commodity::Electronics);
+        assert_eq!(ARMAMENTS_COMPLEX_PRODUCTS[0].output, Commodity::Armaments);
+        for (kind, products) in [(StructureKind::HullFabricator, &HULL_FABRICATOR_PRODUCTS[..]),
+            (StructureKind::ElectronicsFabricator, &ELECTRONICS_FABRICATOR_PRODUCTS[..]),
+            (StructureKind::ArmamentsComplex, &ARMAMENTS_COMPLEX_PRODUCTS[..]),
+            (StructureKind::DriveWorks, &DRIVE_WORKS_PRODUCTS[..])]
+        {
+            assert!(products.iter().all(|c| c.structure == kind), "{kind:?}");
+            assert_eq!(assigned_converter(kind, None).unwrap().output, products[0].output);
+            assert!(has_product_picker(kind));
+            let mut line = Assignment::crew(1);
+            line.refining_ore = Some(products[products.len() - 1].output);
+            assert_eq!(assigned_converter(kind, Some(&line)).unwrap().output, products[products.len() - 1].output);
+            line.refining_ore = Some(Commodity::Biomass);
+            assert_eq!(assigned_converter(kind, Some(&line)).unwrap().output, products[0].output, "an unknown product falls back");
+        }
+        assert!(!has_product_picker(StructureKind::MachineWorks));
+        assert!(is_product_of(StructureKind::ArmamentsComplex, Commodity::BeamBattery));
+        assert!(!is_product_of(StructureKind::HullFabricator, Commodity::BeamBattery));
+        for c in Commodity::PARTS.iter().chain(crate::munitions::MUNITIONS.iter()) {
+            assert!(converter_for_output(*c).is_some(), "{c:?} is made somewhere");
+        }
+        assert!(is_product_of(StructureKind::ArmamentsComplex, Commodity::Torpedoes));
     }
 }

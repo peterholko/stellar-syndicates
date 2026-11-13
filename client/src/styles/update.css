@@ -1,0 +1,36 @@
+/* §client-updates (src/client-update.ts): a newer client is out. One pill over
+   either shell, under its top bars. */
+.ss-update {
+  position: fixed;
+  z-index: var(--z-hover);
+  top: calc(env(safe-area-inset-top, 0px) + 84px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 4px 4px var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-bg);
+  box-shadow: var(--panel-shadow);
+  color: var(--ink);
+  font-size: var(--fs-body);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.ss-update button {
+  padding: 4px var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--btn-bg);
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.ss-update button:hover { background: var(--btn-bg-hover); }
+.ss-update.is-required { border-color: var(--warn); }
+.ss-update.is-required span { color: var(--warn); }
+@media (max-width: 767px), (max-height: 767px) and (pointer: coarse) {
+  .ss-update { top: calc(env(safe-area-inset-top, 0px) + 64px); }
+}

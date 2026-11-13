@@ -30,7 +30,7 @@ pub const OUTPOST_BUILD_S: f64 = 60.0;
 pub const SKIM_RANGE_SU: f64 = 1_500.0;
 /// §fuel-overhaul: Ramscoop skims Helium-3 at gas giants — the energy of the
 /// old 1 Fuel a second.
-pub const SKIM_HELIUM3_PER_S: f64 = 1.0 / crate::fuel::HELIUM3_FUEL_EQUIV;
+pub const SKIM_HELIUM3_PER_S: f64 = 1.0 / crate::fuel::HELIUM3_FUEL_EQUIV * crate::production::OUTPUT_SCALE;
 /// §belts: bulk-equivalent ore one Mining Barge cuts per second before research
 /// (Deep Bores, Strip Rigs). A dense ore comes out in proportionally fewer
 /// units (`production::ore_bulk_ratio`), as from a mine.
@@ -172,6 +172,50 @@ pub struct FreightRun {
     pub shopping_spent: f64,
 }
 
+impl FreightRun {
+    /// §route-edit: an edit reaching a run under way with its ports in the
+    /// same order keeps its place.
+    pub fn keeps_place(&self, route: &FreightRoute) -> bool {
+        self.phase != RoutePhase::Complete
+            && self.route.stops.len() == route.stops.len()
+            && self.route.stops.iter().zip(&route.stops).all(|(a, b)| a.port == b.port)
+    }
+
+    /// §route-edit (Peter, Nov 5 2026: "I tried to modify the return items
+    /// when the freighter was still traveling to the hub but I couldn't save
+    /// the changes"): this run carried on under `route` ([`Self::keeps_place`])
+    /// at its stop, in its phase. Bound for a stop, it takes that stop's new
+    /// manifests on arrival. Working one, what the edit adds or takes off
+    /// moves that stop's transfers by the difference, so units already moved
+    /// never move twice (an unload never past what is aboard, `aboard`), and
+    /// added work sends it back to that step.
+    pub fn revised(mut self, route: FreightRoute, aboard: impl Fn(Commodity) -> u32) -> FreightRun {
+        if matches!(self.phase, RoutePhase::Unloading | RoutePhase::Loading | RoutePhase::Fuel | RoutePhase::Escort) {
+            let (was, now) = (&self.route.stops[self.stop], &route.stops[self.stop]);
+            let shift = |left: &mut BTreeMap<Commodity, u32>, was: &BTreeMap<Commodity, u32>,
+                now: &BTreeMap<Commodity, u32>, cap: &dyn Fn(Commodity) -> u32| {
+                let goods: std::collections::BTreeSet<Commodity> = was.keys().chain(now.keys()).copied().collect();
+                for c in goods {
+                    let moved = i64::from(left.get(&c).copied().unwrap_or(0))
+                        + i64::from(now.get(&c).copied().unwrap_or(0)) - i64::from(was.get(&c).copied().unwrap_or(0));
+                    let units = (moved.max(0) as u32).min(cap(c));
+                    if units > 0 { left.insert(c, units); } else { left.remove(&c); }
+                }
+            };
+            shift(&mut self.remaining_unload, &was.unload, &now.unload, &aboard);
+            shift(&mut self.remaining_load, &was.load, &now.load, &|_| u32::MAX);
+            if self.remaining_unload.values().any(|n| *n > 0) {
+                self.phase = RoutePhase::Unloading;
+            } else if self.remaining_load.values().any(|n| *n > 0) && self.phase != RoutePhase::Unloading {
+                self.phase = RoutePhase::Loading;
+            }
+        }
+        self.route = route;
+        self.hold = None;
+        self
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutpostKind {
@@ -204,7 +248,7 @@ impl ColonyProjectKind {
                 (Machinery, 40.0),
             ],
             Self::AgriculturalExport => &[(Alloys, 70.0), (Polymers, 50.0), (Machinery, 40.0)],
-            Self::DeepExtraction => &[(Alloys, 100.0), (WarpCore, 15.0), (Machinery, 60.0)],
+            Self::DeepExtraction => &[(Alloys, 100.0), (FissionReactor, 15.0), (Machinery, 60.0)],
         }
     }
     pub fn build_secs(self) -> f64 {
@@ -216,10 +260,12 @@ impl ColonyProjectKind {
     pub fn outputs(self) -> &'static [(Commodity, f64)] {
         match self {
             Self::OrbitalAssembly => &[
-                (Commodity::HullSections, 0.3),
-                (Commodity::WarpCore, 0.12),
+                (Commodity::HullSections, 0.3 * crate::production::OUTPUT_SCALE),
+                // §reactors-drives: the core's value, split over the pair.
+                (Commodity::FissionReactor, 0.08 * crate::production::OUTPUT_SCALE),
+                (Commodity::ZephyrDrive, 0.16 * crate::production::OUTPUT_SCALE),
             ],
-            Self::AgriculturalExport => &[(Commodity::Provisions, 3.0)],
+            Self::AgriculturalExport => &[(Commodity::Provisions, 3.0 * crate::production::OUTPUT_SCALE)],
             Self::DeepExtraction => &[], // determined by the actual finite deposit
         }
     }
@@ -231,9 +277,9 @@ impl ColonyProjectKind {
             // §rare-materials: its Warp Cores carry the Drive Works' Iridium.
             // §fuel-overhaul: no project burns fuel; the Warp Core output needs
             // Fusion Reactors (checked where the project runs).
-            Self::OrbitalAssembly => &[(Composites, 0.58), (PrecisionComponents, 0.25), (Iridium, 0.012)],
-            Self::AgriculturalExport => &[(Biomass, 2.5), (Polymers, 0.1)],
-            Self::DeepExtraction => &[(Machinery, 0.025)],
+            Self::OrbitalAssembly => &[(Composites, 0.58 * crate::production::OUTPUT_SCALE), (PrecisionComponents, 0.25 * crate::production::OUTPUT_SCALE), (Iridium, 0.012 * crate::production::OUTPUT_SCALE)],
+            Self::AgriculturalExport => &[(Biomass, 2.5 * crate::production::OUTPUT_SCALE), (Polymers, 0.1 * crate::production::OUTPUT_SCALE)],
+            Self::DeepExtraction => &[(Machinery, 0.025 * crate::production::OUTPUT_SCALE)],
         }
     }
 }

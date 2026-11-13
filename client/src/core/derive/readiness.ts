@@ -1,23 +1,26 @@
-import { fleetCargoUnits, type GhostView, type Vec2 } from "../../protocol";
+import type { GhostView, Vec2 } from "../../protocol";
 import type { PendingIntent, ViewState } from "../../state";
-import { aaaEstimate, estimatedFuelForLeg, fleetCargoCapacity, jumpAntimatter, regimeStore, shipKindLabel } from "./fleet";
+import { claimMissing, NO_CLAIM_WARNING } from "./claims";
+import { aaaEstimate, estimatedFuelForLeg, fleetCargoCapacity, fleetHoldUsed, jumpAntimatter, regimeStore, shipKindLabel, REACTOR_ENERGY, gradeBurning, ROOM_SCALE } from "./fleet";
 
 /** Advisory tunable, not a combat prohibition. Retreating damaged ships must
  * remain commandable. Everything here reads received telemetry, never truth. */
 export const BADLY_DAMAGED_HULL = 0.50;
-/** The two warp stores by name (kept local: this module has no icon deps). */
-const storeName = (fuel: "uranium" | "deuterium" | string): string => fuel === "uranium" ? "Uranium" : "Deuterium";
+/** §reactors-drives: the four fuels by name (kept local: this module has no icon deps). */
+const storeName = (fuel: string): string =>
+  fuel === "uranium" ? "Uranium" : fuel === "helium3" ? "Helium-3" : fuel === "antimatter" ? "Antimatter" : "Deuterium";
 
 export function fleetReadiness(g: GhostView) {
   const hull = g.damage == null ? null : Math.max(0, Math.min(1, 1 - g.damage));
   const cargoCapacity = fleetCargoCapacity(g);
-  const cargoUsed = fleetCargoUnits(g);
-  // §fuel-overhaul: the store the fleet's throttle burns (Uranium on Slow).
+  // §hold-room: room in quarters (ROOM_SCALE a room unit), each good its own.
+  const holdUsed = fleetHoldUsed(g);
+  // §shipbuilding-overhaul: the fleet's primary tank (its cores' fuel).
   const store = regimeStore(g);
-  const served = store.fuel === "uranium" ? g.uranium : g.fuel;
+  const served = store.served;
   return { hull, fuel: served ?? null, fuelCapacity: store.capacity, fuelKind: store.fuel,
-    antimatter: g.antimatter ?? null, antimatterCapacity: g.antimatter_capacity ?? 0, cargoUsed,
-    cargoCapacity, cargoFree: Math.max(0, cargoCapacity - cargoUsed), captain: g.captain ?? null };
+    antimatter: g.antimatter ?? null, antimatterCapacity: g.antimatter_capacity ?? 0, holdUsed,
+    cargoCapacity, holdFree: Math.max(0, cargoCapacity * ROOM_SCALE - holdUsed), captain: g.captain ?? null };
 }
 
 export function dispatchWarnings(g: GhostView, destination?: Vec2, jump = false): string[] {
@@ -39,10 +42,11 @@ export function dispatchWarnings(g: GhostView, destination?: Vec2, jump = false)
     return warnings;
   }
   const store = storeName(r.fuelKind);
-  // A dry Uranium store falls back to the fusion tank (full speed, full burn).
-  const fallback = r.fuelKind === "uranium" && (g.fuel ?? 0) > 0 ? "Switches to Deuterium." : "May stop en route.";
+  // §shipbuilding-overhaul: a dry tank holds the formation; nothing switches.
+  const fallback = "May stop en route.";
   if (destination) {
-    const needed = estimatedFuelForLeg(g, destination);
+    // The leg estimate is energy; the tank holds units of its fuel.
+    const needed = estimatedFuelForLeg(g, destination) / REACTOR_ENERGY[gradeBurning(r.fuelKind) ?? "fission"];
     if (r.fuel === null) warnings.push("Fuel report unavailable · range unverified.");
     else if (needed > r.fuel + 1e-6) warnings.push(
       `${store} short · ~${Math.ceil(needed)} needed / ${Math.floor(r.fuel)} reported. ${fallback}`);
@@ -50,8 +54,21 @@ export function dispatchWarnings(g: GhostView, destination?: Vec2, jump = false)
   return warnings;
 }
 
-export function intentReadinessWarnings(st: Pick<ViewState, "ghosts" | "galaxy" | "emplacements">,
-  intent: PendingIntent): string[] {
+type WarningState = Pick<ViewState, "ghosts" | "galaxy" | "emplacements">
+  & Partial<Pick<ViewState, "systems" | "charter" | "season">>;
+
+/** §claims: a Colony Ship bound for an unowned system it holds no claim on
+ * holds there on arrival. */
+function claimWarnings(st: WarningState, fleet: GhostView, destination: Vec2 | undefined): string[] {
+  const galaxy = st.galaxy;
+  const colony = fleet.composition ? fleet.composition.some((c) => c.kind === "colony" && c.count > 0) : fleet.kind === "colony";
+  if (!galaxy || !destination || !colony) return [];
+  const system = galaxy.systems.find((s) => Math.hypot(s.pos.x - destination.x, s.pos.y - destination.y) < galaxy.hyperlimit);
+  if (!system) return [];
+  return claimMissing(st, system, st.systems?.find((s) => s.id === system.id)) ? [NO_CLAIM_WARNING] : [];
+}
+
+export function intentReadinessWarnings(st: WarningState, intent: PendingIntent): string[] {
   if (intent.verb === "command") return (intent.commands ?? []).flatMap(command => {
     const id = "fleet_id" in command ? command.fleet_id : "ship_id" in command ? command.ship_id : intent.shipId;
     const fleet = st.ghosts.find(g => g.own && g.id === id);
@@ -67,7 +84,7 @@ export function intentReadinessWarnings(st: Pick<ViewState, "ghosts" | "galaxy" 
     if (command.type === "HaulToMarketHub" || command.type === "HaulToSystem" || command.type === "MoveShip" || command.type === "DefendSystem") {
       const destination = command.type === "HaulToMarketHub" ? st.galaxy?.hub
         : command.type === "MoveShip" ? command.dest : st.galaxy?.systems.find(s => s.id === (command.type === "DefendSystem" ? command.system_id : command.system))?.pos;
-      return dispatchWarnings(fleet, destination);
+      return [...dispatchWarnings(fleet, destination), ...claimWarnings(st, fleet, destination)];
     }
     return [];
   });
@@ -78,7 +95,7 @@ export function intentReadinessWarnings(st: Pick<ViewState, "ghosts" | "galaxy" 
   return ids.flatMap(id => {
     const fleet = st.ghosts.find(g => g.own && g.id === id);
     if (!fleet) return [];
-    return dispatchWarnings(fleet, destination, intent.verb === "jump")
+    return [...dispatchWarnings(fleet, destination, intent.verb === "jump"), ...claimWarnings(st, fleet, destination)]
       .map(w => ids.length > 1 ? `${shipKindLabel(fleet.kind)} ${id}: ${w}` : w);
   });
 }

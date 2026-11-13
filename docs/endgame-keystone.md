@@ -324,6 +324,14 @@ No galaxy reset is needed: the season clock starts at its first census.
      the corporation's largest holding, delivered from its Hub warehouse.
    - **Refusing a requisition:** standing −8 and levy +1%. Three refusals
      bring the enforcement squadron for 12h.
+   - **Who gets them:** every corporation once its founder protection ends
+     (24h from founding), its charter finished or not (Nov 10 2026). Before
+     that, finishing the charter late kept a corporation out of the squeeze.
+   - **Late charter grant:** a corporation founded (or restarted) once
+     requisitions run starts with two minimum requisitions' worth of extra
+     credits: 4,000 / 6,000 / 8,000 Cr at grips II–IV
+     (`season::late_charter_grant`). The log says "Charter milestone · Late
+     charter grant · N Cr.".
 2. **The Assembly Hall:** slot-free at the Command Center, three levels.
    Alloys 30, Provisions 40, Machinery 10. It rallies +1% Resolve an hour a
    level (+3%/h at most) from grip II on, and can't be built before then. It

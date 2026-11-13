@@ -6,8 +6,9 @@
 import type { ModuleKind, StationView } from "../../protocol";
 
 /** The ladder's names, level 1 to 6 (the served catalog carries the same).
- * §gun-platform: the charter's Gun Platform comes first. */
-export const STATION_NAMES = ["Gun Platform", "Defense Platform", "Orbital Battery", "Defense Station", "Citadel", "Star Fortress"];
+ * §gun-platform: the charter's first level comes first; §laser-battery
+ * (Nov 1 2026): it is a Laser Battery on the ground. */
+export const STATION_NAMES = ["Laser Battery", "Defense Platform", "Orbital Battery", "Defense Station", "Citadel", "Star Fortress"];
 export const STATION_LEVELS = STATION_NAMES.length;
 
 /** A level clamped to the ladder. */
@@ -15,9 +16,11 @@ export const stationLevel = (level: number): number => Math.max(1, Math.min(STAT
 
 export const stationName = (level: number): string => STATION_NAMES[stationLevel(level) - 1];
 
-/** The station's art at `level` (1–6), from the derived station sprites. */
+/** The station's art at `level` (1–6), from the derived station sprites.
+ * §laser-battery: level 1 is the ground turret the planet scene draws. */
 export function stationArtUrl(level: number, size: 128 | 256 | 512 = 128): string {
-  return `/art/derived/stations/v2/level-${stationLevel(level)}-${size}.webp`;
+  return stationLevel(level) === 1 ? `/art/derived/planet-surface-structures/v2/buildings/defense_platform/tier-1-${size}.webp`
+    : `/art/derived/stations/v2/level-${stationLevel(level)}-${size}.webp`;
 }
 
 /** A hardpoint's budget: three slots, eight fitting points (a destroyer's). */
@@ -41,7 +44,7 @@ export function mountFitError(fit: ModuleKind[], lances: boolean): string {
   return points > MOUNT_POINTS ? `That fit needs ${points} fitting points; a hardpoint has ${MOUNT_POINTS}.` : "";
 }
 
-/** The crates a refit from `from` to `to` takes from the system's ledger. A
+/** The modules a refit from `from` to `to` takes from the system's stockpile. A
  * lance comes with research, not a crate. */
 export function refitCrates(from: ModuleKind[], to: ModuleKind[]): Partial<Record<ModuleKind, number>> {
   const need: Partial<Record<ModuleKind, number>> = {};

@@ -725,6 +725,10 @@ impl Timeline {
                             if *slips == 1 { "" } else { "s" },
                             if *slips == 1 { "is" } else { "are" }
                         ),
+                        sim::BuildRejectReason::ResearchRequired => format!(
+                            "Can't build {} at {name}: its reactor or drive waits for research.",
+                            build_label(*what)
+                        ),
                         sim::BuildRejectReason::NotBuildable => format!(
                             "Can't build {} at {name}: it isn't a corporation-buildable hull.",
                             build_label(*what)
@@ -743,6 +747,10 @@ impl Timeline {
                         ),
                         sim::BuildRejectReason::StarFortressLimit => format!(
                             "Can't raise a Star Fortress at {name}: your corporation already has one.",
+                        ),
+                        sim::BuildRejectReason::NeedsLicence => format!(
+                            "Can't build {} at {name}: it needs the Authority's licence.",
+                            build_label(*what)
                         ),
                     };
                     self.push(*owner, e.time, TimelineSeverity::Warn, text);
@@ -939,6 +947,41 @@ impl Timeline {
                          stores are yours while you hold station."
                     )); }
                 }
+                // §veil: the sky over a besieged world lit up. The OWNER learns
+                // it light-delayed; the BESIEGER's guns stopped reaching the
+                // ground, so they know at once.
+                EventPayload::VeilRaised { owner, by, system, pos, level } => {
+                    let name = system_name(world, *system);
+                    let loss = (sim::ground::veil_descent_loss(*level) * 100.0).round() as u32;
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        self.push(*owner, observe, TimelineSeverity::Good, format!(
+                            "Veil raised over {name} · guns and prize crews shut out · burning the Fusion Plant's fuel"
+                        ));
+                    }
+                    if !by.is_sentinel() { self.push(*by, e.time, TimelineSeverity::Warn, format!(
+                        "{name} raised its Veil · bombardment and plunder stopped · only Transports land, −{loss}% in the descent · it holds while their fuel does"
+                    )); }
+                }
+                EventPayload::VeilDropped { owner, by, system, pos, reason } => {
+                    let name = system_name(world, *system);
+                    let why = match reason {
+                        sim::event::VeilDown::Relieved => "the blockade broke",
+                        sim::event::VeilDown::Dry => "the Fusion Plant ran dry",
+                        sim::event::VeilDown::Forbidden => "by your order",
+                    };
+                    if let Some(cc) = world.players.get(owner).map(|c2| c2.command_center) {
+                        let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
+                        self.push(*owner, observe, if *reason == sim::event::VeilDown::Dry { TimelineSeverity::Bad } else { TimelineSeverity::Info },
+                            format!("Veil down at {name} · {why}"));
+                    }
+                    if let Some(by) = by.filter(|b| !b.is_sentinel() && *reason != sim::event::VeilDown::Relieved) {
+                        self.push(by, e.time, TimelineSeverity::Good, format!(
+                            "{name}'s Veil is down · {} · the guns reach the ground again",
+                            if *reason == sim::event::VeilDown::Dry { "their reactor ran dry" } else { "they let it fall" }
+                        ));
+                    }
+                }
                 // A besieged system was CAPTURED (§contestable-territory Part 2).
                 // Both participants learn it light-delayed from the flip site: the
                 // OLD owner ("you lost X"), the CAPTOR ("you captured X"). Third
@@ -1007,18 +1050,21 @@ impl Timeline {
                     defenders,
                     suppression,
                     pos,
+                    descent_losses,
                     ..
                 } => {
                     let name = system_name(world, *system);
                     let pinned = (suppression * 100.0).round() as u32;
+                    // §veil: what the sky took on the way down.
+                    let veil = if *descent_losses > 0 { format!(" The Veil took {descent_losses} in the descent.") } else { String::new() };
                     if let Some(cc) = world.players.get(defender).map(|c2| c2.command_center) {
                         let observe = e.time + sim::transit::delay(*pos, cc, world.config.c);
                         self.push(*defender, observe, TimelineSeverity::Bad, format!(
-                            "LANDING AT {name} — {marines} marines are on the ground against your {defenders} ({pinned}% of the garrison pinned by bombardment). BREAK THE BLOCKADE and the pinned troops rejoin the fight."
+                            "LANDING AT {name} — {marines} marines are on the ground against your {defenders} ({pinned}% of the garrison pinned by bombardment).{veil} BREAK THE BLOCKADE and the pinned troops rejoin the fight."
                         ));
                     }
                     self.push(*attacker, e.time, TimelineSeverity::Warn, format!(
-                        "Your landing at {name} has gone in — {marines} marines against {defenders}, with {pinned}% of the garrison pinned. Keep the guns on station: if the blockade breaks, they come out of cover."
+                        "Your landing at {name} has gone in — {marines} marines against {defenders}, with {pinned}% of the garrison pinned.{veil} Keep the guns on station: if the blockade breaks, they come out of cover."
                     ));
                 }
                 // §ground G1: the landing was DESTROYED on the ground. This one
@@ -1152,7 +1198,7 @@ impl Timeline {
                 // §economy Part 4: specialist news — hire/training/delivery on
                 // the owner's own clock; a LOSS light-delayed from the wreck
                 // (battle-news precedent). All owner-only.
-                EventPayload::SpecialistHired { owner, kind, dest } => {
+                EventPayload::SpecialistHired { owner, kind, dest, .. } => {
                     let name = system_name(world, *dest);
                     self.push(*owner, e.time, TimelineSeverity::Good, format!(
                         "Contract signed: a {} ships out from Sol for {name} (sub-light — protect the run).",
@@ -1277,6 +1323,22 @@ impl Timeline {
                 EventPayload::PowerRestored { owner, system, body } => {
                     let planet = body_name(world, *system, *body);
                     self.push(*owner, e.time, TimelineSeverity::Good, format!("Power restored · {planet}"));
+                }
+                // §migration-status: a liner landed its cohort, or found no room
+                // and is taking it back. OWNER-ONLY, own clock.
+                EventPayload::MigrantsLanded { owner, system, body, people, relocated } => {
+                    let planet = body_name(world, *system, *body);
+                    let text = if *relocated {
+                        format!("Relocated {} · {planet}", head_count(*people))
+                    } else {
+                        format!("+{} people · {planet}", head_count(*people))
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Good, text);
+                }
+                EventPayload::MigrantsTurnedBack { owner, system, body, people } => {
+                    let planet = body_name(world, *system, *body);
+                    self.push(*owner, e.time, TimelineSeverity::Warn,
+                        format!("Liner turned back · {planet} · no housing for {}", head_count(*people)));
                 }
                 // §economy Part 2: a colony moved on the FOOD LADDER — OWNER-ONLY,
                 // on the owner's own clock (own-economy precedent, like stockpiles
@@ -1417,6 +1479,23 @@ impl Timeline {
                             format!("Pirates raided {} and took {took}.", system_name(world, *system)));
                     }
                 }
+                // §stash: the first freighter loaded the den's loot, on its
+                // light home.
+                EventPayload::FoundingStashLoaded { owner, system, pos, goods } => {
+                    if let Some(corp) = world.players.get(owner) {
+                        let observe = e.time + sim::transit::delay(*pos, corp.command_center, world.config.c);
+                        let goods: Vec<String> = goods.iter().filter(|(_, n)| **n > 0)
+                            .map(|(c, n)| format!("{n} {}", commodity_name(*c))).collect();
+                        let loaded = match goods.split_last() {
+                            None => "nothing".to_string(),
+                            Some((last, [])) => last.clone(),
+                            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+                        };
+                        let home = corp.home_system.map_or_else(|| "home".to_string(), |h| system_name(world, h));
+                        self.push(*owner, observe, TimelineSeverity::Good,
+                            format!("Loot loaded at {}: {loaded}. Bound for {home}.", system_name(world, *system)));
+                    }
+                }
                 // §vendetta: the pirate family's story, on its light home.
                 // The client turns these lines into transmissions.
                 EventPayload::Vendetta { owner, beat, pos, stolen, wreck } => {
@@ -1487,6 +1566,52 @@ impl Timeline {
                 EventPayload::PaymentRefused { owner, what, cost } => {
                     self.push(*owner, e.time, TimelineSeverity::Warn,
                         format!("Not enough credits for {what}: {cost:.0} Cr."));
+                }
+                // §licences: the Authority's answer, heard from the Hub.
+                EventPayload::LicenceBought { owner, hull, cost } => {
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "The Authority licensed you to build {}: {cost:.0} Cr.",
+                        build_label(sim::BuildKind::Ship { ship: *hull })));
+                }
+                EventPayload::LicenceRefused { owner, hull, reason } => {
+                    use sim::licence::LicenceRefusal as R;
+                    let why = match reason {
+                        R::NotRequired => "it needs no licence".to_string(),
+                        R::AlreadyHeld => "you already hold it".to_string(),
+                        R::NeedsResearch => "research it first".to_string(),
+                        R::NeedsCommissioned => "capital licences need Commissioned standing".to_string(),
+                        R::CharterClosed => "your charter is revoked".to_string(),
+                        R::AtWar => "you are at war with the Authority, and need none".to_string(),
+                        R::CantAfford { cost } => format!("not enough credits ({cost:.0} Cr)"),
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Warn, format!(
+                        "Licence refused for {}: {why}.", build_label(sim::BuildKind::Ship { ship: *hull })));
+                }
+                // §claims (v90): the Authority's claims on new colonies.
+                EventPayload::ClaimBought { owner, system, cost, .. } => {
+                    self.push(*owner, e.time, TimelineSeverity::Good, format!(
+                        "Claim granted · {} · {cost:.0} Cr · lapses in 7d.", system_name(world, *system)));
+                }
+                EventPayload::ClaimRefused { owner, system, reason } => {
+                    use sim::claims::ClaimRefusal as R;
+                    let why = match reason {
+                        R::NotForSale => "not for sale".to_string(),
+                        R::AlreadyHeld => "you hold it".to_string(),
+                        R::HeldByAnother => "another corporation holds it".to_string(),
+                        R::CharterClosed => "your charter is revoked".to_string(),
+                        R::AtWar => "at war, you need none".to_string(),
+                        R::CantAfford { cost } => format!("not enough credits ({cost:.0} Cr)"),
+                    };
+                    self.push(*owner, e.time, TimelineSeverity::Warn, format!(
+                        "Claim refused · {} · {why}.", system_name(world, *system)));
+                }
+                EventPayload::ClaimLapsed { owner, system } => {
+                    self.push(*owner, e.time, TimelineSeverity::Warn, format!(
+                        "Claim lapsed · {} · unused a week.", system_name(world, *system)));
+                }
+                EventPayload::ClaimMissing { owner, system, .. } => {
+                    self.push(*owner, e.time, TimelineSeverity::Warn, format!(
+                        "No claim on {}: the Colony Ship waits. Buy the claim from the Authority.", system_name(world, *system)));
                 }
                 // §traders: the corporation's own free trader (sim merchant.rs
                 // names it; client trader.ts gives it a face and a voice).
@@ -1612,8 +1737,9 @@ impl Timeline {
                         // §vendetta: the den is the pirate family's.
                         let den_name = world.pirate_family(*owner)
                             .map_or_else(|| "Privateer den".to_string(), |f| format!("The {} den", f.surname()));
+                        // §stash: its reactor blew as it fell (`DEN_BLAST_HULL_FRAC`).
                         self.push(*owner, observe, TimelineSeverity::Good, if den {
-                            format!("{den_name} at {name} destroyed. Its asteroid belt looks rich in minerals.{tail}")
+                            format!("{den_name} at {name} destroyed. Its reactor blew as it fell. Its asteroid belt looks rich in minerals.{tail}")
                         } else {
                             format!("Pirate hideout at {name} cleared.{}{tail}",
                                 if aftermath.is_empty() { String::new() } else { format!(" {aftermath}") })
@@ -2062,10 +2188,35 @@ impl Timeline {
                         sim::OperationState::Abandoned => continue,
                     };
                     let refs = LogRefs { operation: Some(*operation), ..Default::default() };
+                    let meta = |phase| Meta {
+                        kind: Some(LogKind::Operation), group: Some(format!("operation:{operation}")),
+                        phase: Some(phase), refs: refs.clone(), data: None, merge: None,
+                    };
+                    // §den-contract: the den's contract comes taken on, with
+                    // the kill's report. The client opens this line as the
+                    // Authority's pop-up.
+                    if let Some(o) = op.filter(|o| o.is_founder_den() && *state == sim::OperationState::Active)
+                        && let Some(brief) = o.briefing.as_ref()
+                    {
+                        self.push_meta(*recipient, *arrive_at, severity, format!("Authority contract · {} · {}.",
+                            brief.title, service_reward(o.reward.credits, 0.0, None)), meta(phase));
+                        continue;
+                    }
+                    // §privateer-contract: the privateer's contract is
+                    // offered as the hunt begins. The client opens this line
+                    // as the Charter Advisor's transmission.
+                    if let Some(o) = op.filter(|o| o.is_founder_privateer() && *state == sim::OperationState::Offered)
+                        && let Some(brief) = o.briefing.as_ref()
+                    {
+                        self.push_meta(*recipient, *arrive_at, severity, format!("Authority contract offered · {} · {}.",
+                            brief.title, service_reward(o.reward.credits, 0.0, None)), meta(phase));
+                        continue;
+                    }
                     // Immutable terms were frozen at this stage's event. A
-                    // counter-raid keeps its own titled line: it names the next
-                    // step. The rest merge with the same tick's like lines.
-                    if let Some(title) = op.filter(|o| o.counter_raid.is_some())
+                    // counter-raid and §den-contract the den's contract keep
+                    // their own titled lines: they name the next step. The
+                    // rest merge with the same tick's like lines.
+                    if let Some(title) = op.filter(|o| o.counter_raid.is_some() || o.founder_contract().is_some())
                         .and_then(|o| o.briefing.as_ref()).map(|b| &b.title)
                     {
                         let what = match state {
@@ -2075,10 +2226,7 @@ impl Timeline {
                             sim::OperationState::Failed => "failed",
                             _ => "expired",
                         };
-                        self.push_meta(*recipient, *arrive_at, severity, format!("{title} · {what}."), Meta {
-                            kind: Some(LogKind::Operation), group: Some(format!("operation:{operation}")),
-                            phase: Some(phase), refs, data: None, merge: None,
-                        });
+                        self.push_meta(*recipient, *arrive_at, severity, format!("{title} · {what}."), meta(phase));
                     } else {
                         self.push_merged(*recipient, *arrive_at, severity, phase, operation.to_string(), refs);
                     }
@@ -2367,6 +2515,19 @@ fn belt_discovery(world: &World, id: sim::EntityId) -> Option<String> {
 }
 
 /// §pockets: a body's name ("Veles Belt"), or its system's when it is gone.
+/// "1,000": a head count with thousands separators.
+fn head_count(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn body_name(world: &World, system: sim::EntityId, body: u32) -> String {
     world
         .systems
@@ -2509,7 +2670,6 @@ fn build_label(what: sim::BuildKind) -> &'static str {
             sim::settlement::SettlementProject::Prospect => "a settlement survey",
             sim::settlement::SettlementProject::SurfaceWorkings => "surface workings",
             sim::settlement::SettlementProject::Storehouse => "a camp storehouse expansion",
-            sim::settlement::SettlementProject::Quarters => "permanent quarters",
         },
         // §economy Part 4: an Academy course — label by profession.
         sim::BuildKind::Train { specialist } => match specialist {
@@ -2543,7 +2703,6 @@ fn build_label(what: sim::BuildKind) -> &'static str {
             sim::ModuleKind::StasisWeb => "a Stasis Web",
             sim::ModuleKind::WarpStabilizer => "a Warp Stabilizer",
             sim::ModuleKind::InterdictionField => "an Interdiction Field",
-            sim::ModuleKind::JumpDrive => "a Jump Drive",
             sim::ModuleKind::LanceArray => "a Lance Array",
         },
     }
@@ -2741,6 +2900,10 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                         ),
                     },
                 ),
+                sim::TradeRejectReason::ResearchRequired => (
+                    Warn,
+                    format!("The Hub won't sell {units} {com}: it waits for research."),
+                ),
                 sim::TradeRejectReason::NotYourSystem => (
                     Warn,
                     format!(
@@ -2774,7 +2937,8 @@ fn trade_entry(te: &TradeEvent, world: &World) -> Option<(TimelineSeverity, Stri
                 ),
                 sim::TradeRejectReason::NoCargoRoom { capacity } => (
                     Warn,
-                    format!("Not enough hold for {units} {com}: this fleet lifts {capacity} units."),
+                    // §hold-room: room per unit by class (ore 1, refined 0.5, parts 0.25, capital parts 10).
+                    format!("Not enough hold room for {units} {com} (hold {capacity})."),
                 ),
                 // `units == 0` is the reinstatement shape (no commodity involved);
                 // a real trade carries its units.
@@ -3143,6 +3307,7 @@ fn log_meta(world: &World, e: &Event, player: PlayerId) -> Meta {
             ..episode(LogKind::Raid, format!("raid:{system}"), LogPhase::Ended, both(system, f))
         },
         E::FoundingRaided { system, stolen, .. } => Meta { data: goods_data(stolen, -1), ..plain(LogKind::Raid, sys(system)) },
+        E::FoundingStashLoaded { system, goods, .. } => Meta { data: goods_data(goods, 1), ..plain(LogKind::Raid, sys(system)) },
         E::PirateEnclaveCleared { system, plunder, .. } => Meta { data: goods_data(plunder, 1), ..plain(LogKind::Raid, sys(system)) },
         E::Vendetta { stolen, .. } => Meta { data: goods_data(stolen, -1), ..plain(LogKind::Vendetta, LogRefs::default()) },
         // A rival blockade is an episode too: contested, held, lifted.
@@ -3154,6 +3319,9 @@ fn log_meta(world: &World, e: &Event, player: PlayerId) -> Meta {
             episode(LogKind::Blockade, format!("blockade:{system}"), LogPhase::Lifted, sys(system)),
         E::BlockadeRun { system, fleet: f, .. } => plain(LogKind::Blockade, both(system, f)),
         E::SystemPlundered { system, .. } => plain(LogKind::Blockade, sys(system)),
+        // §veil: the sky over a besieged world, part of its blockade's story.
+        E::VeilRaised { system, .. } | E::VeilDropped { system, .. } =>
+            Meta { group: Some(format!("blockade:{system}")), ..plain(LogKind::Blockade, sys(system)) },
         E::SystemCaptured { system, new_owner, plunder, .. } => Meta {
             data: goods_data(plunder, if *new_owner == player { 1 } else { -1 }),
             ..plain(LogKind::Capture, sys(system))
@@ -3169,7 +3337,7 @@ fn log_meta(world: &World, e: &Event, player: PlayerId) -> Meta {
         E::StationEngaged { system, .. } | E::PlatformEngaged { system, .. } => plain(LogKind::Battle, sys(system)),
         E::WrecksSalvaged { fleet: f, .. } | E::PrizeTaken { fleet: f, .. }
         | E::InterdictionRaised { fleet: f, .. } | E::InterdictionCollapsed { fleet: f, .. } => plain(LogKind::Battle, fleet(f)),
-        E::FlagshipDestroyed { .. } | E::EmplacementDestroyed { .. } | E::ModulesLost { .. } | E::SpecialistsLost { .. } =>
+        E::FlagshipDestroyed { .. } | E::EmplacementDestroyed { .. } | E::SpecialistsLost { .. } =>
             plain(LogKind::Battle, LogRefs::default()),
         // Construction: started and done are one episode per structure.
         E::BuildStarted { system, what, .. } => build(system, *what, LogPhase::Started),
@@ -3183,7 +3351,8 @@ fn log_meta(world: &World, e: &Event, player: PlayerId) -> Meta {
         | E::ShipsRefitted { system, .. } => plain(LogKind::Build, sys(system)),
         E::BuildRejected { system, .. } | E::IndustryRejected { system, .. } => plain(LogKind::Refusal, sys(system)),
         E::ProductionSuspended { system, .. } | E::ProductionResumed { system, .. } | E::Brownout { system, .. }
-        | E::PowerRestored { system, .. } | E::FoodStateChanged { system, .. } | E::NodeSupplyChanged { system, .. } =>
+        | E::PowerRestored { system, .. } | E::FoodStateChanged { system, .. } | E::NodeSupplyChanged { system, .. }
+        | E::MigrantsLanded { system, .. } | E::MigrantsTurnedBack { system, .. } =>
             plain(LogKind::Production, sys(system)),
         E::GarrisonSupplyStateChanged { system, .. } | E::ColonyHeld { system, .. } => plain(LogKind::Fleet, sys(system)),
         E::GarrisonSupplyChanged { host, .. } => plain(LogKind::Fleet, sys(host)),
@@ -3196,15 +3365,19 @@ fn log_meta(world: &World, e: &Event, player: PlayerId) -> Meta {
         E::OrderRejected { fleet: f, .. } => plain(LogKind::Refusal, fleet(f)),
         E::StationReleased { fleet: f, system, .. } => plain(LogKind::Freight, both(system, f)),
         E::StationLoaded { fleet: f, .. } => plain(LogKind::Freight, fleet(f)),
-        E::SpecialistsDelivered { system, .. } | E::ModulesDelivered { system, .. } => plain(LogKind::Freight, sys(system)),
+        E::SpecialistsDelivered { system, .. } => plain(LogKind::Freight, sys(system)),
         E::IntelGathered { system, .. } | E::ScoutContest { system, .. } | E::SurveyCompleted { system, .. } | E::ProspectCompleted { system, .. }
         | E::PocketStruck { system, .. } | E::TraitRevealed { system, .. } => plain(LogKind::Survey, sys(system)),
         E::SignalDetected { .. } | E::SignalReported { .. } => plain(LogKind::Signal, LogRefs::default()),
         E::GearFound { system, .. } => plain(LogKind::Signal, sys(system)),
         E::ResearchCompleted { .. } | E::TierUnlocked { .. } | E::ResearchStalled { .. } | E::ResearchResumed { .. }
         | E::ResearchFunded { .. } | E::DesignationSet { .. } => plain(LogKind::Research, LogRefs::default()),
-        E::ResearchGrantRefused { .. } | E::DesignationRefused { .. } | E::LeaveRefused { .. } | E::PaymentRefused { .. } =>
-            plain(LogKind::Refusal, LogRefs::default()),
+        E::ResearchGrantRefused { .. } | E::DesignationRefused { .. } | E::LeaveRefused { .. } | E::PaymentRefused { .. }
+        | E::LicenceRefused { .. } => plain(LogKind::Refusal, LogRefs::default()),
+        E::LicenceBought { .. } => plain(LogKind::Charter, LogRefs::default()),
+        E::ClaimBought { system, .. } | E::ClaimLapsed { system, .. } => plain(LogKind::Charter, sys(system)),
+        E::ClaimRefused { system, .. } => plain(LogKind::Refusal, sys(system)),
+        E::ClaimMissing { system, .. } => plain(LogKind::Refusal, sys(system)),
         E::LeaveChanged { .. } => plain(LogKind::Admin, LogRefs::default()),
         E::Trade(te) => plain(match te {
             TradeEvent::Rejected { .. } => LogKind::Refusal,
@@ -3213,7 +3386,7 @@ fn log_meta(world: &World, e: &Event, player: PlayerId) -> Meta {
             | TradeEvent::LimitCancelled { .. } | TradeEvent::SellDispatched { .. } => LogKind::Trade,
             _ => LogKind::Freight,
         }, LogRefs::default()),
-        E::SpecialistHired { .. } | E::ModulesPurchased { .. } | E::ModulesSold { .. } => plain(LogKind::Trade, LogRefs::default()),
+        E::SpecialistHired { .. } => plain(LogKind::Trade, LogRefs::default()),
         E::MerchantArrived { system, .. } | E::MerchantTraded { system, .. } | E::MerchantTradeRefused { system, .. }
         | E::MerchantDeparted { system, .. } => plain(LogKind::Trader, sys(system)),
         E::CharterStipend { credits, .. } => Meta {
@@ -3569,6 +3742,37 @@ mod tests {
         assert!(entries.iter().all(|e| !e.text.contains("[operation")));
     }
 
+    /// §privateer-contract: the privateer's contract is offered with its own
+    /// line (the client's advisor transmission), and completes with its title.
+    #[test]
+    fn the_privateers_contract_is_offered_by_name() {
+        use sim::operation::{FollowUpKind, Operation, OperationBriefing, OperationIssuer, OperationKind,
+            OperationReward, OperationScope};
+        let (mut w, a, _) = world_with_two();
+        let id = sim::OperationId(42);
+        w.operations.insert(id, Operation {
+            id, issuer: OperationIssuer::Authority, scope: OperationScope::Private { player: a },
+            kind: OperationKind::PrivateerPatrol { pos: Vec2::ZERO }, state: sim::OperationState::Offered,
+            offered_at: 0.0, starts_at: 0.0, expires_at: f64::MAX, goal: 1, progress: 0,
+            reward: OperationReward { credits: 8_000.0, ..Default::default() },
+            briefing: Some(OperationBriefing { follow_up: FollowUpKind::FounderPrivateer, title: "Eliminate Milo Quill".into(),
+                difficulty: "One raider".into(), suitable_fleets: "One Interceptor".into(), summary: String::new(), variant: 0 }),
+            encounter: None, counter_raid: None, participants: Default::default(), assigned_fleets: Default::default(),
+            contributions: Default::default(), known: Default::default(), completed_at: None, winner: None,
+            rewards_paid: Default::default(), stage: 0, hold_since: None, board_day: None,
+        });
+        let note = |state| Event::new(10.0, EventPayload::OperationUpdated {
+            operation: id, recipient: a, state, progress: 0, goal: 1, pos: Vec2::ZERO, arrive_at: 10.0,
+        });
+        let mut tl = Timeline::new();
+        tl.ingest(&[note(sim::OperationState::Offered)], &w);
+        w.operations.get_mut(&id).unwrap().winner = Some(a);
+        tl.ingest(&[note(sim::OperationState::Completed)], &w);
+        tl.promote(10.0);
+        let texts: Vec<_> = tl.digest(a).0.into_iter().map(|e| e.text).collect();
+        assert_eq!(texts, ["Authority contract offered · Eliminate Milo Quill · 8000 Cr.", "Eliminate Milo Quill · completed."]);
+    }
+
     /// §log: a week or 300 lines; past the cap, routine lines go first.
     #[test]
     fn the_journal_keeps_warnings_over_routine_lines() {
@@ -3653,6 +3857,35 @@ mod tests {
         tl.promote(1.0);
         let text = &tl.digest(a).0[0].text;
         assert!(text.contains("went ahead") && !text.contains("held"), "{text}");
+    }
+
+    /// §migration-status: a crew landing is the owner's news, filed with the
+    /// colony's production lines; a liner that found no room is a warning.
+    #[test]
+    fn migrant_landings_and_turnbacks_are_the_owners_news() {
+        let (w, a, b) = world_with_two();
+        let system = w.players[&a].home_system.unwrap();
+        let sys = w.systems.iter().find(|s| s.id == system).unwrap();
+        let body = sys.bodies.iter().find(|b| b.population > 0.0).unwrap();
+        let mut tl = Timeline::new();
+        tl.ingest(&[
+            Event::new(5.0, EventPayload::MigrantsLanded { owner: a, system, body: body.id, people: 1_000, relocated: false }),
+            Event::new(6.0, EventPayload::MigrantsLanded { owner: a, system, body: body.id, people: 1_000, relocated: true }),
+            Event::new(7.0, EventPayload::MigrantsTurnedBack { owner: a, system, body: body.id, people: 1_000 }),
+        ], &w);
+        tl.promote(7.0);
+        let lines = tl.digest(a).0;
+        let texts: Vec<_> = lines.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(texts, [
+            format!("+1,000 people · {}", body.name),
+            format!("Relocated 1,000 · {}", body.name),
+            format!("Liner turned back · {} · no housing for 1,000", body.name),
+        ]);
+        assert!(lines.iter().all(|e| e.kind == Some(LogKind::Production) && e.refs.system == Some(system)));
+        assert!(matches!(lines[2].severity, TimelineSeverity::Warn));
+        assert_eq!(tl.journal_len(b), 0, "nobody else's news");
+        assert_eq!(head_count(12_500), "12,500");
+        assert_eq!(head_count(999), "999");
     }
 }
 

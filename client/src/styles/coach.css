@@ -23,10 +23,23 @@
   line-height: 1.35;
   pointer-events: none;
 }
+/* §charter-advisor: the Charter Advisor's face beside their nudge. */
+.coach-bubble.has-face {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 300px;
+  border-color: var(--advisor-gold, #d4b46a);
+}
+.coach-bubble.has-face img {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  border: 1px solid var(--advisor-gold, #d4b46a);
+  object-fit: cover;
+}
 @keyframes coach-pulse {
   0%, 100% { box-shadow: 0 0 0 4px rgba(79, 195, 255, 0.18), 0 0 18px rgba(79, 195, 255, 0.45); }
   50% { box-shadow: 0 0 0 7px rgba(79, 195, 255, 0.08), 0 0 26px rgba(79, 195, 255, 0.6); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .coach-ring { animation: none; }
 }

@@ -1,8 +1,10 @@
 # Orbital defense stations
 
 Every system can raise one orbital defense station, level by level, from a
-Gun Platform to a Star Fortress (§gun-platform, Oct 30 2026: the founding
-charter's step-6 defense became the ladder's first level, so it has six). A station is the `orbital_defense`
+Laser Battery to a Star Fortress (§gun-platform, Oct 30 2026: the founding
+charter's step-6 defense became the ladder's first level, so it has six;
+§laser-battery, Nov 1 2026: that level is a Laser Battery on the ground,
+renamed from the Gun Platform with the same numbers). A station is the `orbital_defense`
 structure (`StructureKind::OrbitalDefense`), and its tier is its level. The
 ladder lives in `crates/sim/src/station.rs`, the battle rules in
 `crates/sim/src/tactical/v15.rs` (`docs/battle-rules-v15.md`), and every
@@ -12,16 +14,29 @@ client surface reads it through `client/src/core/derive/station.ts`.
 
 | Level | Name | Hardpoints | Hull each | Attack weight each | Reach | Research | Yard in the system | Build time |
 |---|---|---|---|---|---|---|---|---|
-| 1 | Gun Platform | 1 | 300 | 1.5 | 1.0 | none | none | 20 s |
+| 1 | Laser Battery | 1 | 300 | 1.5 | 1.0 | none | none | 20 s |
 | 2 | Defense Platform | 1 | 2,400 | 3 | 1.0 | Fire Control | none | 22 s |
 | 3 | Orbital Battery | 2 | 2,000 | 2 | 1.0 | Orbital Batteries (Weapons II) | none | 1 h |
 | 4 | Defense Station | 3 | 3,000 | 3 | 1.0 | Defense Stations (Combat Management III) | Ordnance Foundry | 6 h |
 | 5 | Citadel | 4 | 12,000 | 6.5 | 1.1 | Grand Batteries (Combat Management V) | Orbital Shipyard | 48 h |
 | 6 | Star Fortress | 6 | 32,000 | 22 | 1.2 | Star Fortress (Combat Management V) | Capital Slipway | 192 h |
 
-The Gun Platform is the crudest defense: one salvaged gun, worth about one
-Interceptor (an Interceptor has 200 hull and attack weight 3). It needs no
-research, and the charter opens it at step 6.
+The Laser Battery is the crudest defense: one laser on the ground, worth
+about one Interceptor (an Interceptor has 200 hull and attack weight 3). It
+needs no research, and the charter opens it at step 6.
+
+**On the ground** (Peter, Nov 1 2026: "a ground based defensive structure
+after the initial pirate raid"):
+- The planet scene draws it on its own ground site with the retired Defense
+  Platform's tier-1 turret art. It takes no building slot, like the Command
+  Center.
+- The System View draws nothing in orbit for it.
+- Battle replays draw it on its world's face toward the fight, and its shots
+  rise from there.
+- In the battle maths it fires from the station's spot, as every level does.
+  On the surface it would sit 640 su behind that spot with a beam reach of
+  about 550 su, so it would hardly hit anything.
+- Level 2, the Defense Platform, goes into orbit and replaces it.
 
 For scale, a corvette's attack weight is 1 and a Titan's 24, and a Titan's
 hull is 32,000. A Star Fortress has six times a Titan's hull and more than
@@ -42,13 +57,13 @@ alone. At base prices the whole ladder costs about 280,000 credits:
 ## Raising a station
 
 - The station orbits one body of the system and takes no building site
-  (§gun-platform: the charter's Gun Platform must never cost a home its
-  Academy's site). The first level goes on the body chosen in the builder. An order
+  (§gun-platform: the charter's first level must never cost a home its
+  Academy's site; the ground Laser Battery keeps a footprint of its own). The first level goes on the body chosen in the builder. An order
   that names no body goes to an uninhabited body with a free slot. Each later
   level is raised on the same body.
 - Each level is its own construction project. The station keeps fighting at
   its current level while the next one builds.
-- A level above the Gun Platform needs its research, completed (queued or
+- A level above the Laser Battery needs its research, completed (queued or
   active research never counts). It also needs its yard standing in the
   system.
 - **Pirates avoid it.** A system with a firing station counts as covered, as

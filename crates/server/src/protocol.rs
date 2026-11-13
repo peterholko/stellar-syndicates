@@ -108,6 +108,34 @@ use sim::{
 /// v45: §pockets — ProspectBelt, MineBelt `pocket`, belt pocket rows and the
 /// six pocket commodities.
 /// v34: advanced industry goods and static factory recipes/research prerequisites.
+/// v89: §privateer-contract — the Authority's contract on a founder's
+/// privateer (`OperationView.briefing.follow_up` "founder_privateer"),
+/// offered as the hunt begins, with its "Authority contract offered · …" line.
+/// v88: §watch-the-pirate — `FoundingView.raid_lost`: the colony has lost
+/// the privateer after its raid (the guide's "Watch the pirate" ends).
+/// v87: §charter-advisor — the Authority officer dealt to guide this
+/// charter (`FoundingView.advisor`, 0–2), docs/charter-advisor.md.
+/// v86: §licences — the Authority's hull licences: `CharterView.licences`
+/// (and `FoundingView.raid_over`: the raider over the colony, as heard).
+/// (each Orbital Shipyard and Capital Slipway hull: held, its price, or why
+/// it isn't for sale), `ClientMsg::BuyLicence`, the `needs_licence` build
+/// refusal and the licence log lines (docs/blueprint-licences.md).
+/// v85: §modules-as-goods — the seventeen modules are goods (`Commodity`):
+/// no module ledger (`SystemStateView.modules`), no module crates aboard
+/// (`GhostView.modules`), no `TransferModules` / `BuyModule` / `SellModule`.
+/// v84: no charter crate after the raid (`CharterCrateId` has no `raid`;
+/// the landing kit carries its goods), and two charter steps: `full_speed`
+/// (the freighter's Transit before the loot) and `answer_signal` (while
+/// Enrichment runs).
+/// v83: §stash — the den's aftermath, three steps (`repair_interceptor`,
+/// `build_tiny_freighter`, `haul_loot`): the den's loot
+/// (`FoundingView.stash`) and the hulls its blast hurt
+/// (`FoundingView.den_wounded`).
+/// v82: §migration-status — each own world's housing and liner status
+/// (`BodyView.migration`).
+/// v81: §habitat-rebase — the camp's Permanent Quarters project is gone
+/// (`SettlementProject` has no `quarters`); a Habitat level houses 8,000
+/// (`pop_cap_per_habitat_tier`).
 /// v80: §player-styles — the daily loot cap (`View.raid_losses`), the rival
 /// raid warning (`RaidSighted` lines), repeating raids (`BlockadeSystem.repeat`,
 /// `GhostView.raid_trip`) and personal pirate hideouts.
@@ -117,7 +145,11 @@ use sim::{
 /// Binary MessagePack transport: bump the WebSocket subprotocol and the
 /// client's wire version together; old text clients must refresh, not silently
 /// misinterpret binary data. Welcome retains the version for the UI contract.
-pub const PROTOCOL_VERSION: u32 = 80;
+/// v90: §claims — claims bought from the Authority (`ClientMsg::BuyClaim`,
+/// `CharterView.claims`, `SystemInfo.reserved`).
+/// v91: §sell-alloys — the trader buys Alloys: `MerchantView.buys`,
+/// `buy_price` and `buy_room` (were `ore_price` and `ore_room`).
+pub const PROTOCOL_VERSION: u32 = 91;
 
 /// Messages sent by the client to the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,7 +165,8 @@ pub enum ClientMsg {
     CollectCharterCrate { charter_crate: sim::CharterCrate },
     DevelopSettlement { system_id: EntityId, body_id: u32, project: sim::settlement::SettlementProject },
     SetRefiningReserve { system_id: EntityId, ore: u32, fuel: u32 },
-    SetFreightRoute { fleet_id: EntityId, route: Option<sim::industry::FreightRoute> },
+    /// §route-edit: `revise` keeps a run under way in its place.
+    SetFreightRoute { fleet_id: EntityId, route: Option<sim::industry::FreightRoute>, #[serde(default)] revise: bool },
     DeployOutpost { fleet_id: EntityId, system_id: EntityId, body_id: u32,
         outpost: sim::industry::OutpostKind, commodity: Commodity },
     SkimFuel { fleet_id: EntityId, system_id: EntityId },
@@ -302,6 +335,18 @@ pub enum ClientMsg {
         points: f64,
     },
 
+    /// §licences (v86): buy the Authority's licence to build `hull` at the
+    /// Hub (docs/blueprint-licences.md). It travels with its payment.
+    BuyLicence {
+        hull: ShipKind,
+    },
+
+    /// §claims (v90): buy the Authority's claim to colonize `system`. It
+    /// travels to the Hub with its payment.
+    BuyClaim {
+        system: EntityId,
+    },
+
     /// §season (v75): answer the Authority's levy rise (refused, the good is
     /// embargoed until the arrears are paid).
     AnswerLevy {
@@ -426,6 +471,27 @@ pub enum ClientMsg {
         /// debited). serde default = unfitted (old clients build stock hulls).
         #[serde(default)]
         loadout: sim::Loadout,
+        /// §reactors-drives: the reactor to build with (the recipe's Fission
+        /// Reactors become this rung's). serde default = Fission.
+        #[serde(default)]
+        reactor: sim::fuel::ReactorGrade,
+        /// The warp drive to build with (the recipe's Zephyr Drives become this
+        /// rung's); the reactor must power it. serde default = Zephyr.
+        #[serde(default)]
+        drive: sim::fuel::Drive,
+    },
+
+    /// §reactors-drives: refit `n` hulls of `ship` in a docked fleet to
+    /// `reactor` and/or `drive` (None keeps that part) at an owned or allied
+    /// Shipyard.
+    RefitEngines {
+        fleet_id: EntityId,
+        ship: ShipKind,
+        #[serde(default)]
+        reactor: Option<sim::fuel::ReactorGrade>,
+        #[serde(default)]
+        drive: Option<sim::fuel::Drive>,
+        n: u32,
     },
 
     /// §orbital-defense: refit one hardpoint of the system's station (needs an
@@ -478,6 +544,10 @@ pub enum ClientMsg {
         policy: sim::MigrationPolicy,
     },
 
+    /// §veil: owner-only — raise this system's Veil under a held blockade, or
+    /// keep it down (batteries firing, fuel kept).
+    SetVeilPolicy { system_id: EntityId, raise: bool },
+
     /// Relocate one physical workforce cohort between owned colonies.
     RelocateMigrants {
         from_system: EntityId,
@@ -523,29 +593,6 @@ pub enum ClientMsg {
         from: sim::Loadout,
         to: sim::Loadout,
         n: u32,
-    },
-
-    /// §modules Part B3: ship modules between owned/allied systems on a crate convoy.
-    TransferModules {
-        from: EntityId,
-        to: EntityId,
-        manifest: BTreeMap<sim::ModuleKind, u32>,
-    },
-
-    /// §modules Part B3: buy `n` modules from Sol (price-certain, delivery-risky) —
-    /// a crate convoy carries them to the player's `dest_system`.
-    BuyModule {
-        module: sim::ModuleKind,
-        n: u32,
-        dest_system: EntityId,
-    },
-
-    /// §modules Part B3: sell `n` modules from `from_system` to Sol — a convoy
-    /// carries them to the hub and the buy-back clears on arrival.
-    SellModule {
-        module: sim::ModuleKind,
-        n: u32,
-        from_system: EntityId,
     },
 
     /// WITHDRAW an engaged fleet from its battle (§battles-take-time) — a coarse,
@@ -895,6 +942,83 @@ pub struct CharterView {
     /// on top of `market_penalty_frac`, and the squeeze it has heard of.
     pub levy_frac: f64,
     pub squeeze: SqueezeView,
+    /// §licences (v86): every hull that needs the Authority's licence, as
+    /// heard at home: held once the receipt's light has arrived; otherwise
+    /// its price at the standing heard (a capital's at Commissioned) and why
+    /// it isn't for sale, if it isn't.
+    pub licences: Vec<LicenceView>,
+    /// §claims (v90): the Authority's claims on new colonies, as heard.
+    pub claims: ClaimsView,
+}
+
+/// §claims (v90): the claims a corporation holds, as heard at home, and what
+/// the next one costs: a system's `SystemInfo.claim_cost` × `mult` (×1.6 for
+/// each colony and claim held, the standing tariff). `at_war`: none needed.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ClaimsView {
+    pub held: Vec<ClaimHeldView>,
+    pub mult: f64,
+    pub at_war: bool,
+    /// The charter is Revoked or Proscribed: none for sale.
+    pub closed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ClaimHeldView {
+    pub system: EntityId,
+    pub lapses_at: f64,
+}
+
+impl ClaimsView {
+    pub fn heard(world: &sim::World, player: PlayerId, standing: f64, now: f64) -> Self {
+        let Some(corp) = world.players.get(&player) else { return Self::default() };
+        let receipt = sim::transit::delay(world.hub, corp.command_center, world.config.c);
+        let held: Vec<ClaimHeldView> = corp.claims.iter()
+            .filter(|(_, c)| c.bought_at + receipt <= now)
+            .map(|(&system, c)| ClaimHeldView { system, lapses_at: c.lapses_at })
+            .collect();
+        let mult = sim::claims::price(1.0, world.colonies_beyond_home(player), held.len(), standing);
+        Self { held, mult, at_war: world.is_rebel(player),
+            closed: sim::tca::charter_status(standing).exchange_closed() }
+    }
+}
+
+/// §raid-course (v86): has the news of the privateer settling over the
+/// colony's world (sim `FoundingRaid.arrived_at`) reached `player`'s command?
+/// The tutorial's "Raider over the colony" waits for it.
+pub fn raid_over_heard(world: &sim::World, player: PlayerId, now: f64) -> bool {
+    let Some(corp) = world.players.get(&player) else { return false };
+    let home = corp.home_system.and_then(|id| world.systems.iter().find(|s| s.id == id)).map(|s| s.pos);
+    corp.founding.raid.as_ref().and_then(|r| r.arrived_at).zip(home)
+        .is_some_and(|(at, home)| at + sim::transit::delay(home, corp.command_center, world.config.c) <= now)
+}
+
+/// §licences (v86): one hull's licence, as this corporation has heard it.
+#[derive(Debug, Clone, Serialize)]
+pub struct LicenceView {
+    pub hull: ShipKind,
+    pub held: bool,
+    pub price: f64,
+    /// Why it isn't for sale (`needs_research`, `needs_commissioned`,
+    /// `charter_closed`, `at_war`); absent when it is, or is held.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<sim::licence::LicenceRefusal>,
+}
+
+impl LicenceView {
+    /// Every licensed hull for `player`, at the standing it has heard.
+    pub fn heard(world: &sim::World, player: PlayerId, standing: f64, now: f64) -> Vec<Self> {
+        let Some(corp) = world.players.get(&player) else { return Vec::new() };
+        // The Authority sells at the Hub: a purchase is news when its light
+        // reaches headquarters.
+        let receipt = sim::transit::delay(world.hub, corp.command_center, world.config.c);
+        sim::licence::licensed_hulls().into_iter().map(|hull| {
+            let held = corp.licences.get(&hull).is_some_and(|at| at + receipt <= now);
+            let refusal = sim::licence::offer(hull, standing, world.hull_researched(player, hull), held, world.is_rebel(player))
+                .err().filter(|r| !matches!(r, sim::licence::LicenceRefusal::AlreadyHeld));
+            LicenceView { hull, held, price: sim::licence::shown_price(hull, standing), refusal }
+        }).collect()
+    }
 }
 
 /// §season (v75): the Authority's demands on one corporation, as heard.
@@ -1015,6 +1139,9 @@ pub struct FoundingView {
     pub recovery_site: Option<EntityId>,
     pub recovered: bool,
     pub export_dispatched: bool,
+    /// §export-follow: when the first shipment left its dock (sim time), for
+    /// the client's follow clock; None until it does.
+    pub export_departed_at: Option<f64>,
     pub protected: bool,
     pub protection_min_until: f64,
     pub protection_max_until: f64,
@@ -1044,6 +1171,14 @@ pub struct FoundingView {
     pub raid_seen: bool,
     /// §charter-v5: the report of what the raid took has reached command.
     pub raided: bool,
+    /// §raid-course (Nov 8 2026): the privateer's arrival over the colony's
+    /// world (sim `FoundingRaid.arrived_at`, when it starts stripping the
+    /// stockpile) has reached command. Until then it is still closing.
+    pub raid_over: bool,
+    /// §watch-the-pirate (v88, Peter, Nov 9 2026): after its raid, the
+    /// privateer has dropped off the colony's sensors (sim
+    /// `founding.raid_lost_at`), as heard. The guide watches it until then.
+    pub raid_lost: bool,
     /// §charter-v4: the charter's land grant has opened the rest of the home
     /// system ("Expand mining operations"); until then only the landing world.
     pub land_grant_open: bool,
@@ -1051,8 +1186,9 @@ pub struct FoundingView {
     /// the step that opens it (`founding::charter_step`). Empty once open.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub charter_gates: BTreeMap<&'static str, usize>,
-    /// §charter-v4: the privateer den's system, once the privateer's kill
-    /// report (its log names the den) has reached command.
+    /// §charter-v4: the privateer den's system. §den-retreat (Nov 12 2026):
+    /// once the hunt begins, since he went home to it after his raid (or once
+    /// his kill's report, from his log, if he died first).
     pub den: Option<EntityId>,
     /// §charter-v4: the report that the den fell has reached command.
     pub den_cleared: bool,
@@ -1062,6 +1198,10 @@ pub struct FoundingView {
     /// §traders: who flies this founder's free trader (`teo`, `ines`,
     /// `mags` or `rafi`): its name, face and voice in the client.
     pub trader: &'static str,
+    /// §charter-advisor (v87): the Authority officer dealt to guide this
+    /// charter, 0–2 (`veteran`, `lieutenant`, `frontier` in the client).
+    /// Computed, never stored ([`crate::game_loop::charter_advisor`]).
+    pub advisor: u8,
     /// §privateer-hunt: where the privateer went to ground, from the raid's
     /// report until its kill's report: the hunt's "last seen" marker.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1073,6 +1213,28 @@ pub struct FoundingView {
     /// count on.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub crates: Vec<CharterCrateView>,
+    /// §stash: what the raid took, in the den until the first freighter
+    /// loads it, then on its way home. Absent until the raid's report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stash: Option<StashView>,
+    /// §stash: the founder's fleets the den's dying blast left damaged, until
+    /// each is repaired.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub den_wounded: Vec<EntityId>,
+}
+
+/// §stash (Nov 2 2026): the den's stash. §den-stores (Nov 5 2026): the
+/// raid's take and the den's stores, two Tiny Freighter loads.
+#[derive(Debug, Clone, Serialize)]
+pub struct StashView {
+    /// All of it not home yet: at the den or aboard.
+    pub goods: BTreeMap<Commodity, u32>,
+    /// What still waits at the den for a freighter.
+    pub left: BTreeMap<Commodity, u32>,
+    /// The freighter bringing a load home, once it has loaded.
+    pub fleet: Option<EntityId>,
+    /// It reached home, or its freighter was lost on the way.
+    pub home: bool,
 }
 
 /// §player-styles: the daily loot cap, as its owner sees it.
@@ -1164,9 +1326,11 @@ pub struct MerchantView {
     pub markup: f64,
     /// What it sells: stock left, its price and the Hub mid it set out with.
     pub goods: Vec<MerchantGoodView>,
-    /// What it pays for Ferrite Ore, and how much more it will take.
-    pub ore_price: f64,
-    pub ore_room: u32,
+    /// The one good it buys (§sell-alloys, Nov 11 2026: Alloys), what it pays
+    /// a unit and how many more it will take.
+    pub buys: Commodity,
+    pub buy_price: f64,
+    pub buy_room: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1175,6 +1339,10 @@ pub struct MerchantGoodView {
     pub stock: u32,
     pub price: f64,
     pub hub_mid: f64,
+    /// §shipbuilding-overhaul: the next unit's featured price, if this is the
+    /// trader's one discount (the Interceptor's Fission Core).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub featured_price: Option<f64>,
 }
 
 impl MerchantView {
@@ -1189,9 +1357,11 @@ impl MerchantView {
                 commodity, stock,
                 price: visit.sell_price(commodity).unwrap_or(0.0),
                 hub_mid: visit.mids.get(&commodity).copied().unwrap_or(0.0),
+                featured_price: visit.featured_price(commodity),
             }).collect(),
-            ore_price: visit.buy_price(Commodity::MetallicOre).unwrap_or(0.0),
-            ore_room: visit.ore_room(),
+            buys: sim::merchant::BUYS,
+            buy_price: visit.buy_price(sim::merchant::BUYS).unwrap_or(0.0),
+            buy_room: visit.room(),
         }
     }
 }
@@ -1616,7 +1786,12 @@ pub struct SystemInfo {
     pub name: String,
     /// §explore: the public richness band slug — "poor" | "fair" | "rich".
     pub band: &'static str,
+    /// §claims (v90): the base price of the Authority's claim on it; the
+    /// asking price is this × `ClaimsView.mult`.
     pub claim_cost: f64,
+    /// §claims: a home site held for a new charter. No claim is sold on it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub reserved: bool,
     /// §node: the star is exotic (`World::exotic_bonus`). The client's star
     /// art follows this rather than its own roll of the id, since a home is
     /// never exotic.
@@ -1745,6 +1920,10 @@ pub struct BuildOptionView {
     /// all or nothing (`[commodity, units/s]`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub upkeep: Vec<(Commodity, f64)>,
+    /// §progression: an income structure; its levels follow
+    /// `build::PRODUCTION_TIER_COST_MULT` instead of the gentle curve.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub earns: bool,
 }
 
 /// Explicit level-specific structure recipe and benefit, sent with Welcome.
@@ -1802,6 +1981,15 @@ pub struct ConversionRecipeView {
 pub struct StockSlot {
     pub commodity: Commodity,
     pub units: u32,
+}
+
+/// §stores-flows: what a system's economy makes and uses of one good, per
+/// minute, from the same report as its stockpile. Owner-only.
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize)]
+pub struct FlowView {
+    pub commodity: Commodity,
+    pub made: f64,
+    pub used: f64,
 }
 
 /// The BLOCKADE at a system as a participant learns it (§contestable-territory).
@@ -1866,6 +2054,30 @@ pub struct GroundStateView {
     /// making the decision, and it would be an intel leak for anyone else.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub landing: Option<LandingOddsView>,
+    /// §veil: the system's Veil Projector, for the two siege parties (an
+    /// aurora is not subtle). `None` without a projector.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub veil: Option<VeilStateView>,
+}
+
+/// §veil (docs/veil.md): the ionised sky a besieged world can raise.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct VeilStateView {
+    /// Projector level, 1–3.
+    pub level: u32,
+    /// Raised right now: guns pin nothing, plunder loads nothing, only
+    /// Transports land.
+    pub up: bool,
+    /// 0..1 of a landing the Veil shreds in the descent at this level.
+    pub descent_loss: f64,
+    /// Units of the plant's fuel the projector burns a second while raised.
+    pub burn_per_s: f64,
+    /// The fuel it burns (`None`: a Solar Array, which can't carry it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fuel: Option<Commodity>,
+    /// Owner's standing order: raise under siege (false = forbidden). Owner-only
+    /// meaning; a besieger just sees whether it is up.
+    pub raise: bool,
 }
 
 /// §ground G4: what a landing with the marines currently in orbit would cost.
@@ -1976,6 +2188,11 @@ pub struct SystemStateView {
     /// report as `stockpile`. Empty for rivals.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub vault: Vec<StockSlot>,
+    /// §stores-flows (Nov 5 2026): owner-only — per good, what the economy
+    /// makes and uses a minute (production, food, power, upkeep, repairs,
+    /// research; never transfers), from the same report. Empty for rivals.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flows: Vec<FlowView>,
     /// Owner-only: the SOONEST in-progress build at this system (§step1), if
     /// any. Like `stockpile`, never present for a rival — build state never
     /// leaks. Kept alongside `builds` for the single-job consumers.
@@ -2020,11 +2237,6 @@ pub struct SystemStateView {
     /// §economy Part 4: the RESIDENT SPECIALIST pool — owner-only; rivals
     /// always see an empty map (your talent is private intel).
     pub specialists: BTreeMap<sim::SpecialistKind, u32>,
-    /// §modules Part B3: the system's MODULE LEDGER (kind → crates on hand) —
-    /// owner-only; rivals always see an empty map (your armory is private intel).
-    /// serde default keeps old clients parsing.
-    #[serde(default)]
-    pub modules: BTreeMap<sim::ModuleKind, u32>,
     /// §bodies: the system's PLANETS AND MOONS — roster public, deposits
     /// survey-gated, per-body owner data owner-only (see [`BodyView`]).
     pub bodies: Vec<BodyView>,
@@ -2551,9 +2763,30 @@ pub struct BodyView {
     pub migration_policy: sim::MigrationPolicy,
     /// OWNER-ONLY people already aboard liners bound here; 0 for rivals.
     pub inbound_migrants: u32,
+    /// §migration-status: OWNER-ONLY housing and liner status; None for rivals.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migration: Option<MigrationView>,
     /// §power: OWNER-ONLY, this planet's grid as reported.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub power: Option<PowerView>,
+}
+
+/// §migration-status (Nov 1 2026): one own world's immigration, from the
+/// Hub's allocation pass over the arrived report of its system.
+#[derive(Debug, Clone, Serialize)]
+pub struct MigrationView {
+    /// Housing with research (millions), as the allocation reads it.
+    pub housing: f64,
+    /// Liners bound here, and the sim time the first lands.
+    pub liners: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lands_at: Option<f64>,
+    /// Why no new liner comes here; None when it can take one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hold: Option<sim::migration::MigrationHold>,
+    /// The corporation's next liner comes here, allocated at this sim time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_at: Option<f64>,
 }
 
 /// §power: one planet's grid — MW drawn against MW available, the factor on
@@ -2904,6 +3137,9 @@ pub struct GroundRecordHeader {
     /// a landing can see how dug-in the ground was.
     pub garrison_tiers: u32,
     pub suppression_at_drop: f64,
+    /// §veil: marines lost in the descent — participant only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub descent_losses: Option<u32>,
 }
 
 /// An incremental update for one landing record.
@@ -2969,6 +3205,14 @@ pub struct AnchorView {
 #[derive(Debug, Clone, Copy, Serialize, serde::Deserialize)]
 pub struct CompCount {
     pub kind: ShipKind,
+    pub count: u32,
+}
+
+/// §reactors-drives: `count` engine-bearing hulls on `reactor` and `drive`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriveView {
+    pub reactor: sim::fuel::ReactorGrade,
+    pub drive: sim::fuel::Drive,
     pub count: u32,
 }
 
@@ -3212,6 +3456,14 @@ pub struct GhostView {
     pub fuel_capacity: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub helium3: Option<f64>,
+    /// §shipbuilding-overhaul: the Helium Cores' tank.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helium3_capacity: Option<f64>,
+    /// §shipbuilding-overhaul: owner-only, the hulls aboard by warp-core grade
+    /// (one tank per grade's fuel: `uranium`, `fuel` = Deuterium, `helium3`,
+    /// `antimatter`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drives: Option<Vec<DriveView>>,
     /// §fuel-overhaul: the fission store (Uranium, Slow warp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uranium: Option<f64>,
@@ -3222,6 +3474,21 @@ pub struct GhostView {
     pub antimatter: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub antimatter_capacity: Option<f64>,
+    /// §shipbuilding-overhaul Phase 5: owner-only, the magazines — Torpedoes
+    /// for the racks, Slugs for the drivers, Beam Crystals in the beam guns —
+    /// with what the guns aboard hold; absent when nothing aboard takes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub torpedoes: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub torpedoes_capacity: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slugs: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slugs_capacity: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crystals: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crystals_capacity: Option<f64>,
     /// §syndicate-projects (R6): owner-only, the Freight bonus on player
     /// freighter holds (absent at 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3308,10 +3575,6 @@ pub struct GhostView {
     /// non-default stacks; the unfitted remainder = composition − Σ these.
     #[serde(default)]
     pub loadouts: Option<Vec<LoadoutStack>>,
-    /// §modules Part B3: module CRATES aboard a transport convoy — fogged like
-    /// `passengers` (empty = none visible). Part of the sensor-gated manifest.
-    #[serde(default)]
-    pub modules: BTreeMap<sim::ModuleKind, u32>,
     /// The dark fleet's DETECTION SIGNATURE (§Part 4) at the retarded moment — how
     /// LOUD it is (1.0 = a lone raider at full speed). Present only for DARK
     /// fleets; drives the client's flare/plume treatment. `None` for broadcasters.
@@ -4210,5 +4473,65 @@ impl SeasonView {
         }
         (self.ending.as_ref().map(|e| e.at.to_bits()), self.ends_at.map(f64::to_bits)).hash(&mut h);
         h.finish()
+    }
+}
+
+#[cfg(test)]
+mod raid_over_tests {
+    use super::*;
+
+    #[test]
+    fn the_raider_is_over_the_colony_only_once_its_arrival_is_heard() {
+        let mut w = sim::World::new(sim::SimConfig::for_players(4545, 4));
+        let me = PlayerId(7202);
+        w.step(&[sim::Command::AddPlayer { id: me, name: "Founder".into() }]);
+        assert!(!raid_over_heard(&w, me, w.time), "no raid, nothing over the colony");
+        let home = w.players[&me].home_system.and_then(|id| w.systems.iter().find(|s| s.id == id)).unwrap().pos;
+        let arrived = w.time;
+        w.players.get_mut(&me).unwrap().founding.raid = Some(sim::founding::FoundingRaid {
+            phase: sim::founding::RaidPhase::Inbound, base: home, lurk: home, arrived_at: None,
+            allowance: Default::default(), stolen: Default::default(), loading_credit: 0.0,
+        });
+        assert!(!raid_over_heard(&w, me, arrived + 10_000.0), "inbound: still closing, however long");
+        w.players.get_mut(&me).unwrap().founding.raid.as_mut().unwrap().arrived_at = Some(arrived);
+        let light = sim::transit::delay(home, w.players[&me].command_center, w.config.c);
+        assert!(!raid_over_heard(&w, me, arrived + light * 0.5) || light == 0.0, "its arrival is still on its way home");
+        assert!(raid_over_heard(&w, me, arrived + light + 1e-6), "heard: over the colony");
+    }
+}
+
+#[cfg(test)]
+mod licence_view_tests {
+    use super::*;
+    use sim::licence::LicenceRefusal;
+
+    #[test]
+    fn a_licence_shows_held_only_when_the_receipt_reaches_home() {
+        let mut w = sim::World::new(sim::SimConfig::for_players(4343, 4));
+        let me = PlayerId(7101);
+        w.step(&[sim::Command::AddPlayer { id: me, name: "Licensee".into() }]);
+        let heard = |w: &sim::World, now: f64| LicenceView::heard(w, me, 100.0, now);
+        let destroyer = |views: Vec<LicenceView>| views.into_iter().find(|v| v.hull == ShipKind::Destroyer).unwrap();
+        let before = destroyer(heard(&w, w.time));
+        assert!(!before.held);
+        assert_eq!(before.refusal, Some(LicenceRefusal::NeedsResearch), "research is the skill, first");
+        assert!((before.price - sim::licence::price(ShipKind::Destroyer, 100.0)).abs() < 1e-6);
+        assert_eq!(heard(&w, w.time).len(), sim::licence::licensed_hulls().len());
+
+        w.players.get_mut(&me).unwrap().research.completed.insert("hull_line_iv_destroyer".into());
+        let for_sale = destroyer(heard(&w, w.time));
+        assert!(!for_sale.held && for_sale.refusal.is_none(), "researched: for sale");
+
+        let sold = w.time;
+        w.players.get_mut(&me).unwrap().licences.insert(ShipKind::Destroyer, sold);
+        let receipt = sim::transit::delay(w.hub, w.players[&me].command_center, w.config.c);
+        assert!(receipt > 0.0);
+        assert!(!destroyer(heard(&w, sold + receipt * 0.5)).held, "the receipt is still on its way");
+        let held = destroyer(heard(&w, sold + receipt + 1e-6));
+        assert!(held.held && held.refusal.is_none());
+
+        let titan = heard(&w, w.time).into_iter().find(|v| v.hull == ShipKind::Titan).unwrap();
+        assert!((titan.price - sim::licence::price(ShipKind::Titan, sim::tca::TCA_COMMISSIONED_AT)).abs() < 1e-3,
+            "a capital is shown at the Commissioned price");
     }
 }

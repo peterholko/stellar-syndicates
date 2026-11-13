@@ -49,14 +49,9 @@ impl PendingTransaction {
         use EventPayload::*;
         let (owner, details) = match &event.payload {
             Trade(trade) => (trade.player(), TransactionDetails::Trade { trade: *trade }),
-            ModulesPurchased { owner, kind, n, dest, unit_price } => (*owner,
-                TransactionDetails::Purchase { item: kind.slug().into(), units: *n,
-                    unit_price: *unit_price, fees: 0.0, system: Some(*dest), fleet: None }),
-            ModulesSold { owner, kind, n, unit_price } => (*owner,
-                TransactionDetails::Sale { item: kind.slug().into(), units: *n, unit_price: *unit_price }),
-            SpecialistHired { owner, kind, dest } => (*owner,
+            SpecialistHired { owner, kind, dest, cost } => (*owner,
                 TransactionDetails::Purchase { item: kind.slug().into(), units: 1,
-                    unit_price: sim::specialist::SPECIALIST_HIRE_COST, fees: 0.0,
+                    unit_price: if *cost > 0.0 { *cost } else { sim::specialist::SPECIALIST_HIRE_COST }, fees: 0.0,
                     system: Some(*dest), fleet: None }),
             HubFuelPurchased { owner, fleet, commodity, units, unit_price, penalty } => (*owner,
                 TransactionDetails::Purchase { item: commodity.slug().into(), units: *units,

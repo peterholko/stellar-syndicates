@@ -1,0 +1,68 @@
+{
+  "name": "computation-03",
+  "mode": "built-in image_gen",
+  "source_brief": "docs/research-emblem-sheets.md",
+  "prompt": "Use case: stylized-concept. Asset type: a sheet of six transparent research emblems for Stellar Syndicates, a premium dark sci-fi strategy game. They join an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw SIX new emblems. Do not copy any of Image 1's six motifs, and ignore Image 1's grey backdrop.\nField: Computation. Colour, all six badges: pale silver-white line work with one small white star glint; no other colour. Everything else stays in the family's navy, charcoal and silver.\nLayout: landscape 1536 x 1024 canvas, three columns and two rows, exactly Image 1's arrangement. Six identical hexagon badges, each about 450 px tall, centred in its own 512 x 512 cell, with clear empty space between badges and around the sheet. Badges never touch or overlap.\nBadge (every one the same): a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. Each motif sits inside its rim, centred, about 70% of the face's width. Nothing crosses a rim.\nMotifs, reading left to right, top row then bottom row:\n1. Top left: A small hourglass beside a contact track of dotted marks that fade out one by one.\n2. Top centre: A fleet chevron trailing a long glowing wake behind it, a small fuel gauge dial beside the wake.\n3. Top right: A great ring-shaped sensor station like a watchful eye, many small lenses set around its rim, a white star glint at its centre.\n4. Bottom left: A small scout ship circling a star on a thin orbit line, sweeping it with a pale survey cone.\n5. Bottom centre: An angular warship whose cast shadow below it has the boxy shape of a freighter.\n6. Bottom right: A round scanning lens cracked across, its beam stopped by a small shield held in front of it.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. Each motif is one clear subject that still reads at 48 px: a few large forms, restrained small detail. The six must look clearly different from each other at a glance: vary silhouette, scale and composition, never the same object twice.\nBackground: genuinely transparent PNG with real alpha everywhere outside the hexagons. No drop shadow, outer glow, grey backdrop, panel, vignette, cell borders or grid lines.\nConstraints: exactly six badges. No text, letters, numbers, Roman numerals, captions, labels, logos, watermark, frames or UI.",
+  "keys": [
+    "comp_watch_iv_standing_watch",
+    "comp_shadow_iv_wake_analysis",
+    "comp_watch_v_panopticon",
+    "comp_watch_v_survey_corps",
+    "comp_shadow_v_signature_mimicry",
+    "comp_shadow_v_counter_intel"
+  ],
+  "references": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png",
+      "sha256": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+    }
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-deba9f7a-9662-482f-9147-5b895ab7beb5.png",
+  "edits": [],
+  "verification": {
+    "width": 1536,
+    "height": 1024,
+    "hasAlpha": true,
+    "badges": [
+      {
+        "left": 136,
+        "top": 83,
+        "width": 368,
+        "height": 409
+      },
+      {
+        "left": 584,
+        "top": 83,
+        "width": 369,
+        "height": 409
+      },
+      {
+        "left": 1032,
+        "top": 83,
+        "width": 369,
+        "height": 409
+      },
+      {
+        "left": 136,
+        "top": 532,
+        "width": 368,
+        "height": 409
+      },
+      {
+        "left": 584,
+        "top": 532,
+        "width": 369,
+        "height": 409
+      },
+      {
+        "left": 1032,
+        "top": 532,
+        "width": 369,
+        "height": 409
+      }
+    ],
+    "sha256": "35abf30caf7ef071ac384fc738e5cbf60da498d681d872d877f1df70c10e117b",
+    "nativeBytesPreserved": true
+  }
+}

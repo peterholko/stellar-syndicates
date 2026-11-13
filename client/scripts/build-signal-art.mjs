@@ -20,6 +20,10 @@ export const SIGNAL_FRAME_WIDTHS = [768, 1280];
  * centred 16:9 window from every master, as a fraction of its width. */
 export const SIGNAL_CARD_CROP = 0.62;
 export const SIGNAL_CARD_WIDTHS = [384, 640];
+/** §signal-report: the aftermath paintings (art-src/signals-aftermath-v1),
+ * the report panel's full frame; no card crops. A master not yet delivered
+ * is skipped; the panel shows the card painting meanwhile. */
+export const SIGNAL_AFTERMATH_DIR = "signals-aftermath-v1";
 
 export async function buildSignalArt() {
   const outputRoot = path.join(clientRoot, "public/art/derived/signals/v1");
@@ -60,5 +64,26 @@ export async function buildSignalArt() {
       written++;
     }
   }
-  return { sources, pending: SIGNAL_ART.length - sources, written };
+  // §signal-report: the aftermath masters, full frames only.
+  const aftermathRoot = path.join(clientRoot, "public/art/derived/signals/aftermath-v1");
+  await mkdir(aftermathRoot, { recursive: true });
+  let aftermath = 0;
+  for (const slug of SIGNAL_ART) {
+    const source = path.join(clientRoot, `art-src/${SIGNAL_AFTERMATH_DIR}/${slug}.png`);
+    let sourceTime;
+    try { sourceTime = (await stat(source)).mtimeMs; } catch { continue; }
+    aftermath++;
+    const meta = await sharp(source).metadata();
+    if (Math.abs(meta.width / meta.height - 16 / 9) > 0.01 || meta.width < 1280) {
+      throw new Error(`Signal aftermath paintings are 16:9, at least 1280 px wide: ${source}`);
+    }
+    for (const width of SIGNAL_FRAME_WIDTHS) {
+      const output = path.join(aftermathRoot, `${slug}-${width}.webp`);
+      try { if ((await stat(output)).mtimeMs >= Math.max(sourceTime, script)) continue; } catch { /* write it */ }
+      await sharp(source).resize({ width, height: Math.round(width * 9 / 16), fit: "cover" })
+        .webp({ quality: 86, effort: 5 }).toFile(output);
+      written++;
+    }
+  }
+  return { sources, pending: SIGNAL_ART.length - sources, aftermath, aftermathPending: SIGNAL_ART.length - aftermath, written };
 }

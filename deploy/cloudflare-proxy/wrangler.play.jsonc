@@ -16,10 +16,6 @@
     {
       "pattern": "www.stellarsyndicates.com",
       "custom_domain": true
-    },
-    {
-      "pattern": "stellar-syndicates.surviveperilous.com",
-      "custom_domain": true
     }
   ],
   "vpc_networks": [

@@ -186,7 +186,7 @@ async fn postgres_admin_dashboard_records_sign_ins_play_commands_and_the_charter
             credits: 2500.0,
             valuation: 9000.0,
             // Founded ten game-minutes ago; the mine and the raid since; the
-            // ore sale to the trader is next.
+            // sale to the trader is next.
             tutorial: Some(TutorialProgress { reached: vec![
                 (Step::Founded, Some(3000.0)),
                 (Step::Mine, Some(3300.0)),
@@ -348,8 +348,8 @@ async fn postgres_admin_dashboard_records_sign_ins_play_commands_and_the_charter
     assert_eq!(stage("entered")["waiting_active"], 1, "the alt signed up but has not played");
     assert_eq!(stage("mine")["reached"], 1);
     assert_eq!(stage("sell_ore")["reached"], 0);
-    assert_eq!(stage("sell_ore")["waiting_active"], 1, "the pilot's ore sale is next");
-    assert_eq!(stage("sell_ore")["label"], "Sell ore to the trader");
+    assert_eq!(stage("sell_ore")["waiting_active"], 1, "the pilot's sale to the trader is next");
+    assert_eq!(stage("sell_ore")["label"], "Sell Alloys to the trader");
     assert_eq!(row["tutorial"]["next"], "sell_ore");
     assert_eq!((row["in_funnel"].as_bool(), row["active"].as_bool(), row["operator"].as_bool()), (Some(true), Some(true), Some(false)));
     let ops_row = overview["players"].as_array().unwrap().iter().find(|p| p["login"] == "ops@example.com").unwrap();
@@ -361,7 +361,7 @@ async fn postgres_admin_dashboard_records_sign_ins_play_commands_and_the_charter
     assert_eq!(charter["steps"][2]["key"], "founded");
     assert!(charter["steps"][2]["at"].is_string());
     assert!(charter["steps"][7]["at"].is_string(), "the raid's report is in");
-    assert!(charter["steps"][8]["at"].is_null(), "no ore sale yet");
+    assert!(charter["steps"][8]["at"].is_null(), "no sale to the trader yet");
 
     // Asking again writes nothing new.
     call(&app, "GET", "/api/admin/overview", Some(&ops), None).await;

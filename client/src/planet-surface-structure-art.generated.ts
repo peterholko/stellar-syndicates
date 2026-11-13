@@ -24,6 +24,7 @@ export const SURFACE_STRUCTURE_TIERS: Readonly<Record<string, number>> = {
   "sensor_array": 6,
   "service_berth": 1,
   "smelter": 6,
+  "veil_projector": 3,
   "volatile_harvester": 6,
   "warehouse": 6
 };

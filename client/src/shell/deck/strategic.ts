@@ -1,5 +1,6 @@
 import { isPlayerFreighter } from "../../protocol";
 import {
+  commodityRoom,
   recordForReport,
   guardCapable,
   shipKindLabel,
@@ -12,13 +13,18 @@ import {
   fmtBuildDur,
   fmtDur,
   informationDelay,
+  operationAbandonable,
+  isFounderContract,
   operationCopy,
   operationHullArt,
   operationIcon,
+  operationLeft,
   operationReward,
   operationTitle,
 } from "../../core/derive/format";
 import { nearestSystemName, systemName } from "../../core/derive/geo";
+import { licenceForSale, licenceNote } from "../../core/derive/market";
+import { CLAIM_TIP, claimsHeld } from "../../core/derive/claims";
 import {
   battleCommandDelay,
 } from "../../core/derive/orders";
@@ -56,12 +62,14 @@ import { sheetFingerprint } from "../signature";
 import type { CoreContext } from "../types";
 import type { DeckRoute } from "./router";
 import { handoffHtml, handleHandoffAction } from "./handoff";
+import { charterLedgerHtml } from "./ledger";
 import { commsAction, commsHtml } from "./comms";
 import { INVITES_MAX, inviteLink, presenceText } from "../../core/derive/social";
-import { explorationHtml, explorationFocused, handleExplorationAction } from "../exploration";
+import { explorationHtml, explorationLinkHtml, handleExplorationAction } from "../exploration";
 
 interface StrategicHooks {
   go(route: DeckRoute): void;
+  replace?(route: DeckRoute): void;
   back(): void;
   notice(html: string): void;
   openBattleViewer(id: string): void;
@@ -77,6 +85,13 @@ const MIDGAME_COPY: Record<import("../../protocol").MidgameStage, [string, strin
   trade_network: ["Trade network", "Connect specialized holdings through contracts, freight, and escorted freighters."],
   contested_expansion: ["Contested expansion", "Public objectives and scarce sites now put your plans against rival corporations."],
   regional_power: ["Regional power", "Hold strategic nodes and organize multi-stage syndicate operations."],
+};
+
+type OperationTab = "active" | "available" | "history";
+const OPERATION_TABS: Record<OperationTab, [string, string]> = {
+  active: ["Active", "No active contracts."],
+  available: ["Available", "No offers yet."],
+  history: ["History", "No finished contracts."],
 };
 
 type RankCat = {
@@ -106,6 +121,7 @@ const RANK_CATS: RankCat[] = [
 export class DeckStrategicRoutes {
   private routeSignature = "";
   private rankCategory = "valuation";
+  private operationTab: OperationTab | null = null;
   private operationFleets = new Map<string, string>();
   private operationCharges = new Map<string, string>();
   private readonly withdrawal = new BattleWithdrawPrompt();
@@ -125,12 +141,13 @@ export class DeckStrategicRoutes {
     const signature = sheetFingerprint([
       route,
       this.rankCategory,
+      this.operationTab,
       this.ctx.state.simTime,
       this.ctx.state.operations, this.ctx.state.board,
       this.ctx.state.explorationSites, this.ctx.state.selectedExplorationSiteId,
       this.ctx.state.explorationJournal,
       this.ctx.state.midgameStage,
-      this.ctx.state.founding, this.ctx.state.systems, this.ctx.state.research,
+      this.ctx.state.founding, this.ctx.state.systems, this.ctx.state.research, this.ctx.state.charterLedger,
       this.ctx.state.selectedShipId,
       this.ctx.state.syndicate,
       this.ctx.state.syndicateInvites,
@@ -152,8 +169,8 @@ export class DeckStrategicRoutes {
     if (!force && signature === this.routeSignature) return true;
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
     this.routeSignature = signature;
-    if (route.name === "operations") setHtml(this.root, explorationHtml(this.ctx.state)
-      + (explorationFocused(this.ctx.state) ? "" : this.operationsHtml(route.query?.contract)));
+    if (route.name === "operations") setHtml(this.root, this.exploring(route)
+      ? explorationHtml(this.ctx.state) : this.operationsHtml(route.query?.contract));
     else if (route.name === "syndicate") setHtml(this.root, this.syndicateHtml());
     else if (route.name === "comms") setHtml(this.root, commsHtml(this.ctx.state, route.query));
     else if (route.name === "faction") setHtml(this.root, this.factionHtml());
@@ -168,6 +185,14 @@ export class DeckStrategicRoutes {
       if (commsAction(button, this.ctx, route, this.hooks.go)) { this.invalidate(); return true; }
     }
     if (route.name === "operations" && handleExplorationAction(button, this.ctx)) {
+      // §ops-compact: a tab, or ← Contacts, opens the exploration view in place of the page.
+      const act = button.dataset.exploreAct ?? "";
+      if ((act.startsWith("tab-") || act === "back") && route.query?.view !== "exploration") {
+        const to: DeckRoute = { name: "operations", query: { view: "exploration" } };
+        if (route.query?.site) (this.hooks.replace ?? this.hooks.go)(to);
+        else this.hooks.go(to);
+        return true;
+      }
       this.invalidate(); this.render(route, true); return true;
     }
     if (route.name === "operations" && handleHandoffAction(button, this.ctx, {
@@ -175,6 +200,17 @@ export class DeckStrategicRoutes {
     })) return true;
     const action = button.dataset.deckAct;
     if (action === "open-signals") { this.hooks.go({ name: "signals" }); return true; }
+    if (action === "operations-tab") {
+      const tab = button.dataset.tab;
+      if (tab === "active" || tab === "available" || tab === "history") this.operationTab = tab;
+      this.invalidate(); this.render(route, true); return true;
+    }
+    // §charter-ledger: a goal's button opens the screen that advances it.
+    if (action === "ledger-open") {
+      const to = button.dataset.route;
+      if (to === "syndicate" || to === "market" || to === "research") this.hooks.go({ name: to });
+      return true;
+    }
     if (!action?.startsWith("strategic-")) return false;
     if (action === "strategic-rank") {
       if (button.dataset.category) this.rankCategory = button.dataset.category;
@@ -191,6 +227,11 @@ export class DeckStrategicRoutes {
     if (action.startsWith("strategic-operation-")) this.operationAction(action, button);
     else if (action.startsWith("strategic-syndicate-")) this.syndicateAction(action, button);
     else if (action === "strategic-faction-pay") this.payReinstatement();
+    // §licences: the order travels to the Hub with its payment.
+    else if (action === "strategic-buy-licence" && button.dataset.hull) {
+      this.ctx.send({ type: "BuyLicence", hull: button.dataset.hull as ShipKind });
+      this.hooks.notice(`<b>Licence order sent</b> · ${esc(shipKindLabel(button.dataset.hull as ShipKind))} → the Authority at the Hub.`);
+    }
     // §season: answer the Authority's demands from the Faction page.
     else if (action === "strategic-levy") {
       this.ctx.send({ type: "AnswerLevy", accept: button.dataset.accept === "1" });
@@ -259,23 +300,38 @@ export class DeckStrategicRoutes {
 
   invalidate(): void { this.routeSignature = ""; }
 
+  /** Exploration opens from its row on the page, or from a contact. */
+  private exploring(route: DeckRoute): boolean {
+    return route.query?.view === "exploration" || !!this.ctx.state.selectedExplorationSiteId;
+  }
+
   private operationsHtml(contract?: string): string {
     const [stage, stageCopy] = MIDGAME_COPY[this.ctx.state.midgameStage];
     const selected = this.ctx.state.operations.find(o => o.id === contract);
     const counterRaids = this.ctx.state.operations.filter(o => o !== selected
       && o.briefing?.follow_up.startsWith("counter_raid_") && ["offered", "active"].includes(o.state));
+    // §privateer-contract: the charter's own contracts, first while open.
+    const charter = this.ctx.state.operations.filter(o => o !== selected && isFounderContract(o)
+      && ["offered", "active"].includes(o.state));
     // §contract-board: today's contracts have their own section.
     const board = boardSummary(this.ctx.state, liveSimTime());
     // §signals: their own pop-out; one line here leads to it.
     const signals = this.ctx.state.signals
       ? `<button type="button" class="deck-signals-link" data-deck-act="open-signals"><b>Signals</b><span>${esc(signalsSummary(this.ctx.state.signals, liveSimTime()))}</span><span aria-hidden="true">›</span></button>` : "";
     const others = this.ctx.state.operations.filter(o => o !== selected && !counterRaids.includes(o)
-      && !board?.contracts.includes(o));
+      && !charter.includes(o) && !board?.contracts.includes(o));
     const available = others.filter((o) => o.state === "offered" || (o.state === "active" && !o.joined));
     const active = others.filter((o) => o.state === "active" && o.joined);
     const history = others.filter((o) => !["offered", "active"].includes(o.state)).sort((a, b) => b.reported_at - a.reported_at).slice(0, 12);
-    const group = (title: string, rows: OperationView[], empty = "") => `<section class="deck-section"><header><div><h3>${esc(title)}</h3>${rows.length ? `<p>${rows.length} arrived record${rows.length === 1 ? "" : "s"}.</p>` : ""}</div><b>${rows.length}</b></header>${rows.map((o) => this.operationCard(o)).join("") || `<div class="deck-empty-inline">${esc(empty)}</div>`}</section>`;
-    return `<section class="deck-page deck-operations"><header class="deck-page__lead"><span>Contracts · objectives · shared projects</span><h2>${esc(stage)}</h2><p>${esc(stageCopy)}</p></header>${selected ? group(selected.briefing?.follow_up.startsWith("counter_raid_") ? "Counterattack" : "Funding contract", [selected]) : ""}${counterRaids.length ? group("Defend home · strike back", counterRaids) : ""}${handoffHtml()}${signals}${board ? `<section class="deck-section deck-board"><header><div><h3>Contract board</h3><p>${esc(boardLine(board))}</p></div><b>${board.contracts.length}</b></header>${board.contracts.map((o) => this.operationCard(o)).join("") || `<div class="deck-empty-inline">Today's contracts are on their way from the Market Hub.</div>`}</section>` : ""}${group("Active contracts", active, "No operation is currently assigned.")}${group("Available contracts", available, "No arrived offers. The board updates when fresh reports reach command.")}${history.length ? group("History", history) : ""}</section>`;
+    const group = (title: string, rows: OperationView[]) => `<section class="deck-section"><header><div><h3>${esc(title)}</h3>${rows.length ? `<p>${rows.length} arrived record${rows.length === 1 ? "" : "s"}.</p>` : ""}</div><b>${rows.length}</b></header>${rows.map((o) => this.operationCard(o)).join("")}</section>`;
+    // §ops-compact (Peter, Oct 31 2026): one contract list at a time, as on
+    // mobile; offers show first when nothing is active.
+    const lists: Record<OperationTab, OperationView[]> = { active, available, history };
+    const tab = this.operationTab ?? (active.length || !available.length ? "active" : "available");
+    const tabs = `<nav class="deck-tabs deck-operations__tabs" aria-label="Contracts">${(Object.keys(OPERATION_TABS) as OperationTab[]).map((t) =>
+      `<button type="button" data-deck-act="operations-tab" data-tab="${t}" aria-selected="${t === tab}">${OPERATION_TABS[t][0]}<em>${lists[t].length || ""}</em></button>`).join("")}</nav>`;
+    const contracts = `<section class="deck-section deck-contracts">${tabs}${lists[tab].map((o) => this.operationCard(o)).join("") || `<div class="deck-empty-inline">${OPERATION_TABS[tab][1]}</div>`}</section>`;
+    return `<section class="deck-page deck-operations"><header class="deck-page__lead"><h2 title="${escAttr(stageCopy)}">${esc(stage)}</h2></header>${selected ? group(selected.briefing?.follow_up.startsWith("counter_raid_") ? "Counterattack" : "Funding contract", [selected]) : ""}${charter.length ? group("Authority contract", charter) : ""}${counterRaids.length ? group("Defend home · strike back", counterRaids) : ""}${handoffHtml()}${charterLedgerHtml(this.ctx.state)}${signals}${explorationLinkHtml(this.ctx.state)}${board ? `<section class="deck-section deck-board"><header><div><h3>Contract board</h3><p>${esc(boardLine(board))}</p></div><b>${board.contracts.length}</b></header>${board.contracts.map((o) => this.operationCard(o)).join("") || `<div class="deck-empty-inline">Today's contracts are on their way from the Market Hub.</div>`}</section>` : ""}${contracts}</section>`;
   }
 
   private operationCard(operation: OperationView): string {
@@ -283,7 +339,9 @@ export class DeckStrategicRoutes {
     const selected = this.selectedOwnFleet();
     const actions: string[] = [];
     if ((operation.state === "offered" || (operation.state === "active" && !operation.joined)) && !operation.joined) {
-      actions.push(actionButton("strategic-operation-accept", "Accept", operation.id, "is-primary"));
+      const accept = actionButton("strategic-operation-accept", "Accept", operation.id, "is-primary");
+      // §privateer-contract: the guide rings the charter's contract's Accept.
+      actions.push(isFounderContract(operation) ? accept.replace("<button ", `<button data-coach="contract-accept" `) : accept);
     }
     if (operation.state === "active" && operation.joined) {
       if (operation.briefing) actions.push(this.followUpControls(operation));
@@ -295,11 +353,12 @@ export class DeckStrategicRoutes {
         const hostSystem = operation.kind.system;
         const hostOwned = this.ctx.state.systems.find((system) => system.id === hostSystem)?.owner === this.ctx.state.playerId;
         if (hostOwned) actions.push(`<label class="deck-operation-contribution"><span>Local contribution</span><input id="deck-op-units-${escAttr(operation.id)}" type="number" min="1" step="1" value="25"><button type="button" data-deck-act="strategic-operation-contribute" data-operation="${escAttr(operation.id)}">Commit goods</button></label>`);
-      } else actions.push(actionButton("strategic-operation-abandon", "Abandon", operation.id, "is-danger"));
+      } else if (operationAbandonable(operation)) actions.push(actionButton("strategic-operation-abandon", "Abandon", operation.id, "is-danger"));
     }
     const hullArt = operationHullArt(operation);
-    const left = Math.max(0, operation.expires_at - liveSimTime());
-    const time = operation.state === "completed" ? "complete" : `${left >= 3_600 ? fmtDays(left) : fmtDur(left)} remaining`;
+    const left = operationLeft(operation, liveSimTime());
+    const time = operation.state === "completed" ? "complete" : left == null ? "no deadline"
+      : `${left >= 3_600 ? fmtDays(left) : fmtDur(left)} remaining`;
     const brief = operation.briefing;
     const readiness = brief ? `<div class="deck-operation__brief"><b>${esc(brief.difficulty)}</b><span>${esc(brief.suitable_fleets)}</span></div>` : "";
     return `<article class="deck-operation is-${operation.state}">${hullArt ? `<img src="${escAttr(hullArt)}" alt="">` : ""}<div><header><span>${operationIcon(operation)}<b>${esc(operationTitle(operation))}</b></span><em>${esc(human(operation.state))}</em></header>${readiness}<p>${esc(operationCopy(operation))}</p><div class="deck-meter"><i style="width:${pct.toFixed(1)}%"></i></div><footer><span>${operation.progress}/${operation.goal}</span><span>${esc(operationReward(operation))}</span><span>${esc(time)}</span><span class="deck-stale-value">${esc(informationDelay(Math.max(0, liveSimTime() - operation.reported_at)))}</span></footer>${actions.length ? `<div class="deck-operation__actions">${actions.join("")}</div>` : ""}</div></article>`;
@@ -322,14 +381,13 @@ export class DeckStrategicRoutes {
     const warnings = fleet ? dispatchWarnings(fleet, escort && o.kind.kind === "freight_escort" ? o.kind.origin : o.target_pos) : [];
     const charge = charges.find(g => g.id === chargeId);
     if (charge) warnings.push(...dispatchWarnings(charge, o.target_pos).map(w => `Freighter: ${w}`));
-    if (fleet && o.kind.kind === "rescue_salvage" && fleetReadiness(fleet).cargoFree < o.kind.units)
-      warnings.push(`Recovery needs ${o.kind.units} free cargo. Unload first.`);
+    // §hold-room: the room each good fills, not a count of units.
+    if (fleet && o.kind.kind === "rescue_salvage" && fleetReadiness(fleet).holdFree < o.kind.units * commodityRoom(o.kind.commodity))
+      warnings.push(`Recovery needs room for ${o.kind.units}. Unload first.`);
     if (fleet && o.kind.kind === "prize_recovery") {
-      // Mirrors MODULE_CONVOY_BERTHS: equipment uses crate berths, not bulk cargo.
-      const capacity = 12 * (fleet.composition?.filter(c => isPlayerFreighter(c.kind)).reduce((n, c) => n + c.count, 0) ?? (isPlayerFreighter(fleet.kind) ? 1 : 0));
-      const aboard = Object.values(fleet.modules ?? {}).reduce((n, count) => n + count, 0);
-      const needed = o.kind.prize === "breacher_cache" ? 4 : 8;
-      if (capacity - aboard < needed) warnings.push(`Needs ${needed} free module berths. Dock at an owned system to unload.`);
+      // §modules-as-goods: a cache's modules ride in the hold like any cargo.
+      const needed = o.kind.prize === "breacher_cache" ? 4 : 8; // modules, a quarter room each
+      if (fleetReadiness(fleet).holdFree < needed) warnings.push(`Needs room for ${needed} modules. Unload first.`);
     }
     return `<div class="deck-operation-dispatch">${select(fleets, chosen, "operation-fleet", survey ? "Scout" : combat ? "Combat fleet" : "Freighter")}${escort ? select(charges, chargeId, "operation-charge", "Protect") : ""}
       ${warnings.length ? `<div class="deck-dispatch-warning" role="status">${warnings.map(esc).join("<br>")}</div>` : ""}
@@ -513,7 +571,27 @@ export class DeckStrategicRoutes {
     const next = charter.next_grade ? `${esc(charter.next_grade.title)} at ${charter.next_grade.at.toFixed(0)}` : "Top grade";
     const today = `${fmt(Math.min(charter.earned_today, charter.earn_per_day))}/${fmt(charter.earn_per_day)}`;
     const gradeHtml = charter.grade_title ? `<section class="deck-section"><header><div><h3>Grade · ${esc(charter.grade_title)}</h3><p title="Contracts, Signals and the ledger earn standing past ${full.toFixed(0)}, up to ${fmt(charter.earn_per_day)} a day. Credits can't buy it.">Next: ${next} · today ${today}</p></div></header><div class="deck-stat-grid"><dl class="deck-stat"><dt>Freight fee</dt><dd>×${charter.tariff_mult.toFixed(2)}</dd></dl><dl class="deck-stat"><dt>Freight lift</dt><dd>${fmt(charter.shipment_cap)} / departure</dd></dl></div><div class="deck-charter-ladder">${grades}</div></section>` : "";
-    return `<section class="deck-page deck-faction"><header class="deck-page__lead"><span>Legal status · served Authority ledger</span><h2>Terran Charter Authority</h2><p>Standing is priced law, not reputation. Citations land only when their light reaches the Market Hub.</p></header>${this.gripHtml(charter)}<div class="deck-stat-grid"><dl class="deck-stat${charter.status === "good_standing" ? "" : " is-warn"}"><dt>Charter</dt><dd>${esc(charter.title)}</dd></dl><dl class="deck-stat"><dt>Standing</dt><dd>${charter.standing.toFixed(0)} / ${charter.max_standing.toFixed(0)}</dd></dl><dl class="deck-stat${bites ? " is-warn" : ""}"><dt>Freight tariff</dt><dd>×${charter.tariff_mult.toFixed(2)}</dd></dl><dl class="deck-stat${bites ? " is-warn" : ""}"><dt>Exchange penalty</dt><dd>${(charter.market_penalty_frac * 100).toFixed(1)}%</dd></dl></div><section class="deck-section"><header><div><h3>Charter ladder</h3><p>Each band names the tariff on Authority freight and the cut of Exchange trades.</p></div></header><div class="deck-charter-ladder">${rows}</div></section>${gradeHtml}${shortfall > 0 ? `<section class="deck-section"><header><div><h3>Reinstatement</h3><p>Credits are burned; only standing actually restored is charged.</p></div></header><div class="deck-reinstatement"><input data-deck-input="reinstatement" type="number" min="1" step="1" value="${points}"><span data-reinstatement-cost>${fmt(points * charter.reinstate_cost_per_point)} Cr for ${points} pts</span><button type="button" class="is-primary" data-deck-act="strategic-faction-pay">Pay</button></div></section>` : ""}</section>`;
+    return `<section class="deck-page deck-faction"><header class="deck-page__lead"><span>Legal status · served Authority ledger</span><h2>Terran Charter Authority</h2><p>Standing is priced law, not reputation. Citations land only when their light reaches the Market Hub.</p></header>${this.gripHtml(charter)}<div class="deck-stat-grid"><dl class="deck-stat${charter.status === "good_standing" ? "" : " is-warn"}"><dt>Charter</dt><dd>${esc(charter.title)}</dd></dl><dl class="deck-stat"><dt>Standing</dt><dd>${charter.standing.toFixed(0)} / ${charter.max_standing.toFixed(0)}</dd></dl><dl class="deck-stat${bites ? " is-warn" : ""}"><dt>Freight tariff</dt><dd>×${charter.tariff_mult.toFixed(2)}</dd></dl><dl class="deck-stat${bites ? " is-warn" : ""}"><dt>Exchange penalty</dt><dd>${(charter.market_penalty_frac * 100).toFixed(1)}%</dd></dl></div><section class="deck-section"><header><div><h3>Charter ladder</h3><p>Each band names the tariff on Authority freight and the cut of Exchange trades.</p></div></header><div class="deck-charter-ladder">${rows}</div></section>${gradeHtml}${this.licencesHtml(charter)}${this.claimsHtml(charter)}${shortfall > 0 ? `<section class="deck-section"><header><div><h3>Reinstatement</h3><p>Credits are burned; only standing actually restored is charged.</p></div></header><div class="deck-reinstatement"><input data-deck-input="reinstatement" type="number" min="1" step="1" value="${points}"><span data-reinstatement-cost>${fmt(points * charter.reinstate_cost_per_point)} Cr for ${points} pts</span><button type="button" class="is-primary" data-deck-act="strategic-faction-pay">Pay</button></div></section>` : ""}</section>`;
+  }
+
+  /** §licences: the Authority's hull licences, held or for sale. Only hulls
+   * research has unlocked show (licenceNote is empty for the rest). */
+  private licencesHtml(charter: CharterView): string {
+    const rows = (charter.licences ?? []).filter((l) => licenceNote(l)).map((l) =>
+      `<div class="deck-demand"><span><b>${esc(shipKindLabel(l.hull))}</b><small>${esc(licenceNote(l))}</small></span>`
+      + (licenceForSale(l) ? `<button type="button" class="is-primary" data-deck-act="strategic-buy-licence" data-hull="${l.hull}">Buy</button>` : "")
+      + `</div>`).join("");
+    return rows ? `<section class="deck-section"><header><div><h3>Licences</h3><p title="Research is the skill to build a hull; the Authority's licence is the right to. Orbital Shipyard and Capital Slipway hulls need one. Bought once, kept for good; standing sets the price.">Orbital Shipyard and Slipway hulls · bought once</p></div></header>${rows}</section>` : "";
+  }
+
+  /** §claims: the Authority's claims held, soonest lapse first. */
+  private claimsHtml(charter: CharterView): string {
+    const held = claimsHeld(charter);
+    if (!held.length) return "";
+    const now = liveSimTime();
+    const rows = held.map((claim) => `<div class="deck-demand"><span><b>${esc(systemName(claim.system))}</b>`
+      + `<small>Lapses in ${esc(fmtBuildDur(Math.max(0, claim.lapses_at - now)))}</small></span></div>`).join("");
+    return `<section class="deck-section"><header><div><h3>Claims</h3><p title="${esc(CLAIM_TIP)}">New colonies · used on landing</p></div></header>${rows}</section>`;
   }
 
   /** §season: the grip in force, the levy, Resolve, the Authority's demands

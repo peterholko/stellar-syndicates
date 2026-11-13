@@ -26,6 +26,7 @@ impl World {
                 if paid {
                     for (c, n) in need {
                         *sys.stockpile.entry(c).or_insert(0.0) -= n;
+                        sys.tally_used(c, n);
                     }
                 }
                 let reason = (!paid).then_some(SuspendReason::NoSupplies);
@@ -99,7 +100,8 @@ mod tests {
         let planet = sys.bodies.iter().find(|b| !b.is_belt()).unwrap();
         for kind in K::ALL {
             assert_eq!(kind.suits(belt), kind == K::AsteroidQuarry, "{kind:?} on a belt");
-            assert_eq!(kind.suits(planet), kind != K::AsteroidQuarry, "{kind:?} on a planet");
+            // §veil: the projector also wants a sky.
+            assert_eq!(kind.suits(planet), kind != K::AsteroidQuarry && (kind != K::VeilProjector || planet.has_atmosphere()), "{kind:?} on a planet");
         }
         assert!(!K::AsteroidQuarry.takes_workforce() && !crate::power::powered(K::AsteroidQuarry));
         assert_eq!((belt.deposits.len(), belt.resource_slots()), (2, 1), "one site: the quarry works both deposits");
@@ -126,9 +128,10 @@ mod tests {
         }
         assert!(stock(&w, home, C::MetallicOre) > 0.0, "ore");
         assert!(stock(&w, home, C::Volatiles) > 0.0, "and volatiles, from one structure");
-        // A minute at tier 2: twice an outpost's upkeep.
+        // A minute at tier 2: twice an outpost's upkeep (at the output scale).
         let paid = 100.0 - stock(&w, home, C::Machinery);
-        assert!((paid - 2.0 * 0.3).abs() < 0.05, "Machinery paid: {paid}");
+        let scale = crate::production::OUTPUT_SCALE;
+        assert!((paid - 2.0 * 0.3 * scale).abs() < 0.05 * scale, "Machinery paid: {paid}");
     }
 
     #[test]

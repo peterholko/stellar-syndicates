@@ -481,6 +481,15 @@ impl Body {
         self.kind == BodyKind::AsteroidBelt
     }
 
+    /// §veil: does this body have a sky to ionise? Belts and gas giants never;
+    /// a rock whose environment rolled Uninhabitable is airless. Marginal and
+    /// Hostile worlds have air, thin or poisonous, and that is enough.
+    pub fn has_atmosphere(&self) -> bool {
+        !self.is_belt()
+            && self.kind != BodyKind::GasGiant
+            && self.profile.environment != Environment::Uninhabitable
+    }
+
     /// A planet proper: not a moon and not a belt.
     pub fn is_planet(&self) -> bool {
         self.parent.is_none() && !self.is_belt()
@@ -490,12 +499,9 @@ impl Body {
         // §gaia: Living Terraces house people beside any Habitat.
         let terraces = crate::colony::TERRACE_POP_PER_TIER
             * self.tier(crate::StructureKind::LivingTerraces) as f64 * self.habitat_capacity_mult();
+        // §habitat-rebase (Nov 1 2026): the founding camp's Habitat is a plain
+        // Habitat; no camp-sized first level.
         let tier = self.tier(crate::StructureKind::Habitat);
-        // The founding camp's first Habitat houses the 6,000 settlers and two
-        // cohorts more; its Quarters project, four more beyond that.
-        if tier == 1 && let Some(camp) = &self.founding_camp {
-            return terraces + if camp.done(crate::settlement::SettlementProject::Quarters) { 0.012 } else { 0.008 };
-        }
         crate::colony::POP_CAP_PER_HABITAT_TIER * tier as f64 * self.habitat_capacity_mult() + terraces
     }
 
@@ -942,7 +948,31 @@ fn dep_kinds(c: Commodity) -> &'static [VisualKind] {
         Commodity::ConductiveMetals | Commodity::Titanium => &[V::Barren],
         Commodity::Iridium | Commodity::Helium3 | Commodity::ExoticMatter => &[V::Barren],
         // §fuel-overhaul: manufactured goods never roll as deposits.
-        Commodity::Uranium | Commodity::Antimatter | Commodity::FusionCore => &[V::Barren],
+        Commodity::Uranium | Commodity::Antimatter | Commodity::FusionReactor | Commodity::AdvancedFusionReactor
+        | Commodity::AntimatterReactor
+        | Commodity::ZephyrDrive | Commodity::GaleDrive | Commodity::TempestDrive | Commodity::MaelstromDrive
+        | Commodity::HeavyFissionReactor
+        | Commodity::HeavyFusionReactor
+        | Commodity::HeavyAdvancedFusionReactor
+        | Commodity::HeavyAntimatterReactor
+        | Commodity::HeavyZephyrDrive
+        | Commodity::HeavyGaleDrive
+        | Commodity::HeavyTempestDrive
+        | Commodity::HeavyMaelstromDrive
+        | Commodity::HeavyHullSections
+        | Commodity::CapitalFissionReactor
+        | Commodity::CapitalFusionReactor
+        | Commodity::CapitalAdvancedFusionReactor
+        | Commodity::CapitalAntimatterReactor
+        | Commodity::CapitalZephyrDrive
+        | Commodity::CapitalGaleDrive
+        | Commodity::CapitalTempestDrive
+        | Commodity::CapitalMaelstromDrive
+        | Commodity::CapitalHullSections
+        | Commodity::NavComputer | Commodity::CargoBay | Commodity::PulseLaser | Commodity::BeamBattery
+        | Commodity::Torpedoes | Commodity::Slugs | Commodity::BeamCrystals => &[V::Barren],
+        // §modules-as-goods: nor do modules.
+        Commodity::MassDriver | Commodity::TorpedoRack | Commodity::PointDefenseScreen | Commodity::ReflectivePlating | Commodity::WhippleArmor | Commodity::ExtendedTanks | Commodity::ReconSuite | Commodity::CargoPods | Commodity::EscortDatalink | Commodity::FuelTransferRig | Commodity::SurveyDrive | Commodity::NebulaSpectrometer | Commodity::PrismaticLance | Commodity::StasisWeb | Commodity::WarpStabilizer | Commodity::InterdictionField | Commodity::LanceArray => &[V::Barren],
         Commodity::RareElements => &[V::Lava, V::Barren],
         Commodity::Silicates => &[V::Desert, V::Barren],
         Commodity::Volatiles => &[V::Ice],
@@ -957,7 +987,7 @@ fn dep_kinds(c: Commodity) -> &'static [VisualKind] {
         | Commodity::Composites
         | Commodity::HullSections
         | Commodity::PrecisionComponents
-        | Commodity::WarpCore => &[V::Barren],
+        | Commodity::FissionReactor => &[V::Barren],
     }
 }
 

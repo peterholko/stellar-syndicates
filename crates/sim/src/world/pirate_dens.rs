@@ -27,19 +27,18 @@ pub(crate) const HOMEWARD_SLACK_SU: f64 = 10_000.0;
 /// A pack sets out from its den only with this share of its hull.
 pub(crate) const DEN_READY_HULL: f64 = 0.9;
 
-/// Warp range on these stores: the fusion tank at Full, then the fission store
-/// at Slow, which a fleet switches to when the tank runs dry.
-fn warp_range(f: &Fleet, fuel: f64, uranium: f64) -> f64 {
-    let per_su = |slow: bool| crate::fuel::FUEL_PER_MASS_DISTANCE * f.mass().max(1e-9)
-        / crate::transit::WARP_FACTOR * f.cruise_mult_for(slow) * f.fuel_research.consumption;
-    let full = fuel.max(0.0) / per_su(false).max(1e-12);
-    let slow = if f.can_slow() { uranium.max(0.0) / per_su(true).max(1e-12) } else { 0.0 };
-    full + slow
+/// Warp range left on the fleet's own tanks at its throttle
+/// (§shipbuilding-overhaul: the shortest tank bounds the formation).
+pub(crate) fn warp_range_left(f: &Fleet) -> f64 {
+    f.range_at(crate::transit::WARP_FACTOR)
 }
 
-/// Warp range left on the fleet's own stores.
-pub(crate) fn warp_range_left(f: &Fleet) -> f64 {
-    warp_range(f, f.fuel, f.uranium)
+/// Warp range on full tanks at the same throttle.
+fn warp_range_full(f: &Fleet) -> f64 {
+    let mut full = f.clone();
+    full.launch_empty();
+    full.fill_stores();
+    full.range_at(crate::transit::WARP_FACTOR)
 }
 
 impl World {
@@ -100,8 +99,7 @@ impl World {
             .collect();
         for (fid, mend) in home {
             let f = self.fleets.get_mut(&fid).unwrap();
-            f.fuel = f.fuel.max(f.fuel_capacity());
-            f.uranium = f.uranium.max(f.uranium_capacity());
+            f.fill_stores();
             f.stalled = false;
             if mend {
                 for ship in f.ships.iter_mut() {
@@ -126,7 +124,7 @@ impl World {
                 let trip = f.pos.distance(den);
                 let homeward = matches!(f.order, FleetOrder::MoveTo { dest } if dest.distance(den) <= 1.0);
                 let left = warp_range_left(f);
-                let low = left < warp_range(f, f.fuel_capacity(), f.uranium_capacity()) * HOMEWARD_LOW_SHARE;
+                let low = left < warp_range_full(f) * HOMEWARD_LOW_SHARE;
                 (trip > pirate::PIRATE_ASSAULT_RADIUS && !homeward && low
                     && left < trip * HOMEWARD_MARGIN + HOMEWARD_SLACK_SU).then_some((*id, den))
             })
@@ -198,12 +196,11 @@ mod tests {
         let f = w.fleets.get_mut(&id).unwrap();
         f.pos = den_pos;
         f.order = FleetOrder::Idle;
-        f.fuel = 0.0;
-        f.uranium = 0.0;
+        f.launch_empty();
         for ship in &mut f.ships { ship.hp = ship.max_hp() * 0.85; }
         w.step(&[]);
         let f = &w.fleets[&id];
-        assert!((f.fuel - f.fuel_capacity()).abs() < 1e-9 && (f.uranium - f.uranium_capacity()).abs() < 1e-9, "the den fills both stores");
+        assert!((f.antimatter - f.antimatter_capacity()).abs() < 1e-9 && f.antimatter > 0.0, "the den fills its tank");
         assert!(!w.pirate_ready(id), "a damaged pack waits at its den");
         for _ in 0..(120 * crate::config::TICK_HZ) { w.step(&[]); }
         assert!(w.pirate_ready(id), "its den mends it"); 
@@ -216,8 +213,10 @@ mod tests {
         w.step(&[]);
         let f = w.fleets.get_mut(&id).unwrap();
         f.order = FleetOrder::MoveTo { dest: den_pos + Vec2::new(300_000.0, 0.0) };
-        f.uranium = 0.0;
-        f.fuel = f.fuel_capacity() * 0.25;
+        // §shipbuilding-overhaul: a Fold raider's tank is dense; one percent
+        // of it (48k su) is less than the trip home with its margin.
+        f.launch_empty();
+        f.antimatter = f.antimatter_capacity() * 0.01;
         w.step(&[]);
         assert!(matches!(w.fleets[&id].order, FleetOrder::MoveTo { dest } if dest == den_pos), "it breaks off for home");
     }

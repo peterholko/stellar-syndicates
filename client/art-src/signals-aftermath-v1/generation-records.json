@@ -1,0 +1,657 @@
+{
+  "mode": "built-in image_gen",
+  "transparentBackground": false,
+  "postProcessing": "None. Selected native PNGs copied unchanged.",
+  "paintings": [
+    {
+      "slug": "drifting-wreck",
+      "signal": "Drifting wreck",
+      "master": "client/art-src/signals-aftermath-v1/drifting-wreck.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-05ffa324-33a0-42f3-985f-7c9f68661253.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Drifting wreck\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/drifting-wreck.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same split freighter, worked over. A neat rectangular hatch has been cut into the forward hold, its edges still glowing faintly orange from the cutting torch; a portable white work light is left clipped beside the cut. Most of the amber emergency lights along the spine have gone dark; one still blinks. A few loose containers have drifted further off.\nVisiting ship: The visiting Interceptor small in the lower foreground, pulling away toward the warm star, engines lit. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: fading orange heat at the fresh cut against cold space; quiet, finished work.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.",
+        "references": [
+          "client/art-src/signals-v1/drifting-wreck.png",
+          "client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-293092ef-cd4e-4baa-a8b1-864fb0dca54b.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Use case: precise-object-edit.\nEdit image 1, the drifting-wreck aftermath painting, changing ONLY the small visiting Interceptor's position and heading. Image 2 is its ship identity reference. Preserve the wreck, cut hatch with orange edges, clipped white work light, darkened hull lights, containers, viewpoint, star, nebula, lighting, palette, and all other pixels' visual content.\nMove the visiting Interceptor up and slightly right into the clear space directly below the forward hull: its centre about x=33%, y=68% of the canvas. Its entire silhouette must fit in the central 60% width and middle 45% height, with its lowest point above y=72.5%. Keep it about 9% of the canvas width, separate from and never covering the wreck. Turn the sharp nose toward the warm star at the lower left. Its twin rear engines are at the upper right of the ship, with short restrained blue exhaust trailing to the upper right, opposite its direction of travel. Match image 2's white-and-cyan livery and swept-wing twin-engine silhouette, rotated to this departure heading; no exhaust from the nose. Remove the old lower ship completely, leaving the original quiet space there. Exactly one visiting ship.\nOpaque full-frame 1672 x 941 PNG, unchanged scene framing. No text, symbols, emblems, interface, borders, people, fire, explosion or extra objects.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-293092ef-cd4e-4baa-a8b1-864fb0dca54b.png",
+            "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-bac5ce24-e619-4efd-8378-4a82811bb094.png"
+        },
+        {
+          "prompt": "Use case: precise-object-edit.\nImage 1 is the completed aftermath painting to edit. Change ONLY the position and scale of its one small visiting Interceptor. Preserve the painting's site and all aftermath details, star position, nebula, lighting, palette, camera distance and all other visual content.\nKeep its current nose pointing toward the star at the lower left and the blue exhaust trailing to the upper right. Make its ENTIRE hull fit inside pixel rectangle x=450–610, y=600–670. Its centre is (530,635). Move it slightly UP and shrink it slightly. Keep a clear gap below the wreck.\nFill the ship's old location naturally with the same space background. Exactly one visiting Interceptor, with the same white-and-cyan livery, swept wings, dark cockpit and two rear engine nacelles. Keep its blue engine trails very short and faint, entirely within the central safe area. No changes to the site whatsoever. Full opaque 1672 x 941 image, no crop, no border, no text or new objects.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-bac5ce24-e619-4efd-8378-4a82811bb094.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-05ffa324-33a0-42f3-985f-7c9f68661253.png"
+        }
+      ],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1825810,
+        "sha256": "44368a04c3ae565a3e7d30f67e978594351bc6c077ddd5d66a2856ece72b02a5",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/drifting-wreck-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 28156
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/drifting-wreck-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 65562
+        }
+      ]
+    },
+    {
+      "slug": "cargo-pod",
+      "signal": "Cargo pod",
+      "master": "client/art-src/signals-aftermath-v1/cargo-pod.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-06975bb8-7342-4737-9773-c1cd662c5ea3.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Cargo pod\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/cargo-pod.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same tumbling cargo pod, now cracked open: its two doors swung wide on their hinges, the interior dark, a few cut cargo straps and packing foam drifting out in a slow trail.\nVisiting ship: The visiting Interceptor small beside the pod, turning away, its running lights catching the open doors. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: the pod's hazard-orange door edges (paint bands only, no text) against blue-black space.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nFinal framing and departure check: keep the ENTIRE visiting Interceptor silhouette within x=20–80% and y=27.5–72.5% of the full canvas, fully separate from the site. The ship is only about 9–12% of the frame width, never larger than 15%. Rotate its pose as needed so its sharp nose points away from the site toward home; its twin rear engine nozzles and restrained exhaust trail behind it, never from the nose. Keep the scene's original camera distance and site size. Preserve the first reference's exact full-frame wide canvas, 1672 x 941.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/cargo-pod.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-9fae15fc-71cc-437b-bb89-bc05e95f2c23.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Use case: precise-object-edit.\nImage 1 is the completed aftermath painting to edit. Change ONLY the position and scale of its one small visiting Interceptor. Preserve the painting's site and all aftermath details, star position, nebula, lighting, palette, camera distance and all other visual content.\nKeep the ship's current rightward departure heading and correct rear exhaust. Move it DOWN and LEFT into the empty space above and to the right of the pod. The ENTIRE hull must fit inside pixel rectangle x=1120–1290, y=320–395. Its centre is (1205,358).\nFill the ship's old location naturally with the same space background. Exactly one visiting Interceptor, with the same white-and-cyan livery, swept wings, dark cockpit and two rear engine nacelles. Keep its blue engine trails very short and faint, entirely within the central safe area. No changes to the site whatsoever. Full opaque 1672 x 941 image, no crop, no border, no text or new objects.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-9fae15fc-71cc-437b-bb89-bc05e95f2c23.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-06975bb8-7342-4737-9773-c1cd662c5ea3.png"
+        }
+      ],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1857747,
+        "sha256": "9ab57034be5f025a2ca543dfa5171fc86bb9afa987d6b39cfe2a2f547ba72e40",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/cargo-pod-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 27832
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/cargo-pod-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 65228
+        }
+      ]
+    },
+    {
+      "slug": "ore-fragment",
+      "signal": "Ore fragment",
+      "master": "client/art-src/signals-aftermath-v1/ore-fragment.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-879f08f2-d5d8-4177-88a8-9cd478e850be.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Ore fragment\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/ore-fragment.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same ore-rich fragment, now sampled: a short row of clean cylindrical drill holes in its face, flecks of bright ore glinting inside them, and a small survey beacon planted on its surface with a single teal light, marking it for a freighter.\nVisiting ship: The visiting Interceptor small, departing above the rock toward the warm star. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: the beacon's teal point of light and the ore's glint against dark rock.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nFinal framing and departure check: keep the ENTIRE visiting Interceptor silhouette within x=20–80% and y=27.5–72.5% of the full canvas, fully separate from the site. The ship is only about 9–12% of the frame width, never larger than 15%. Rotate its pose as needed so its sharp nose points away from the site toward home; its twin rear engine nozzles and restrained exhaust trail behind it, never from the nose. Keep the scene's original camera distance and site size. Preserve the first reference's exact full-frame wide canvas, 1672 x 941.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/ore-fragment.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-07f18e5a-8807-4d3b-ac68-8def5adb72f8.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Use case: precise-object-edit.\nImage 1 is the completed aftermath painting to edit. Change ONLY the position and scale of its one small visiting Interceptor. Preserve the painting's site and all aftermath details, star position, nebula, lighting, palette, camera distance and all other visual content.\nKeep the ship's current lower-left departure heading and correct rear exhaust. Move it RIGHT slightly. Its ENTIRE hull must fit inside pixel rectangle x=370–500, y=310–385, centred near (435,348), to the upper left of the rock.\nFill the ship's old location naturally with the same space background. Exactly one visiting Interceptor, with the same white-and-cyan livery, swept wings, dark cockpit and two rear engine nacelles. Keep its blue engine trails very short and faint, entirely within the central safe area. No changes to the site whatsoever. Full opaque 1672 x 941 image, no crop, no border, no text or new objects.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-07f18e5a-8807-4d3b-ac68-8def5adb72f8.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-879f08f2-d5d8-4177-88a8-9cd478e850be.png"
+        }
+      ],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1771916,
+        "sha256": "42b85aecd5db53678fa1b49ebf4eb21100a8346672d19999192e63d775fd56bb",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/ore-fragment-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 27666
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/ore-fragment-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 62458
+        }
+      ]
+    },
+    {
+      "slug": "silent-probe",
+      "signal": "Silent probe",
+      "master": "client/art-src/signals-aftermath-v1/silent-probe.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-327b3cb8-c379-46a0-bd73-512e16ec4567.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Silent probe\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/silent-probe.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same old survey probe, now opened: its access panel hinged back, its interior dark, its dish tilted further off true as it tumbles slowly away. One last status light on its body is fading out.\nVisiting ship: The visiting Interceptor small in the foreground, turning for home. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: the probe's last dim status light against cold space; quiet and spent.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nFinal framing and departure check: keep the ENTIRE visiting Interceptor silhouette within x=20–80% and y=27.5–72.5% of the full canvas, fully separate from the site. The ship is only about 9–12% of the frame width, never larger than 15%. Rotate its pose as needed so its sharp nose points away from the site toward home; its twin rear engine nozzles and restrained exhaust trail behind it, never from the nose. Keep the scene's original camera distance and site size. Preserve the first reference's exact full-frame wide canvas, 1672 x 941.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/silent-probe.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-ebe38f95-31a0-4de6-860c-36f70fd254d9.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Use case: precise-object-edit.\nImage 1 is the completed aftermath painting to edit. Change ONLY the position and scale of its one small visiting Interceptor. Preserve the painting's site and all aftermath details, star position, nebula, lighting, palette, camera distance and all other visual content.\nMove the Interceptor UP into the empty space immediately to the right of the probe, with a clear gap. Keep its current lower-right departure heading and rear exhaust. Its ENTIRE hull must fit inside pixel rectangle x=1120–1290, y=540–620. Its centre is (1205,580).\nFill the ship's old location naturally with the same space background. Exactly one visiting Interceptor, with the same white-and-cyan livery, swept wings, dark cockpit and two rear engine nacelles. Keep its blue engine trails very short and faint, entirely within the central safe area. No changes to the site whatsoever. Full opaque 1672 x 941 image, no crop, no border, no text or new objects.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-ebe38f95-31a0-4de6-860c-36f70fd254d9.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-327b3cb8-c379-46a0-bd73-512e16ec4567.png"
+        }
+      ],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1829440,
+        "sha256": "fad562982e784bba034bd07482d558c87ae1c2e6aa6b80150e44261e2a641195",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/silent-probe-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 27670
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/silent-probe-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 64156
+        }
+      ]
+    },
+    {
+      "slug": "distress-beacon",
+      "signal": "Distress beacon",
+      "master": "client/art-src/signals-aftermath-v1/distress-beacon.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-285f5b67-387f-4c60-a83f-3188eccd6179.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Distress beacon\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/distress-beacon.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same stricken craft and its beacon, the call answered: the beacon light switched off, an emergency airlock standing open with a retracting boarding tube floating free of it, the hull lit only by the star.\nVisiting ship: The visiting Interceptor small, moving away from the open airlock, warm light glowing in its cabin windows. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: warm cabin light against the dark, silent wreck; the urgency gone.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nPrecise crop-safe composition: Place the complete small visiting ship inside x=350–495, y=575–650 pixels, in the empty space to the lower left of the capsule, with a clear gap from both capsule and floating boarding tube. Rotate its pointed nose toward the warm lower-left star; rear engines and faint exhaust trail toward upper right. All beacon and capsule lights are off; only the departing ship has warm cabin windows.\nKeep the whole site at the same size and position as image 1. The visiting ship must fit entirely inside the specified small rectangle on the 1672 x 941 canvas, never overlap the site, and never extend into the bottom or top margin. Match the reference ship's white-and-cyan livery, swept wings, twin rear engine nacelles and dark cockpit, with its pose rotated as required. All essential aftermath details must stay inside x=335–1337 and y=259–682 pixels. No text or new objects beyond this brief.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/distress-beacon.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-ff9beaaf-2be4-4d86-a3c4-0489f0a01d92.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Use case: precise-object-edit.\nEdit the attached aftermath painting with only these necessary corrections:\nMove the small visiting Interceptor UP by about 100 pixels and RIGHT by about 60 pixels; preserve its size, livery, warm cockpit windows, nose pointing toward the lower-left star and correct rear exhaust. It should float clear of the capsule's lower left, entirely within the central safe area: every part of it above y=650 and right of x=350. Keep the existing opened airlock, dark capsule window, extinguished beacon and floating boarding tube unchanged.\nPreserve the same main site design, viewpoint, scale, lighting, palette, warm lower-left star and nebula. One small Interceptor only, entirely separate from the site. Full opaque landscape 1672 x 941 pixels. Quiet empty margins. No text, symbols, emblems, border, interface, people, fire, explosion or extra ships.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-ff9beaaf-2be4-4d86-a3c4-0489f0a01d92.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-608160bb-cf93-4e60-8bb8-575dc54fed82.png"
+        },
+        {
+          "prompt": "Use case: precise-object-edit.\nEdit ONLY the location of the small Interceptor in this aftermath painting. It is currently too high. Move it DOWN into the empty space to the LEFT of the capsule, positioned at the SAME VERTICAL LEVEL AS THE CAPSULE'S CENTRE, halfway down the image. Keep it SMALL and separate, with a clear gap from the capsule. The midpoint of the ship and the midpoint of the capsule should be on the SAME HORIZONTAL LINE. The ship must be entirely within the middle 45% of the canvas height. Preserve its white-and-cyan livery, warm cockpit, lower-left departure heading and restrained rear exhaust. Remove the old upper ship so only ONE visiting ship remains.\nChange nothing else. Preserve the dark capsule, open airlock, free boarding tube, unlit beacon, star, nebula, viewpoint, lighting, palette and framing. Full opaque 1672 x 941 image, no crop, no added objects, no text or interface.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-608160bb-cf93-4e60-8bb8-575dc54fed82.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-356c08ec-01f1-4396-a210-1b57dad098d2.png"
+        },
+        {
+          "prompt": "Use case: precise-object-edit.\nEdit the attached aftermath painting only as follows:\nMove ONLY the visiting Interceptor horizontally RIGHT, much closer to the capsule. Reduce the current empty gap between its rightmost engine and the capsule's left rim to about ONE QUARTER OF THE VISITOR'S LENGTH. Keep the ship at its current height halfway down the canvas and keep its current size and heading. There is still a clear narrow space gap: no overlap. The entire ship should now sit comfortably inside the central 60% of canvas width. Preserve the warm cockpit and everything about the capsule, beacon, free tube and dark lights.\nPreserve the original same full-frame 1672 x 941 canvas, star, nebula haze, viewpoint, palette, lighting, and all other visual content. Only ONE small visiting Interceptor. Do not add anything. No crop, no text, no interface, no border. Opaque PNG.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-356c08ec-01f1-4396-a210-1b57dad098d2.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-285f5b67-387f-4c60-a83f-3188eccd6179.png"
+        }
+      ],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1874559,
+        "sha256": "780f67940d2bf73192f90f9e746e24237e11a165a818a226a51ffe0699f45613",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/distress-beacon-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 34928
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/distress-beacon-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 78208
+        }
+      ]
+    },
+    {
+      "slug": "sensor-ghost",
+      "signal": "Sensor ghost",
+      "master": "client/art-src/signals-aftermath-v1/sensor-ghost.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-a0a421fe-6266-42c9-b625-5a0c5031d89f.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Sensor ghost\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/sensor-ghost.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same patch of space where the faint reading was, now searched: the visiting ship's single searchlight cone sweeping through a thin field of glittering dust, and a faint violet distortion fading out where the ghost was.\nVisiting ship: The visiting Interceptor small, its searchlight the main light source in the scene. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: cold violet shimmer dissolving in the searchlight beam; uncertain and empty.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nPrecise crop-safe composition: Place the complete small visiting ship inside x=400–550, y=565–645 pixels, in the empty space to the lower left of the fading anomaly. Turn its nose toward the warm lower-left star as it leaves. A side-mounted searchlight makes one last sweep back to the upper right through the central glittering dust and faint violet distortion. Exactly one white searchlight cone; the violet ghost is very faint and dissipating.\nKeep the whole site at the same size and position as image 1. The visiting ship must fit entirely inside the specified small rectangle on the 1672 x 941 canvas, never overlap the site, and never extend into the bottom or top margin. Match the reference ship's white-and-cyan livery, swept wings, twin rear engine nacelles and dark cockpit, with its pose rotated as required. All essential aftermath details must stay inside x=335–1337 and y=259–682 pixels. No text or new objects beyond this brief.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/sensor-ghost.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-443e7be0-7a1c-4f36-8abe-a1380e7ea348.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Use case: precise-object-edit.\nEdit the attached aftermath painting with only these necessary corrections:\nMake the distortion clearly dissipated: remove most of the big circular blue-gold lens ring, leaving only a few very faint broken violet arcs and wisps at the SAME central location; no bright continuous ring or new central core. The single white searchlight illuminating glittering dust is the principal feature now. Also move the visiting Interceptor and the searchlight origin UP by about 110 pixels, keeping its small scale, lower-left departure heading and the beam aimed back toward the central dust. Keep all of the ship above y=650. Preserve the original star, nebula and background; the empty fading site stays centred.\nPreserve the same main site design, viewpoint, scale, lighting, palette, warm lower-left star and nebula. One small Interceptor only, entirely separate from the site. Full opaque landscape 1672 x 941 pixels. Quiet empty margins. No text, symbols, emblems, border, interface, people, fire, explosion or extra ships.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-443e7be0-7a1c-4f36-8abe-a1380e7ea348.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-a0a421fe-6266-42c9-b625-5a0c5031d89f.png"
+        }
+      ],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1807791,
+        "sha256": "0d4ce8bc423c875e641a217c72fffb32950c37fc0ac69d9ea1f6721a29f15d27",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/sensor-ghost-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 21616
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/sensor-ghost-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 53738
+        }
+      ]
+    },
+    {
+      "slug": "authority-courier",
+      "signal": "Authority courier",
+      "master": "client/art-src/signals-aftermath-v1/authority-courier.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-86ad841e-bf03-4475-8602-e0acf71254f8.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Authority courier\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/authority-courier.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same lost Authority mail drone, now opened: its armoured hatch unlatched and swung open, the seal on it broken, its running lights dark, drifting slowly.\nVisiting ship: The visiting Interceptor small, pulling away toward the warm star. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: the drone's steel-blue Authority livery with a thin gold trim (no emblems or text) against black space.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nPrecise crop-safe composition: Place the complete small visiting ship inside x=350–495, y=575–650 pixels, in the clear space to the lower left of the drone. Its pointed nose faces the warm lower-left star, with the twin engines and a short faint exhaust trail at its upper-right rear. The courier's open hold is dark and empty; its running lights are completely off. Preserve its same main hull and camera position.\nKeep the whole site at the same size and position as image 1. The visiting ship must fit entirely inside the specified small rectangle on the 1672 x 941 canvas, never overlap the site, and never extend into the bottom or top margin. Match the reference ship's white-and-cyan livery, swept wings, twin rear engine nacelles and dark cockpit, with its pose rotated as required. All essential aftermath details must stay inside x=335–1337 and y=259–682 pixels. No text or new objects beyond this brief.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/authority-courier.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-b8f9933b-3efc-4929-a0e6-87c3397435bb.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Use case: precise-object-edit.\nEdit the attached aftermath painting with only these necessary corrections:\nMove the small visiting Interceptor UP by about 100 pixels and RIGHT by about 60 pixels; preserve its size, livery, nose pointing toward the lower-left star and correct rear exhaust. It should float clear of the drone's lower left, entirely within the central safe area: every part of it above y=650 and right of x=350. Keep the courier's open empty armoured bay, torn seal and all switched-off lights unchanged.\nPreserve the same main site design, viewpoint, scale, lighting, palette, warm lower-left star and nebula. One small Interceptor only, entirely separate from the site. Full opaque landscape 1672 x 941 pixels. Quiet empty margins. No text, symbols, emblems, border, interface, people, fire, explosion or extra ships.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-b8f9933b-3efc-4929-a0e6-87c3397435bb.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-86ad841e-bf03-4475-8602-e0acf71254f8.png"
+        }
+      ],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1804743,
+        "sha256": "92e3929223c57df28fa5d58852e5b5c06f7d991ec52c4dd0d5e5264747588dbc",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/authority-courier-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 25368
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/authority-courier-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 58956
+        }
+      ]
+    },
+    {
+      "slug": "abandoned-outpost",
+      "signal": "Abandoned outpost",
+      "master": "client/art-src/signals-aftermath-v1/abandoned-outpost.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-07765e82-871b-4f5a-a38d-62fa845960c0.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Abandoned outpost\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/abandoned-outpost.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same mothballed station, now gone fully dark: its failing reactor finally shut down, the housing cooling with a last faint orange glow, one airlock left open, a few empty equipment racks visible inside.\nVisiting ship: The visiting Interceptor small, departing from the open airlock toward the warm star. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: the cooling reactor's last orange glow on a dark, silent station.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nPrecise crop-safe composition: Place the complete small visiting ship inside x=400–545, y=540–615 pixels, in the empty space to the lower left of the station. Its pointed nose faces the warm lower-left star, with twin engines and faint short exhaust at its upper-right rear. Keep the station's reactor glow extremely faint, cooling and almost dark, no active fire or jets. The open airlock and empty racks must be legible.\nKeep the whole site at the same size and position as image 1. The visiting ship must fit entirely inside the specified small rectangle on the 1672 x 941 canvas, never overlap the site, and never extend into the bottom or top margin. Match the reference ship's white-and-cyan livery, swept wings, twin rear engine nacelles and dark cockpit, with its pose rotated as required. All essential aftermath details must stay inside x=335–1337 and y=259–682 pixels. No text or new objects beyond this brief.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/abandoned-outpost.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-07765e82-871b-4f5a-a38d-62fa845960c0.png"
+      },
+      "revisions": [],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1812139,
+        "sha256": "3884c89407b53c798152f7316ecd84853e60a9039adad3818ffcedf1a7c35423",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/abandoned-outpost-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 24768
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/abandoned-outpost-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 62020
+        }
+      ]
+    },
+    {
+      "slug": "pirate-stash",
+      "signal": "Pirate stash",
+      "master": "client/art-src/signals-aftermath-v1/pirate-stash.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-c54974fa-f83d-4865-bdd8-ba2f4b80f48b.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Pirate stash\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/pirate-stash.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same hidden stash, after its booby trap went off: scorched blast marks across the crates and the rock they were lashed to, torn tarps and bent tie-down frames, fragments drifting slowly outward, the crates opened. No explosion is happening; only its marks remain.\nVisiting ship: The visiting Interceptor small, backing away from the scorched cache. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: a dull ember-red heat glow on scorched metal edges against cold space; tense and aftermath.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nComposition emphasis: the Interceptor is a tiny background visitor, only about 100–140 pixels wide on the 1672 x 941 image. Place it to the LEFT of the rock in the empty space at the same vertical height as the lower row of crates, with a clear gap; its centre around x=440, y=510. It is backing away from the scorched cache with restrained short rear engine light. Never place the visitor below the bottom of the rock or near the margins. All active red mine lights are now off; remnants of the sprung trap are inert broken casings mixed with the slowly drifting debris. Keep the exact rock, crate shapes, original camera and background from image 1, opening the crates and adding only the aftermath damage specified. No active explosion or flames. Essential details stay within x=335–1337 and y=259–682.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/pirate-stash.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-c54974fa-f83d-4865-bdd8-ba2f4b80f48b.png"
+      },
+      "revisions": [],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1929616,
+        "sha256": "d32615cde2f3cbf903158946c510b7f3d44e93877c4a8acb47cd5f17bda62f44",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/pirate-stash-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 32540
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/pirate-stash-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 76958
+        }
+      ]
+    },
+    {
+      "slug": "ghost-ship",
+      "signal": "Ghost ship",
+      "master": "client/art-src/signals-aftermath-v1/ghost-ship.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-adddc34d-11d6-47d4-ad40-72922d2d56c7.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Ghost ship\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/ghost-ship.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same crewless warship hulk, salvaged: several hull panels removed to show dark frames beneath, one gun turret twisted off its mount, its half-alive lights now all dark except a dull red glow deep in its reactor section.\nVisiting ship: The visiting Interceptor small, slipping away from the hulk toward the warm star. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: the hulk's last dull red reactor glow; heavy and still.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nFinal composition emphasis: The departing Interceptor is tiny, about 100–140 pixels wide, placed in the empty space to the LEFT of the hulk at roughly the SAME VERTICAL LEVEL AS THE HULK'S CENTRE, well inside the middle horizontal band of the canvas. Leave a clear gap. Its sharp nose points lower left toward the warm star; twin rear engines trail restrained blue exhaust to the upper right. Preserve the hulk's original position, dimensions and silhouette; make the twisted-off turret and removed panels legible without adding any fresh blast.\nThe complete Interceptor and all essential aftermath details must remain in the central 60% of width and middle 45% of height. Keep the visitor alongside the subject's central height, not in a top or bottom corner. Full opaque 1672 x 941 canvas. Preserve image 1's scene, star position, nebula, lighting and palette exactly apart from the described aftermath.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/ghost-ship.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-382d9fc1-f672-499c-a170-8b4359c631e5.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Use case: precise-object-edit.\nEdit the attached aftermath painting only as follows:\nMove ONLY the visiting Interceptor horizontally RIGHT, much closer to the hulk. Reduce the current empty gap between its rightmost engine and the hulk's left bow to about HALF OF THE VISITOR'S LENGTH. Keep the visitor at its current height halfway down the canvas, current tiny size and lower-left departure heading. Keep a clear space gap and no overlap. The entire ship should now sit comfortably inside the central 60% of canvas width. Preserve the hulk, twisted-off turret, removed panels and dull red reactor glow.\nPreserve the original same full-frame 1672 x 941 canvas, star, nebula haze, viewpoint, palette, lighting, and all other visual content. Only ONE small visiting Interceptor. Do not add anything. No crop, no text, no interface, no border. Opaque PNG.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-382d9fc1-f672-499c-a170-8b4359c631e5.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-adddc34d-11d6-47d4-ad40-72922d2d56c7.png"
+        }
+      ],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1851035,
+        "sha256": "2d7f9e4de6936e201700296746f6c13c579ecb3e82f76118673d76f47355a468",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/ghost-ship-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 29464
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/ghost-ship-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 69018
+        }
+      ]
+    },
+    {
+      "slug": "precursor-fragment",
+      "signal": "Precursor fragment",
+      "master": "client/art-src/signals-aftermath-v1/precursor-fragment.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-952e23fa-1034-4449-8614-96ed7752167d.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Precursor fragment\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/precursor-fragment.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same ancient shard, now studied: its glowing inscribed patterns gone dim and dark, a small survey marker with one pale light set beside it, faint motes of residual light drifting off its surface.\nVisiting ship: The visiting Interceptor small, departing toward the warm star. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: the last faint precursor glow fading on the shard; ancient and spent.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nFinal composition emphasis: The departing Interceptor is tiny, about 100–140 pixels wide, placed in the empty space to the LEFT of the shard at roughly the SAME VERTICAL LEVEL AS THE SHARD'S CENTRE, well inside the middle horizontal band of the canvas. Leave a clear gap. Its sharp nose points lower left toward the warm star; twin rear engines trail restrained blue exhaust to the upper right. All of the shard's inscribed linework is now unlit and dark. Its original geometry and surrounding colour haze are preserved; only faint residual motes remain and one small pale survey marker stands beside it.\nThe complete Interceptor and all essential aftermath details must remain in the central 60% of width and middle 45% of height. Keep the visitor alongside the subject's central height, not in a top or bottom corner. Full opaque 1672 x 941 canvas. Preserve image 1's scene, star position, nebula, lighting and palette exactly apart from the described aftermath.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/precursor-fragment.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-952e23fa-1034-4449-8614-96ed7752167d.png"
+      },
+      "revisions": [],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1776749,
+        "sha256": "f1aee38d51e7d8c862d5a53c7e0486a8ca3888d5af9009298bbb9118b6bef192",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/precursor-fragment-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 22374
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/precursor-fragment-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 55644
+        }
+      ]
+    },
+    {
+      "slug": "exotic-flare",
+      "signal": "Exotic flare",
+      "master": "client/art-src/signals-aftermath-v1/exotic-flare.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-cbc60891-3890-4a95-a950-7c67160c5fcf.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Exotic flare\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/exotic-flare.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same exotic flare, collapsing: thin dissipating wisps of its exotic light curling away, the bright core gone, faint glittering spill drifting in the dark.\nVisiting ship: The visiting Interceptor flying out of the fading glow, its hull lightly glittering with skimmed spill. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: the flare's own exotic colour, now thin and fading, against cold space.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nFinal composition emphasis: The departing Interceptor is tiny, about 100–140 pixels wide, placed in the empty space just to the LEFT of the fading flare at roughly the SAME VERTICAL LEVEL AS THE FLARE'S CENTRE, well inside the middle horizontal band of the canvas. Its sharp nose points lower left toward the warm star; twin rear engines trail restrained blue exhaust to the upper right. It is flying out of the thin wisps with only a subtle glitter on the hull. The original luminous crystal core has dissipated into tiny flecks and thin wisps: no solid luminous crystals or bright central swirl remain. The source's same violet colour appears only as faint dissipating strands.\nThe complete Interceptor and all essential aftermath details must remain in the central 60% of width and middle 45% of height. Keep the visitor alongside the subject's central height, not in a top or bottom corner. Full opaque 1672 x 941 canvas. Preserve image 1's scene, star position, nebula, lighting and palette exactly apart from the described aftermath.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/exotic-flare.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-cbc60891-3890-4a95-a950-7c67160c5fcf.png"
+      },
+      "revisions": [],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1837909,
+        "sha256": "0405aa31423549a8c36cfe5e2d631e08a1a073b9c98894473aad8d00a3630089",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/exotic-flare-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 21610
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/exotic-flare-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 55810
+        }
+      ]
+    },
+    {
+      "slug": "teos-lost-crate",
+      "signal": "Teo's lost crate",
+      "master": "client/art-src/signals-aftermath-v1/teos-lost-crate.png",
+      "selectedOutput": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-ae1d972f-e35b-4a7c-bbd3-cbbb426e0c81.png",
+      "initialGeneration": {
+        "prompt": "Use case: stylized-concept\nAsset type: one cinematic illustration for the report panel of a \"Teo's lost crate\" signal in Stellar Syndicates, a persistent science-fiction colony and trading game. One of a series of thirteen aftermath paintings: each is the same scene as its signal's card painting, minutes after a captain's crew has worked the site and turned for home.\nInput image 1: SCENE, STYLE AND SERIES reference: this signal's own card painting (client/art-src/signals-v1/teos-lost-crate.png). Keep its viewpoint, framing, lighting, star, nebula haze, palette and subject design so the two paintings read as before and after. Change only what the brief below changes.\nInput image 2: SHIP reference only: the player's Interceptor (client/public/art/derived/ships/models-v1/previews/raider-768.webp). Keep its silhouette and livery; paint it in the series' style, small in frame.\nComposition/framing: one opaque wide landscape 16:9 illustration, exactly 1672 x 941 pixels. The site stays the focal subject near the centre, with every essential detail inside the central 60% of the width and the middle 45% of the height, so the image survives a wide 21:9 banner crop. Quiet dark space toward the edges. Full frame, not a collage. The game adds titles and buttons outside the image.\nPrimary request: the aftermath: the same trader's crate, now opened: its lid unlocked and hinged up, its strapping cut and floating loose, the crate empty and tumbling slowly. Keep the crate's livery from the card painting; no stencil text.\nVisiting ship: The visiting Interceptor small, pulling away toward the warm star. It is at most about 15% of the frame's width and never covers the site.\nAccent and mood: the crate's trader livery stripe against cold space; quiet.\nConstraints: no labels, text, numbers, logos, emblems, flags, skulls, watermark, border or interface. No planet filling the frame, no spacecraft other than the subject and the one visiting ship, no explosions, fire or weapons fire, no people. The scene must read the same whether the crew found something or not: show the work done, not the loot.\nFinal composition emphasis: The departing Interceptor is tiny, about 100–140 pixels wide, placed in the empty space to the LEFT of the crate at roughly the SAME VERTICAL LEVEL AS THE CRATE'S CENTRE, well inside the middle horizontal band of the canvas. Leave a clear gap. Its sharp nose points lower left toward the warm star; twin rear engines trail restrained blue exhaust to the upper right. Keep the crate's body close to its original size and placement; hinge the lid back at a low enough angle that the whole open lid stays within the middle 45% of image height. Its empty interior is clearly visible. The purple stripe and brass cornerwork stay recognizable. No stencil text.\nThe complete Interceptor and all essential aftermath details must remain in the central 60% of width and middle 45% of height. Keep the visitor alongside the subject's central height, not in a top or bottom corner. Full opaque 1672 x 941 canvas. Preserve image 1's scene, star position, nebula, lighting and palette exactly apart from the described aftermath.",
+        "references": [
+          "/Users/peter/projects/stellar-syndicates/client/art-src/signals-v1/teos-lost-crate.png",
+          "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/raider-768.webp"
+        ],
+        "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-a7336673-05b3-46a3-b6b0-ecc381a1d6c5.png"
+      },
+      "revisions": [
+        {
+          "prompt": "Use case: precise-object-edit.\nEdit the attached aftermath painting only as follows:\nCorrect the two framing issues while preserving the same opened crate body and scene. (1) Move the visiting Interceptor horizontally RIGHT, much closer to the crate: the gap between its rightmost engine and the crate's left edge is about HALF OF THE VISITOR'S LENGTH. Keep it at its current vertical level halfway down the canvas; make it a little smaller if necessary to keep it entirely within the central 60% width. Keep its lower-left departure heading and accurate livery. (2) Hinge the lid MUCH FURTHER BACK, away from the viewer, until it is nearly flat behind the crate; its top edge must stay below the top 28% of the canvas. It remains fully open, still hinged to the back, with the empty interior visible. Preserve the crate body's current size and orientation, purple trader stripe and brass trim. Keep loose cut straps within the central focal group where possible. No loot.\nPreserve the original same full-frame 1672 x 941 canvas, star, nebula haze, viewpoint, palette, lighting, and all other visual content. Only ONE small visiting Interceptor. Do not add anything. No crop, no text, no interface, no border. Opaque PNG.",
+          "references": [
+            "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-a7336673-05b3-46a3-b6b0-ecc381a1d6c5.png"
+          ],
+          "output": "/Users/peter/.codex/generated_images/01a1ceb2-0159-7e83-80dd-d4f6bff1062d/exec-ae1d972f-e35b-4a7c-bbd3-cbbb426e0c81.png"
+        }
+      ],
+      "file": {
+        "width": 1672,
+        "height": 941,
+        "opaque": true,
+        "bytes": 1870330,
+        "sha256": "a8b789c5c758792aabad0becb77e9783a83f4bcce80473f70e6d823a07873634",
+        "unchangedFromGeneratedOutput": true
+      },
+      "visualReview": "Matched source scene and aftermath details; one small departing Interceptor; crop-safe essential subject detail; no text or interface.",
+      "derivatives": [
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/teos-lost-crate-768.webp",
+          "width": 768,
+          "height": 432,
+          "opaque": true,
+          "bytes": 31028
+        },
+        {
+          "path": "client/public/art/derived/signals/aftermath-v1/teos-lost-crate-1280.webp",
+          "width": 1280,
+          "height": 720,
+          "opaque": true,
+          "bytes": 72236
+        }
+      ]
+    }
+  ],
+  "status": "All thirteen aftermath paintings generated, visually reviewed and saved at exactly 1672x941.",
+  "verification": {
+    "masters": 13,
+    "dimensions": "1672x941",
+    "opaque": true,
+    "nativeOutputsUnchanged": true,
+    "derivatives": 26,
+    "widths": [
+      768,
+      1280
+    ],
+    "assetCommand": "npm run assets:derive",
+    "checks": [
+      "npm run test:signals",
+      "npm run test:story-events",
+      "npx tsc --noEmit",
+      "npx vite build"
+    ],
+    "visualReview": "Each master inspected against its own find scene for aftermath content, ship identity and placement, no loot, no text and full-frame crop safety.",
+    "localServer": {
+      "origin": "http://127.0.0.1:8080",
+      "assetsVerified": 26,
+      "allHttp200": true,
+      "allBytesMatchDerivedFiles": true
+    },
+    "reportPreview": {
+      "fixture": "scripts/story-event-fixture.html?story=signal-wreck",
+      "loadedPath": "/art/derived/signals/aftermath-v1/drifting-wreck-1280.webp",
+      "desktopVerified": true,
+      "mobileViewport": {
+        "width": 390,
+        "height": 844
+      },
+      "mobileVerified": true
+    }
+  }
+}

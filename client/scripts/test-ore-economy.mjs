@@ -48,7 +48,7 @@ const cuprite = { output: "conductive_metals", rate: .75, inputs: [["cuprite_ore
 const smelter = { key: "smelter", label: "Smelter", conversion: ferrite, refining_recipes: [ferrite,cuprite] };
 state.galaxy.build_options = [smelter];
 assert.equal(icons.label("metallic_ore"),"Ferrite Ore");
-assert.equal(market.COMMODITIES.length,34);
+assert.equal(market.COMMODITIES.length,82); // §modules-as-goods: + the 17 modules
 // §pockets: the rare pocket ores and their materials are real goods now.
 assert.equal(icons.label("helium3_ice"),"Helium-3 Ice");
 assert.equal(icons.label("exotic_matter"),"Exotic Matter");
@@ -60,7 +60,7 @@ assert.match(market.commodityPurpose("cuprite_ore",[smelter]),/Sell raw.*Conduct
 // §goods-icons: one set. Every master in the goods folders is listed in
 // GOODS_ICONS (new art can't land unwired), and every listed icon is derived,
 // transparent and trimmed to the same fill, so a stockpile reads as one set.
-const masters = ["ores-2026-09-16","fuel-goods-2026-10-12","goods-2026-10-24"].flatMap((folder) => {
+const masters = ["ores-2026-09-16","fuel-goods-2026-10-12","goods-2026-10-24","goods-2026-11-07","goods-2026-11-08"].flatMap((folder) => {
   const dir = new URL(`../art-src/${folder}/`,import.meta.url);
   return existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith(".png")).map((n) => n.slice(0, -4)) : [];
 });
@@ -85,7 +85,7 @@ for (const name of icons.GOODS_ICONS) {
   assert.ok(markup.includes(`/goods-v1/${name}-64.png`) && /srcset=.*128.png 2x/.test(markup), `${name} uses its goods icon`);
   assert.ok(markup.includes(`title="${icons.label(commodity)}"`));
 }
-for (const key of ["uranium","antimatter","fusionCore"]) assert.equal(icons.isPlaceholder(key),false,`${key} has art`);
+for (const key of ["uranium","antimatter","fissionReactor"]) assert.equal(icons.isPlaceholder(key),false,`${key} has art`);
 
 const body = { id: 1, name: "Freya II", environment: "uninhabitable", size: "medium", structures: { smelter: 1 }, deposits: [], industrial_slots: 3, resource_slots: 1, infrastructure_slots: 2 };
 const assignment = { body_id: 1, structure: "smelter", title: "Smelter", tier: 1,
@@ -129,7 +129,25 @@ model.economy = state;
 const panel = new PlanetPanel(), commands = [];
 const act = data => panel.handleAction({deckAct:data.action,...data},model,c => commands.push(plain(c)));
 panel.focus("smelter");
-assert.match(panel.render(model),/Raw versus refined estimate.*Estimate · 50 Ferrite Ore/s);
+// Peter (Nov 9 2026): "Remove this from the smelter": the refine-or-sell
+// estimate is the mine's, not the Smelter's.
+assert.doesNotMatch(panel.render(model),/Raw versus refined estimate|Estimate · |Refine &amp; sell/, "no estimate on the Smelter");
+// §smelter-ores (Peter, Nov 9 2026: "Do not list all the ore types until the
+// player can actually smelt/refine them"): only the ores its system can feed it.
+{
+  const ores = (r, current) => [...market.smelterOres(r, current)].sort();
+  const sample = { stockpile: [{ commodity: "metallic_ore", units: 10 }, { commodity: "cuprite_ore", units: 0 }, { commodity: "titanium_ore", units: 5 }],
+    flows: [{ commodity: "bornite_ore", made: .2, used: 0 }, { commodity: "olivine_ore", made: 0, used: .1 }],
+    bodies: [{ structures: { mining_complex: 1 }, deposits: [{ resource: "crystalline_ore" }] }, { structures: {}, deposits: [{ resource: "rare_metal_ore" }] }] };
+  assert.deepEqual(ores(sample), ["bornite_ore", "crystalline_ore", "metallic_ore", "titanium_ore"],
+    "in the stores, made there, or under a mine; not an empty slot, an ore only used, or an unmined deposit");
+  assert.deepEqual(ores({ stockpile: null, flows: undefined, bodies: [] }, "void_crystal"), ["metallic_ore", "void_crystal"], "Ferrite and the line's own recipe always");
+  const shown = [...panel.render(model).matchAll(/data-deck-act="planet-ore" data-ore="([^"]+)"/g)].map(m => m[1]).sort();
+  const current = assignment.refining_ore ?? "metallic_ore";
+  const feedable = market.smelterOres(report, current);
+  const expected = model.catalog.find(o => o.key === "smelter").refining_recipes.map(r => r.inputs[0][0]).filter(c => feedable.has(c)).sort();
+  assert.deepEqual(shown, expected, "the picker lists exactly the recipes those ores feed");
+}
 // §unlocks (Peter, Oct 28 2026): with no Smelter standing and no Enrichment,
 // there is no refining to plan, so no estimate.
 {

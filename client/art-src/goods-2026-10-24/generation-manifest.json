@@ -1,0 +1,36 @@
+{
+  "mode": "built-in image_gen",
+  "generatedAt": "2026-11-08",
+  "brief": "docs/shipbuilding-art-prompts.md",
+  "assets": [
+    {
+      "key": "hull_sections",
+      "name": "Hull Sections",
+      "group": "hull",
+      "master": "client/art-src/goods-2026-10-24/hull_sections.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "d14b13dc96b984ffe7065a951ad739fc1e19efddb16bd007e07af6947d050802",
+      "transparent": true,
+      "bounds": {
+        "left": 79,
+        "top": 175,
+        "width": 1070,
+        "height": 925
+      },
+      "fill": 0.8532695374800638,
+      "clearShare": 0.6235605869828987,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game integration and derivative build left to the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A curved armoured hull section: a riveted grey steel plate segment with internal ribbing visible along its open edge.\nDelivery: exactly one 1254 × 1254 RGBA PNG. Keep the complete object centred with its longest silhouette dimension approximately 1000 pixels (80% of the canvas), with generous transparent margins on all sides and completely clear corners. Show one curved, thick steel hull segment with broad readable plating and the internal structural ribs visible at its open edge. The riveting and panel detail are restrained so the silhouette reads at 32 px. No lettering, badge, diagram or scene.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-bf4fdeb0-de4f-49b2-b003-a6ad565d202f.png",
+          "sourceSha256": "d14b13dc96b984ffe7065a951ad739fc1e19efddb16bd007e07af6947d050802"
+        }
+      ]
+    }
+  ]
+}

@@ -20,14 +20,17 @@ impl Observation {
     }
 
     /// Provisions a second the home's staffed farms make, as reported.
+    /// §habitat-first (Nov 8 2026): at their planet's power, which the
+    /// Agroplex draws now.
     pub(super) fn food_grown(&self) -> f64 {
         let system = &self.home.system;
         system.bodies.iter().flat_map(|body| body.structures.iter().map(move |(&kind, &tier)| (body, kind, tier)))
             .filter_map(|(body, kind, tier)| {
                 let a = body.assignments.get(&kind).filter(|a| a.workers > 0)?;
                 let recipe = sim::production::assigned_converter(kind, Some(a)).filter(|r| r.output == C::Provisions)?;
+                let power = if sim::power::powered(kind) { body.grid.power } else { 1.0 };
                 Some(recipe.rate * sim::production::tier_throughput(tier) * a.workers.min(tier) as f64
-                    / tier.max(1) as f64 * system.staffing_share())
+                    / tier.max(1) as f64 * system.staffing_share() * power)
             })
             .sum()
     }
@@ -45,8 +48,11 @@ impl Observation {
         }
         let system = &self.home.system;
         let expanded = |kind: K| system.bodies.iter().any(|b| b.tier(K::CommandCenter) == 0 && b.tier(kind) > 0);
+        // §den-stores (Nov 5 2026): the Smelter too, whose Alloys an optional
+        // Warehouse once took (the Expansion crate's slack had hidden it).
         let ahead = [
             (system.tier(K::Academy) == 0, BuildKind::Upgrade { upgrade: K::Academy }),
+            (system.tier(K::Smelter) == 0, BuildKind::Upgrade { upgrade: K::Smelter }),
             (step <= sim::FoundingStage::ExpandMining.step() && !expanded(K::PowerPlant),
                 BuildKind::Upgrade { upgrade: K::PowerPlant }),
             (step <= sim::FoundingStage::ExpandMining.step() && !expanded(K::MiningComplex),
@@ -57,13 +63,17 @@ impl Observation {
         ];
         for (_, what) in ahead.into_iter().filter(|(due, _)| *due) {
             for &(c, n) in sim::build::recipe_for(what).costs {
+                // The barge's own crate (Reach) brings all but its chips.
+                if what == (BuildKind::Ship { ship: H::MiningBarge }) && c != C::Electronics {
+                    continue;
+                }
                 *goods.entry(c).or_insert(0.0) += n;
             }
         }
-        // §charter-crates: what the crates still sealed will bring needs no
-        // holding back.
+        // §den-stores: what the den's stash will bring needs no holding back;
+        // a crate opens only with its own chapter's builds.
         for (c, n) in goods.iter_mut() {
-            *n = (*n - self.sealed_crates.get(c).copied().unwrap_or(0.0)).max(0.0);
+            *n = (*n - self.stash_coming.get(c).copied().unwrap_or(0.0)).max(0.0);
         }
         goods.retain(|_, n| *n > 0.0);
         goods
@@ -79,17 +89,21 @@ impl Observation {
 /// §charter-v5: the goods the charter's builds after the den take: the
 /// Academy, the expansion's Solar Array and Mining Complex, the Survey Probe
 /// and the Mining Barge, and the Semiconductors research draws meanwhile
-/// (`merchant::RESEARCH_RESERVE`). The guide's "Stock up" prefill counts the
-/// same (client `merchant.ts`, `AHEAD`) plus the vendetta's second
-/// Interceptor, which bots skip.
+/// (`merchant::RESEARCH_RESERVE`). The vendetta's second Interceptor, which
+/// bots skip, isn't counted. §smelt-from-landing (Nov 6 2026): the Smelter
+/// runs from before the Interceptor and makes every Alloy after it, and
+/// §freight-frames the Small Freighter comes after the research.
 pub(super) fn charter_goods_ahead() -> BTreeMap<C, f64> {
     let mut goods = BTreeMap::from([(C::Electronics, sim::merchant::RESEARCH_RESERVE)]);
-    for what in [BuildKind::Upgrade { upgrade: K::Academy }, BuildKind::Upgrade { upgrade: K::Smelter },
+    for what in [BuildKind::Upgrade { upgrade: K::Academy }, BuildKind::Ship { ship: H::SmallFreighter },
         BuildKind::Upgrade { upgrade: K::PowerPlant },
         BuildKind::Upgrade { upgrade: K::MiningComplex }, BuildKind::Ship { ship: H::SurveyProbe },
         BuildKind::Ship { ship: H::MiningBarge }]
     {
         for &(c, n) in sim::build::recipe_for(what).costs {
+            if c == C::Alloys {
+                continue;
+            }
             *goods.entry(c).or_insert(0.0) += n;
         }
     }
@@ -97,17 +111,18 @@ pub(super) fn charter_goods_ahead() -> BTreeMap<C, f64> {
 }
 
 impl Bot {
-    /// §charter-v4: the landing world's first Solar Array: the Shipyard needs
-    /// more than the Command Center's reactor. §charter-v5: built with the
-    /// semiconductors the trader sells back after the raid.
+    /// §charter-v4: the landing world's first Solar Array. §charter-v6 (Peter,
+    /// Nov 7 2026): before the mine — the Command Center's reactor runs the
+    /// colony, not the mine or the Smelter — from the kit's Semiconductors.
+    /// §habitat-first (Nov 8 2026): step 2, before the farms.
     pub(super) fn landing_plant(&self, p: &Observation) -> Option<Project> {
-        if !p.charter_allows(K::PowerPlant) || p.home.system.tier(K::PowerPlant) > 0 || p.home.system.tier(K::MiningComplex) == 0 {
+        if !p.charter_allows(K::PowerPlant) || p.home.system.tier(K::PowerPlant) > 0 {
             return None;
         }
         Some(Project { what: BuildKind::Upgrade { upgrade: K::PowerPlant }, body: p.landing_body()? })
     }
 
-    /// §gun-platform: step 6's Gun Platform over the landing world, from kit
+    /// §gun-platform: step 6's Laser Battery on the landing world, from kit
     /// Alloys and Machinery (nothing the raid took).
     pub(super) fn gun_platform(&self, p: &Observation) -> Option<Project> {
         if !p.local_opening || p.founding_stage != sim::FoundingStage::BuildGunPlatform
@@ -119,28 +134,31 @@ impl Bot {
         Some(Project { what: BuildKind::Upgrade { upgrade: K::OrbitalDefense }, body: p.landing_body()? })
     }
 
-    /// §charter-v5: between the mine and the ore sale the raid takes the
-    /// kit's semiconductors and Armaments, so nothing is built from them.
+    /// §charter-v5: between the mine and the raid's report the raid takes the
+    /// kit's semiconductors and Armaments, so nothing else is built from them
+    /// (§charter-v6: the Smelter, built in that window, takes none).
     pub(super) fn raid_pending(&self, p: &Observation) -> bool {
         p.local_opening && p.home.system.tier(K::MiningComplex) > 0
-            && p.founding_stage.step() < sim::FoundingStage::PowerShipyard.step()
+            && p.founding_stage.step() < sim::FoundingStage::BuildGunPlatform.step()
     }
 
-    /// §charter-v5: "Sell ore to the trader": all the free ore it will take.
-    pub(super) fn charter_ore_sale(&mut self, p: &Observation) -> Option<Command> {
+    /// §sell-alloys (Nov 11 2026): "Sell Alloys to the trader": all the free
+    /// Alloys it will take (the Landfall crate carries them).
+    pub(super) fn charter_sale(&mut self, p: &Observation) -> Option<Command> {
         if p.founding_stage != sim::FoundingStage::SellOre || !self.ready("merchant", p.now) {
             return None;
         }
         let visit = p.merchant.as_ref().filter(|v| v.phase == sim::merchant::MerchantPhase::Docked
             && v.system == p.home.system.id)?;
-        let ore = (p.home.system.free_stock(C::MetallicOre).floor().max(0.0) as u32).min(visit.ore_room());
-        if ore == 0 {
+        let good = sim::merchant::BUYS;
+        let units = (p.home.system.free_stock(good).floor().max(0.0) as u32).min(visit.room());
+        if units == 0 {
             return None;
         }
         self.wait("merchant".into(), p, p.home.system.pos);
-        self.status = "founding charter: selling ore to the trader".into();
+        self.status = "founding charter: selling Alloys to the trader".into();
         Some(Command::MerchantTrade { player_id: p.owner, buys: BTreeMap::new(),
-            sells: BTreeMap::from([(C::MetallicOre, ore)]) })
+            sells: BTreeMap::from([(good, units)]) })
     }
 
     /// §charter-v4: an Interceptor for the privateer, from the Shipyard.
@@ -203,74 +221,108 @@ impl Bot {
                 && f.fuel.is_some() && store(f) >= trip(f))
             .min_by(|a, b| a.pos.distance(target.pos).total_cmp(&b.pos.distance(target.pos)).then(a.id.cmp(&b.id)));
         let Some(fleet) = fleet else {
-            // Short of fuel at home: the trader's Deuterium fills it at the dock.
+            // Short of fuel at home: the trader's fuel for its cores fills it
+            // at the dock (§shipbuilding-overhaul: Uranium for a fission hull).
             let short = raiders().filter(|f| !self.returns.contains_key(&f.id))
-                .map(|f| trip(f) - store(f) - p.stock(C::Deuterium)).fold(0.0, f64::max);
-            return self.trader_fuel(p, short);
+                .map(|f| (regime_fuel(f), trip(f) - store(f) - p.stock(regime_fuel(f)) * primary_grade(f).energy_per_unit()))
+                .max_by(|a, b| a.1.total_cmp(&b.1));
+            return short.and_then(|(fuel, energy)| self.trader_fuel(p, energy, fuel));
         };
         self.wait(format!("fleet:{}", fleet.id), p, fleet.pos);
         self.status = "founding charter: the Interceptor after the privateer".into();
         Some(Command::AttackFleet { player_id: p.owner, fleet_id: fleet.id, target_id: target.id })
     }
 
-    /// §charter-v5: buy `short` Deuterium (and a margin) from the docked
-    /// trader, for an Interceptor that can't make its charter trip.
-    fn trader_fuel(&mut self, p: &Observation, short: f64) -> Option<Command> {
-        if short <= 0.0 || !p.trader_stocks(C::Deuterium) || !self.ready("merchant", p.now) {
+    /// §charter-v5: buy `short` ENERGY of `fuel` (and a margin) from the
+    /// docked trader, for an Interceptor that can't make its charter trip.
+    /// §shipbuilding-overhaul: the fuel its cores burn.
+    fn trader_fuel(&mut self, p: &Observation, short: f64, fuel: C) -> Option<Command> {
+        if short <= 0.0 || !p.trader_stocks(fuel) || !self.ready("merchant", p.now) {
             return None;
         }
         let visit = p.merchant.as_ref()?;
-        let units = ((short + 2.0).ceil() as u32).min(visit.stock.get(&C::Deuterium).copied().unwrap_or(0));
-        let cost = visit.quote(&BTreeMap::from([(C::Deuterium, units)]), &BTreeMap::new()).ok()?.cost;
+        let per_unit = sim::fuel::ReactorGrade::burning(fuel).map_or(1.0, |g| g.energy_per_unit());
+        let units = ((short / per_unit + 2.0).ceil() as u32).min(visit.stock.get(&fuel).copied().unwrap_or(0));
+        let cost = visit.quote(&BTreeMap::from([(fuel, units)]), &BTreeMap::new()).ok()?.cost;
         if units == 0 || cost > self.spendable(p, true) {
             return None;
         }
-        self.spend(p, cost);
+        self.spend_at_home(p, cost);
         self.wait("merchant".into(), p, p.home.system.pos);
-        self.status = "founding charter: Deuterium from the trader for the Interceptor".into();
-        Some(Command::MerchantTrade { player_id: p.owner, buys: BTreeMap::from([(C::Deuterium, units)]),
+        self.status = format!("founding charter: {} from the trader for the Interceptor", fuel.display_name());
+        Some(Command::MerchantTrade { player_id: p.owner, buys: BTreeMap::from([(fuel, units)]),
             sells: BTreeMap::new() })
     }
 
-    /// §charter-v5: the trader's last call. Once the privateer's kill is
-    /// reported the trader leaves within minutes (`merchant::LAST_CALL_S`), and
-    /// after it only the Market Hub sells what the kit no longer covers (the
-    /// raid took its semiconductors): the bounty buys what the builds after
-    /// the den lack, semiconductors first, as far as the cash goes.
+    /// §charter-v5: the bots' stock-up. Once the privateer's kill is reported
+    /// the bounty buys what the builds after the den lack of what the kit no
+    /// longer covers (the raid took its semiconductors), semiconductors first,
+    /// as far as the cash goes. §den-contract (Nov 5 2026): the trader now
+    /// stays for the charter, so this is the bots' habit, not a deadline.
+    /// §three-stipends (Nov 6 2026): at twice the Hub it keeps the operating
+    /// reserve and leaves what the den's loot will bring, or the stock-up
+    /// spends the colony into recovery before the Academy.
     pub(super) fn charter_stock_up(&mut self, p: &Observation) -> Option<Command> {
-        if !matches!(p.founding_stage, sim::FoundingStage::EliminateDen | sim::FoundingStage::PrepareExport)
+        if !matches!(p.founding_stage, sim::FoundingStage::EliminateDen | sim::FoundingStage::RepairInterceptor
+                | sim::FoundingStage::BuildTinyFreighter | sim::FoundingStage::FullSpeed | sim::FoundingStage::HaulLoot
+                | sim::FoundingStage::PrepareExport)
             || !self.ready("merchant", p.now)
         {
             return None;
         }
         let visit = p.merchant.as_ref().filter(|v| v.phase == sim::merchant::MerchantPhase::Docked
             && v.system == p.home.system.id && p.local_opening)?;
-        let mut ahead = charter_goods_ahead();
-        // The Interceptor's tank too: development waits while a docked hull
-        // is short of fuel, and the Hub's Deuterium is far.
-        let fuel = p.fuel_target_of(C::Deuterium) * 2.0 - p.stock(C::Deuterium) - p.inbound(C::Deuterium) as f64;
-        let mut buys = BTreeMap::new();
-        let mut budget = self.spendable(p, true);
-        for c in [C::Electronics, C::Deuterium].into_iter()
-            .chain(ahead.keys().copied().filter(|c| *c != C::Electronics).collect::<Vec<_>>())
-        {
-            let short = if c == C::Deuterium { fuel.ceil().max(0.0) as u32 } else {
-                // §charter-crates: the crates still sealed bring their goods.
-                (ahead.remove(&c).unwrap_or(0.0) - p.home.system.free_stock(c)
-                    - p.sealed_crates.get(&c).copied().unwrap_or(0.0)).ceil().max(0.0) as u32
-            };
-            let mut units = short.min(visit.stock.get(&c).copied().unwrap_or(0));
-            let one = visit.quote(&BTreeMap::from([(c, 1)]), &BTreeMap::new()).map_or(f64::INFINITY, |q| q.cost);
-            units = units.min((budget / one).floor() as u32);
-            if units > 0 {
-                budget -= one * units as f64;
-                buys.insert(c, units);
+        let ahead = charter_goods_ahead();
+        // What can't wait, from essential cash: §den-stores (Nov 6 2026) the
+        // parts the blast's repairs take (the den holds no Alloys, so they are
+        // the trader's, as the guide's "Buy the repair parts"), and fuel
+        // (development waits while a docked hull is short of it, and the
+        // Hub's is far).
+        let hurt: f64 = p.own().filter(|f| p.den_wounded.contains(&f.id))
+            .map(|f| f.damage.unwrap_or(0.0) * f.composition.as_ref().map_or(f.kind.hull_mass(),
+                |ships| ships.iter().map(|s| s.kind.hull_mass() * s.count as f64).sum()))
+            .sum();
+        let mut now: Vec<(C, u32)> = sim::build::REPAIR_COST_PER_HP.iter()
+            .map(|&(c, per)| (c, (hurt * per - p.home.system.free_stock(c)).ceil().max(0.0) as u32)).collect();
+        // §shipbuilding-overhaul: whichever fuel the colony's hulls burn.
+        for fuel in [C::Uranium, C::Deuterium] {
+            now.push((fuel, (p.fuel_target_of(fuel) * 2.0 - p.stock(fuel) - p.inbound(fuel) as f64).ceil().max(0.0) as u32));
+        }
+        // §smelt-from-landing (Nov 6 2026): with the loot home, the first
+        // export flies Slow on the trader's Uranium (its store for the Tiny
+        // Freighter); the Hub's is a round trip away.
+        if p.founding_stage == sim::FoundingStage::PrepareExport {
+            now.push((C::Uranium, (p.fuel_target_of(C::Uranium) * 2.0 - p.stock(C::Uranium)
+                - p.inbound(C::Uranium) as f64).ceil().max(0.0) as u32));
+        }
+        // The goods ahead, semiconductors first. §charter-crates: the crates
+        // still sealed bring their goods, §den-stores and the den's loot its
+        // own. §three-stipends (Nov 6 2026): only from what the operating
+        // reserve leaves, or at twice the Hub the stock-up spends the colony
+        // into recovery before the Academy.
+        let later: Vec<(C, u32)> = [C::Electronics].into_iter()
+            .chain(ahead.keys().copied().filter(|c| *c != C::Electronics))
+            .map(|c| (c, (ahead[&c] - p.home.system.free_stock(c) - p.sealed_crates.get(&c).copied().unwrap_or(0.0)
+                - p.stash_coming.get(&c).copied().unwrap_or(0.0)).ceil().max(0.0) as u32))
+            .collect();
+        let mut buys: BTreeMap<C, u32> = BTreeMap::new();
+        let mut spent = 0.0;
+        for (wants, budget) in [(now, self.spendable(p, true)), (later, self.spendable(p, false))] {
+            for (c, short) in wants {
+                let have = buys.get(&c).copied().unwrap_or(0);
+                let one = visit.quote(&BTreeMap::from([(c, 1)]), &BTreeMap::new()).map_or(f64::INFINITY, |q| q.cost);
+                let units = short.min(visit.stock.get(&c).copied().unwrap_or(0).saturating_sub(have))
+                    .min(((budget - spent).max(0.0) / one).floor() as u32);
+                if units > 0 {
+                    spent += one * units as f64;
+                    *buys.entry(c).or_insert(0) += units;
+                }
             }
         }
         let cost = visit.quote(&buys, &BTreeMap::new()).ok()?.cost;
-        self.spend(p, cost);
+        self.spend_at_home(p, cost);
         self.wait("merchant".into(), p, p.home.system.pos);
-        self.status = "founding charter: stocking up from the trader before it leaves".into();
+        self.status = "founding charter: stocking up from the trader".into();
         Some(Command::MerchantTrade { player_id: p.owner, buys, sells: BTreeMap::new() })
     }
 
@@ -281,6 +333,34 @@ impl Bot {
     pub(super) fn charter_den(&mut self, p: &Observation) -> Option<Command> {
         let (_, pos) = p.den?;
         self.raider_to(p, pos, sim::pirate::PIRATE_ASSAULT_RADIUS, "founding charter: the Interceptor to the privateer den")
+    }
+
+    /// §stash: "Haul back the den's loot", as a founder plays it: a freighter
+    /// with room for it flies to the den, where it loads and heads home by itself.
+    /// The damaged Interceptor's trip home is `recover_military`'s.
+    pub(super) fn charter_stash(&mut self, p: &Observation) -> Option<Command> {
+        let (_, pos) = p.stash?;
+        let room = |f: &GhostView| capacity(f).saturating_sub(cargo_used(f));
+        let need: u32 = sim::ShipKind::TinyFreighter.cargo_units();
+        let bound = |f: &GhostView| f.path.as_ref().and_then(|path| path.last()).is_some_and(|v| v.pos.distance(pos) < 1.0);
+        if p.own().any(|f| f.kind.is_player_freighter() && (bound(f) || f.pos.distance(pos) <= 2_000.0)) {
+            return None;
+        }
+        let freighters = || p.own().filter(|f| f.kind.is_player_freighter() && room(f) >= need && !p.fighting.contains(&f.id)
+            && self.ready(&format!("fleet:{}", f.id), p.now));
+        // §den-stores (Nov 5 2026): the den's three loads at Full speed, as the
+        // guide's step 15 has a founder fly them; the stock-up buys the
+        // Deuterium of a hull on Full.
+        if let Some(slow) = freighters().find(|f| f.transit == Some(sim::ship::TransitMode::Slow)) {
+            self.wait(format!("fleet:{}", slow.id), p, slow.pos);
+            self.status = "founding charter: the freighter to Full speed for the den's loads".into();
+            return Some(Command::SetFleetTransit { player_id: p.owner, fleet_id: slow.id, mode: sim::ship::TransitMode::Full });
+        }
+        let carrier = freighters().filter(|f| p.enough_fuel(f, pos))
+            .min_by(|a, b| a.pos.distance(pos).total_cmp(&b.pos.distance(pos)).then(a.id.cmp(&b.id)))?;
+        self.wait(format!("fleet:{}", carrier.id), p, carrier.pos);
+        self.status = "founding charter: the freighter to the den for its stash".into();
+        Some(Command::MoveShip { player_id: p.owner, ship_id: carrier.id, dest: pos })
     }
 
     /// An Interceptor with fuel for the round trip flies to `pos`, unless one
@@ -304,8 +384,9 @@ impl Bot {
             .min_by(|a, b| a.pos.distance(pos).total_cmp(&b.pos.distance(pos)).then(a.id.cmp(&b.id)));
         let Some(fleet) = fleet else {
             let short = raiders().filter(|f| !self.returns.contains_key(&f.id))
-                .map(|f| trip(f) - store(f) - p.stock(C::Deuterium)).fold(0.0, f64::max);
-            return self.trader_fuel(p, short);
+                .map(|f| (regime_fuel(f), trip(f) - store(f) - p.stock(regime_fuel(f)) * primary_grade(f).energy_per_unit()))
+                .max_by(|a, b| a.1.total_cmp(&b.1));
+            return short.and_then(|(fuel, energy)| self.trader_fuel(p, energy, fuel));
         };
         self.wait(format!("fleet:{}", fleet.id), p, fleet.pos);
         self.status = status.into();
@@ -492,12 +573,7 @@ impl Bot {
             });
         } else if at_home(scout)
             && ready(self, scout)
-            && home
-                .modules
-                .get(&sim::ModuleKind::ReconSuite)
-                .copied()
-                .unwrap_or(0)
-                > 0
+            && home.module_stock(sim::ModuleKind::ReconSuite) > 0
         {
             let from = scout
                 .loadouts

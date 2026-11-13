@@ -40,7 +40,7 @@ function fixture() {
   const clock = { state, liveSimTime: () => state.simTime };
   const renderer = { stateVersion: 0, siteError: () => null };
   const fleets = compile("core/derive/fleet.ts", { "../../state": clock, "../../protocol": protocol,
-    "./geo": { HYPERLIMIT_SU: 900 } });
+    "./geo": { HYPERLIMIT_SU: 900 }, "./equipment": equipment });
   const tenders = compile("core/derive/tenders.ts", { "../../protocol": protocol, "./fleet": fleets });
   const interdiction = compile("core/derive/interdiction.ts");
   const commands = compile("core/fleetorders.ts", { "../icons": icons, "./derive/fleet": fleets, "./derive/tenders": tenders,
@@ -142,7 +142,7 @@ test("Slow needs confirmation on desktop, strip and mobile; ships of the line ca
     assert.equal(JSON.stringify(f.state.ghosts), before, "no optimistic mode or fuel changes");
     assert.equal(f.commands.fleetCommandsValid([{type:"SetFleetTransit",fleet_id:"101",mode:"slow"}],f.state),true,"warships fly Slow too");
     f.state.ghosts.push({...f.state.ghosts[0],id:"105",kind:"battleship",composition:[{kind:"battleship",count:1}]});
-    assert.equal(f.commands.fleetCommandsValid([{type:"SetFleetTransit",fleet_id:"105",mode:"slow"}],f.state),false,"a ship of the line carries no fission store");
+    assert.equal(f.commands.fleetCommandsValid([{type:"SetFleetTransit",fleet_id:"105",mode:"slow"}],f.state),true,"§reactors-drives: any formation with engines throttles back to Slow (Fleet::can_slow)");
   }
 });
 
@@ -151,23 +151,29 @@ test("Slow quotes a quarter of the energy at half speed on Uranium; Fusion Freig
   const dest = {x:85_000,y:0};
   const fulls = [];
   for (const kind of ["tiny_freighter","small_freighter","convoy","large_freighter","heavy_freighter","bulk_freighter"]) {
+    // §reactors-drives: a charter freighter rides Fission Reactors and Zephyr Drives.
     const full = {...f.state.ghosts[1],kind,composition:[{kind,count:1}],fuel_capacity:undefined,
+      drives:[{reactor:"fission",drive:"zephyr",count:1}],
       cargo_manifest:[{commodity:"metallic_ore",units:protocol.cargoUnitsPerHull(kind)}]};
     const slow = {...full,transit:"slow"}, stealth = {...full,transit:"stealth"};
     assert.ok(Math.abs(fleet.estimatedFuelForLeg(slow,dest)-fleet.estimatedFuelForLeg(full,dest)*.25)<1e-9);
+    // §reactors-drives: Stealth needs a Gale Drive; on Zephyr drives it flies Full.
     assert.equal(fleet.estimatedFuelForLeg(stealth,dest),fleet.estimatedFuelForLeg(full,dest));
     assert.equal(fleet.transitSpeedMultiplier(slow),.5);
-    assert.equal(fleet.transitSpeedMultiplier(stealth),.5);
+    assert.equal(fleet.transitSpeedMultiplier(stealth),1);
+    // A fission hull burns Uranium at any throttle.
     assert.equal(fleet.regimeFuel(slow),"uranium");
-    assert.equal(fleet.regimeFuel(full),"deuterium");
-    assert.equal(fleet.fleetFuelCapacity(slow),fleet.fleetFuelCapacity(full));
-    assert.equal(fleet.fleetUraniumCapacity(slow),fleet.fleetFuelCapacity(full),"a freighter's fission store matches its tank");
+    assert.equal(fleet.regimeFuel(full),"uranium");
+    // §reactors-drives: a fission hull has one tank, of Uranium (hull mass × 0.035); no Deuterium tank.
+    assert.equal(fleet.fleetFuelCapacity(full),0,"no Deuterium tank on a fission hull");
+    assert.ok(fleet.fleetUraniumCapacity(full)>0 && fleet.fleetUraniumCapacity(slow)===fleet.fleetUraniumCapacity(full),"the Uranium tank, at any throttle");
     fulls.push([full, fleet.estimatedFuelForLeg(full,dest)]);
   }
+  // §reactors-drives: any formation with engines throttles back to Slow (Fleet::can_slow).
   const line = {...f.state.ghosts[1],transit:"slow",composition:[{kind:"convoy",count:1},{kind:"battleship",count:1}]};
-  assert.equal(fleet.slowCapable(line),false);
-  assert.equal(fleet.cruiseFuelMultiplier(line),1);
-  assert.equal(fleet.transitSpeedMultiplier(line),1);
+  assert.equal(fleet.slowCapable(line),true);
+  assert.equal(fleet.cruiseFuelMultiplier(line),.25);
+  assert.equal(fleet.transitSpeedMultiplier(line),.5);
   const escorted = {...f.state.ghosts[1],transit:"slow",composition:[{kind:"convoy",count:1},{kind:"raider",count:1}]};
   assert.equal(fleet.slowCapable(escorted),true,"an escorted freighter flies Slow with its escort");
   const raider = {...f.state.ghosts[0],transit:"full"}, raiderLeg = fleet.estimatedFuelForLeg(raider,dest);
@@ -186,7 +192,8 @@ test("Fusion Freight cuts each freighter's share; Slow moves quote Uranium; driv
   const rival = {...mixed,own:false};
   assert.equal(fleet.cruiseFuelMultiplier(rival), 1, "a rival's research is unknown");
   const slow = f.state.ghosts.find(g => g.id === "102");
-  Object.assign(slow, {transit:"slow",uranium:1,uranium_capacity:157.5,fuel:500});
+  // §reactors-drives: a fission freighter's one tank is Uranium; the Slow quote reads it.
+  Object.assign(slow, {transit:"slow",drives:[{reactor:"fission",drive:"zephyr",count:1}],uranium:1,uranium_capacity:157.5,fuel:0});
   f.intent.beginPendingIntent({verb:"move",shipId:"102",dest:{x:85_000,y:0}});
   assert.match(f.orders.intentSummary(f.state.pendingIntent), /Uranium ~[\d.]+ \/ 1 aboard · FUEL SHORT/,
     "a Slow trip is checked against the Uranium store, not the fusion tank");
@@ -195,7 +202,8 @@ test("Fusion Freight cuts each freighter's share; Slow moves quote Uranium; driv
   f.state.research.programmes.push({id:"prop_military_drives",state:"completed"},{id:"prop_expedition_iii_torch_regime",state:"completed"});
   assert.ok(Math.abs(fleet.fleetBaseSpeed(raider) - before * 1.2 * 1.3) < 1e-9, "warship speed research moves warships");
   assert.equal(fleet.fleetBaseSpeed({...raider,own:false}), before);
-  assert.ok(Math.abs(fleet.cruiseFuelMultiplier({...raider,transit:"full",cargo_manifest:[]}) - 1.4) < 1e-12, "Torch Regime taxes the warship's cruise");
+  // §reactors-drives: the torch rides on the drive's energy multiplier (a Maelstrom's square).
+  assert.ok(Math.abs(fleet.cruiseFuelMultiplier({...raider,transit:"full",cargo_manifest:[]}) - 1.4 * fleet.driveEnergyMult(raider)) < 1e-12, "Torch Regime taxes the warship's cruise");
   assert.equal(fleet.jumpAntimatter(raider, 50_000), jumpBefore, "but never its jump");
 });
 
@@ -495,6 +503,34 @@ test("no shell control bypasses confirmation for a fleet-command literal", () =>
       if (type && ts.isStringLiteral(type.initializer)) assert.ok(!commandTypes.has(type.initializer.text),
         `${path}: ${type.initializer.text} bypasses the order confirmation`);
     });
+  }
+});
+
+test("Jump shows only with a Maelstrom Drive aboard, disabled until every hull has one", () => {
+  // Peter, Nov 12 2026: "remove the Jump option from the ship command panel
+  // until the player actually has a ship that has a Jump capable drive".
+  const f = fixture();
+  // The fleet page formats its distances; the shared stub only had delays.
+  Object.assign(f.deps["../../core/derive/format"], { fmt: String });
+  const raider = f.state.ghosts.find(g => g.id === "101");
+  const panels = g => ({ strip: f.strip.verbHtml(g), page: f.fleet.commandHtml(g) });
+  const button = (html, attr) => html.match(new RegExp(`<button[^>]*${attr}[^>]*>`))?.[0] ?? null;
+  raider.drives = [{ reactor: "fission", drive: "zephyr", count: 2 }];
+  let { strip, page } = panels(raider);
+  assert.equal(button(strip, 'data-deck-command="jump"'), null, "no Jump on the strip without a Maelstrom");
+  assert.equal(button(page, 'data-deck-act="fleet-jump"'), null, "nor on the fleet page");
+  assert.ok(button(strip, 'data-deck-command="move"') && button(strip, 'data-deck-command="recall"'), "the other verbs stay");
+  raider.drives = [{ reactor: "antimatter", drive: "maelstrom", count: 2 }];
+  ({ strip, page } = panels(raider));
+  assert.ok(button(strip, 'data-deck-command="jump"') && !/disabled/.test(button(strip, 'data-deck-command="jump"')),
+    "a Maelstrom fleet jumps from the strip");
+  assert.ok(button(page, 'data-deck-act="fleet-jump"') && !/disabled/.test(button(page, 'data-deck-act="fleet-jump"')),
+    "and from the fleet page");
+  raider.drives = [{ reactor: "antimatter", drive: "maelstrom", count: 1 }, { reactor: "fusion", drive: "zephyr", count: 1 }];
+  ({ strip, page } = panels(raider));
+  for (const html of [button(strip, 'data-deck-command="jump"'), button(page, 'data-deck-act="fleet-jump"')]) {
+    assert.ok(html && /disabled/.test(html) && html.includes("Every hull needs a Maelstrom Drive."),
+      "a mixed formation shows Jump, disabled with the reason");
   }
 });
 

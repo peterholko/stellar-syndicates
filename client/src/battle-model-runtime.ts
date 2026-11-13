@@ -161,7 +161,7 @@ export class BattleModelRuntime {
     const ships = picked.filter(ship => this.cache.has(ship.kind));
     const sections = wrecks.filter(w => this.cache.has(w.kind));
     const depthSlope = frame.depthSlope ?? 0;
-    const signature = JSON.stringify([frame.width, frame.height, frame.reducedMotion, frame.pitch, frame.ringTilt,
+    const signature = JSON.stringify([frame.width, frame.height, frame.pitch, frame.ringTilt,
       depthSlope, ships, bursts, sections]);
     if (signature === this.signature) return { ...this.shown, changed: false };
     if (frame.width !== this.width || frame.height !== this.height) {
@@ -187,7 +187,7 @@ export class BattleModelRuntime {
     for (const flash of this.flashes) flash.intensity = 0;
     let lightIndex = 0;
     for (const burst of bursts) {
-      visitBattleBurst(burst, frame.reducedMotion,
+      visitBattleBurst(burst,
         particle => this.pools[particle.kind].add(particle, this.width, this.height, depthSlope), frame.ringTilt);
       const heat = Math.pow(1 - burst.age / burst.life, 3);
       if (lightIndex < this.flashes.length && heat > .08) {
@@ -195,7 +195,7 @@ export class BattleModelRuntime {
         light.position.set(burst.x - this.width / 2, Math.max(12, r * 1.5) + (burst.y - this.height / 2) * depthSlope,
           burst.y - this.height / 2);
         light.color.setHex(burst.color); light.distance = Math.max(80, r * 9);
-        light.intensity = r * r * heat * (frame.reducedMotion ? 2 : 5);
+        light.intensity = r * r * heat * 5;
       }
     }
     for (const pool of Object.values(this.pools)) pool.finish();

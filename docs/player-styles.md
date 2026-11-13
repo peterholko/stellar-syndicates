@@ -93,16 +93,16 @@ shelters that cover everyone.
 - The guards' guns are scaled to 0.1 (`HIDEOUT_DAMAGE_MULT`): each tier falls
   to one, two and three Interceptors on every seed tried.
 - Left alone for 24 hours, its raiders hunt their founder's freighters and
-  barges outside Gun Platform cover (within 30,000 su), never anyone else's,
+  barges outside Laser Battery cover (within 30,000 su), never anyone else's,
   and never the home itself.
 
 ## The balance checks (Oct 31 2026)
 
 Sim tests in `world.rs` (`§player-styles`):
 
-1. **Undefended home** (Gun Platform, Vault, Warehouse, full stores, no
+1. **Undefended home** (Laser Battery, Vault, Warehouse, full stores, no
    warships) raided by 2 Interceptors and a Combat Freighter from 60,000 su:
-   the Gun Platform kills a raider on 1 trip in 5. The day's haul under the
+   the Laser Battery kills a raider on 1 trip in 5. The day's haul under the
    cap is 350 units worth 6,660 Cr (the Vault keeps the Titanium and
    Machinery). Slow warp nets about 2,300 Cr a day after fuel and losses, so
    the fleet repays itself in about **2.5 days**; full warp burns more than it
@@ -120,7 +120,8 @@ Sim tests in `world.rs` (`§player-styles`):
 For playtesting raids between new players (never in production):
 `DEV_PVP_SANDBOX=1` founds new corporations past the charter, unshielded, with
 the charter's basic buildings staffed; with `DEV_START_SHIPS=raider,raider,combat_freighter`
-each starts with a raid fleet. Both are read on each start and never saved.
+each starts with a raid fleet. Either works alone; both are read on each start
+and never saved.
 
 ## Not built yet
 

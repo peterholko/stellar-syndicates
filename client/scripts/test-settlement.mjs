@@ -34,7 +34,7 @@ vm.runInNewContext(compile("settlement.ts"), { exports, require: dependencies, d
 const { SettlementUI, SETTLEMENT_PROJECTS, FOUNDING_PROFILES, FOUNDING_STORY, projectStatus } = exports;
 assert.equal(FOUNDING_STORY.length, 4, "the prologue includes the frontier warning before world selection");
 assert.equal(FOUNDING_STORY[1].title, "Stellar Charter");
-assert.equal(FOUNDING_STORY[1].text, "{corporation} has been granted a stellar charter by the Terran Charter Authority, the privilege to settle a new planet. Two thousand settlers are ready to begin a new life under your leadership. The Authority will not forget what you owe.");
+assert.equal(FOUNDING_STORY[1].text, "{corporation} has been granted a stellar charter by the Terran Charter Authority, the privilege to settle a new planet. Seven thousand settlers are ready to begin a new life under your leadership. The Authority will not forget what you owe.");
 assert.deepEqual(Array.from(FOUNDING_STORY, slide => slide.art), FOUNDING_STORY_ART);
 assert.equal(new Set(FOUNDING_STORY.map(slide => slide.art)).size, FOUNDING_STORY.length);
 const provenance = JSON.parse(readFileSync(resolve(root, "art-src/founding-intro-v1/prompts.json"), "utf8"));
@@ -61,13 +61,16 @@ for (const profile of FOUNDING_PROFILES) assert.equal(profile.terrain,
   surfaces.planetSurface("/art/terrestrial-512.png", "home", { id: 1, kind: "terrestrial", habitable: true, founding_camp: { profile: profile.id, completed: [] } }),
   "the landing preview and the settled planet use the same terrain");
 const recipes = readFileSync(resolve(root, "../crates/sim/src/settlement.rs"), "utf8");
-for (const [i, variant] of ["Prospect", "SurfaceWorkings", "Storehouse", "Quarters"].entries()) {
+// §habitat-rebase (Nov 1 2026): three projects; Permanent Quarters is gone.
+assert.equal(SETTLEMENT_PROJECTS.length, 3);
+assert.doesNotMatch(recipes, /Self::Quarters/);
+for (const [i, variant] of ["Prospect", "SurfaceWorkings", "Storehouse"].entries()) {
   const recipe = recipes.match(new RegExp(`Self::${variant} => &Recipe \\{([\\s\\S]*?)\\n\\s*\\},`))?.[1];
   assert.ok(recipe, `authoritative recipe ${variant} exists`);
   assert.equal(Number(recipe.match(/build_ticks: (\d+) \* HZ/)[1]), SETTLEMENT_PROJECTS[i].seconds);
   assert.equal(JSON.stringify([...recipe.matchAll(/\((\w+), ([\d.]+)\)/g)].map(m => [m[1].toLowerCase(), Number(m[2])])), JSON.stringify(SETTLEMENT_PROJECTS[i].costs));
 }
-const body = { id: 1, name: "Freya II", population: .002, population_capacity: .003, founding_camp: { profile: "mineral_highlands", completed: [] },
+const body = { id: 1, name: "Freya II", population: .007, population_capacity: .0125, founding_camp: { profile: "mineral_highlands", completed: [] },
   structures: { warehouse: 1, habitat: 1, bioharvester: 1, agroplex: 1 } };
 const system = { id: "home", owner: "1", bodies: [body], storage_used: 120, storage_cap: 250, builds: [], stockpile: [
   { commodity: "alloys", units: 30 }, { commodity: "machinery", units: 15 } ] };
@@ -158,16 +161,17 @@ assert.equal(projectStatus(body, system, SETTLEMENT_PROJECTS[2]), "Needs materia
 system.industry = undefined;
 handlers.click({ target: { closest: () => ({ dataset: { system: "home", body: "1" } }) } });
 state.commandCenter = { x: 50000, y: 0 };
-click("review", { project: "quarters" }); assert.match(dialog.innerHTML, /Confirm project/);
+click("review", { project: "storehouse" }); assert.match(dialog.innerHTML, /Confirm project/);
 assert.match(dialog.innerHTML, /Order travel: 10s/, "project delay uses warp-light speed");
 state.commandCenter = { x: 0, y: 0 };
 assert.equal(sent.length, 1); click("confirm"); assert.equal(sent[1].type, "DevelopSettlement");
-assert.equal(body.population_capacity, .003, "click cannot update housing");
-system.builds.push({ body_id: 1, key: "camp_quarters", queued: true });
-assert.equal(projectStatus(body, system, SETTLEMENT_PROJECTS[3]), "Queued");
-system.builds = []; body.founding_camp.completed.push("quarters");
-assert.equal(projectStatus(body, system, SETTLEMENT_PROJECTS[3]), "Complete");
-system.stockpile = []; assert.equal(projectStatus(body, system, SETTLEMENT_PROJECTS[2]), "Needs materials");
+assert.equal(body.population_capacity, .0125, "click cannot update housing");
+system.builds.push({ body_id: 1, key: "camp_storehouse", queued: true });
+assert.equal(projectStatus(body, system, SETTLEMENT_PROJECTS[2]), "Queued");
+system.builds = []; body.founding_camp.completed.push("storehouse");
+assert.equal(projectStatus(body, system, SETTLEMENT_PROJECTS[2]), "Complete");
+body.founding_camp.completed.push("prospect"); body.structures.mining_complex = 1;
+system.stockpile = []; assert.equal(projectStatus(body, system, SETTLEMENT_PROJECTS[1]), "Needs materials");
 ui.endSession(); assert.equal(dialog.open, false, "session replacement dismisses the modal");
 state.name = "Nova Industries";
 ui.onMessage({ type: "Welcome", player_id: "2", galaxy: { instance_id: "new-fixture" } });

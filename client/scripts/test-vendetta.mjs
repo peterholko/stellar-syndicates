@@ -84,8 +84,9 @@ class Dialog {
 let dialog = null;
 const document = { createElement: () => (dialog = new Dialog()), body: { append() {} } };
 const story = load("story-events.ts", {}, { document, setTimeout, clearTimeout, Date });
-const raid = story.piratesEvent({ semiconductors: 40, armaments: 15 }, vendetta.transmission("raid", st));
-assert.equal(raid.text, "Jace Marrow swept down on the colony and made off with all 40 semiconductors and 15 armaments.");
+const raid = story.piratesEvent({ electronics: 40, armaments: 15 }, vendetta.transmission("raid", st));
+assert.equal(raid.speaker.speaker, "Jace Marrow", "the raider speaks; the take is the grid");
+assert.deepEqual(JSON.parse(JSON.stringify(raid.losses)), [["electronics", 40], ["armaments", 15]]);
 const arrival = story.vendettaEvent("arrival", "Mordecai Marrow is over Alphard.", vendetta.transmission("arrival", st));
 assert.equal(arrival.key, "vendetta_arrival");
 assert.equal(arrival.title, "Mordecai Marrow is here");
@@ -142,7 +143,7 @@ assert.equal(plan.primary.reason, "Mordecai Marrow brings his flagship and four 
 st.ghosts.push(warship("int3"));
 plan = guide.foundingPlan(st, home);
 assert.equal(plan.primary.title, "Hold your warships at home");
-assert.match(plan.primary.copy, /Every warship at rest in Alphard and the Gun Platform join the fight\./);
+assert.match(plan.primary.copy, /Every warship at rest in Alphard and the Laser Battery join the fight\./);
 
 // Over the colony: one click sends every warship at home at him.
 st.ghosts.push({ id: "pack", kind: "corvette", own: false, pos: { x: 500, y: 0 }, vel: { x: 0, y: 0 },

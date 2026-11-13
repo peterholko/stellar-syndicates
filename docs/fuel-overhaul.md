@@ -63,8 +63,24 @@ freight.
   - So freight runs Economy, and warships, which can't use it, pay full price.
 - **Every empty hull has the same range:** 35k su on thrusters, 175k in warp.
   - Tank = hull mass × 0.035; burn = 1e-6 × mass × distance.
-  - Cargo adds 28 mass a unit, so a loaded Bulk Freighter reaches only 22k su
-    at Full. Economy's tenfold saving is what lets big freighters haul at all.
+  - Cargo adds mass by what it is (§cargo-mass, Nov 7 2026): raw ore, ice and
+    harvest 28 a unit, refined bulk 14, precision parts, reactors and drives 7, fuels and
+    munitions 4. A Bulk Freighter full of ore reaches only 22k su at Full;
+    full of Alloys it goes further, and fuel for a colony rides nearly free.
+    Economy's tenfold saving is what lets big freighters haul at all. Bots
+    price a planned load at ore, the heaviest.
+  - Hold ROOM goes by class too (§hold-room, Nov 10 2026,
+    `Commodity::room_quarters`): ore, ice and raw harvest 1 a unit; refined
+    bulk, Provisions and fuel 0.5; parts, cores, modules, Semiconductors and
+    munitions 0.25. A heavy part takes its light part's room; a capital part
+    (reactor, drive or hull section) takes 10 (Peter, Nov 10 2026: "Just make
+    the capital parts take 10 volume units", `ROOM_CAPITAL`). Hold sizes are
+    unchanged, so a Tiny Freighter's 50 room carries 50 ore, 100 Alloys or
+    100 Deuterium, or 200 Semiconductors. A Dreadnought's 97 capital parts
+    fill 970 (one Large Freighter); a Titan's 981 fill 9,810 (two Bulk
+    Freighter loads). Fuel stays at 0.5 so early Deuterium stays dear to haul.
+    The UI shows room as decimals ("74.5 / 300 room"), never fractions.
+    Bots plan Hub imports by room.
 - **Fuel appears from nothing** in three places: new hulls leave the slip
   with a full tank, the Authority rescue delivers it, and Ramscoop skims it.
 - **Jumps are free** (`JUMP_FUEL_FACTOR` = ∞). Only Interceptors and Scouts
@@ -289,6 +305,12 @@ retired the free base: only a Command Center's planet has one, its reactor's
     and its programme counts all change.
 
 ### Authority cores
+
+> **Superseded (Nov 7 2026):** ships now carry a reactor (Fission / Fusion /
+> Advanced Fusion / Antimatter) feeding a warp drive (Zephyr / Gale / Tempest /
+> Maelstrom), one pair per `ShipKind::engines()`, and the Hub sells only the
+> rungs a corporation has researched. See docs/reactor-drive-split.md. The
+> Warp Core and Fusion Core below are the Oct 12 model this grew from.
 
 - **Warp Core** (Drive Assemblies renamed, 215 Cr): every warp hull needs it.
 

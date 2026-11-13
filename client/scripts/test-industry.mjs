@@ -38,7 +38,7 @@ const fixtures = [
   ["composite_works", "composites", "mat_prefab_construction", .3, [["alloys", 1], ["polymers", .75], ["silicates", .5]]],
   ["hull_fabricator", "hull_sections", "mat_prefab_construction", .18, [["composites", 1.2], ["machinery", .5], ["titanium", .6]]],
   ["precision_works", "precision_components", "mat_autoforges", .2, [["electronics", 1], ["machinery", .5], ["rare_elements", .5]]],
-  ["drive_works", "warp_core", "mat_foundry_iv_fusion_reactors", .12, [["precision_components", 1.25], ["composites", .82], ["iridium", .1]]],
+  ["drive_works", "fission_reactor", "mat_autoforges", .005, [["precision_components", .8], ["composites", .5], ["machinery", .3]]],
 ];
 // §charter-gates: a structure the charter hasn't reached yet waits, its step named.
 {
@@ -92,10 +92,9 @@ for (const [key, output, research, rate, inputs] of fixtures) {
   const art = icons.structureIcon(key);
   assert.notEqual(art, "build");
   assert.equal(icons.isPlaceholder(art), false);
-  // §fuel-overhaul: the Warp Core keeps the Drive Assemblies art until its own lands.
-  const goodArt = output === "warp_core" ? "drive_assemblies" : output;
-  assert.ok(icons.commodityIcon(output).includes(`/resource/${goodArt}.png`));
-  for (const [path, size] of [[`structures/${key}`, 128], [`resource/${goodArt}`, 64]]) {
+  const outputArt = icons.GOODS_ICONS.has(output) ? `resource/goods-v1/${output}-64` : `resource/${output}`;
+  assert.ok(icons.commodityIcon(output).includes(`/art/ui_icons/${outputArt}.png`));
+  for (const [path, size] of [[`structures/${key}`, 128], [outputArt, 64]]) {
     const png = readFileSync(new URL(`../public/art/ui_icons/${path}.png`, import.meta.url));
     assert.equal(png.readUInt32BE(16), size);
     assert.equal(png.readUInt32BE(20), size);
@@ -118,13 +117,13 @@ assert.equal(market.conversionSummary({ key: "habitat" }), "");
   assert.equal(colony.PRODUCTION_INPUTS.living_terraces.length, 0, "no input basket");
   assert.match(market.conversionSummary(opt), /^No inputs → 1 Provisions · base 72\/min/);
 }
-assert.equal(new Set(market.COMMODITIES).size, 34, "22 goods, the three belt ores, the three pocket ores and their materials, and the fuel overhaul's Uranium, Antimatter and Fusion Core");
+assert.equal(new Set(market.COMMODITIES).size, 82, "22 goods, the three belt ores, the three pocket ores and their materials, the fuel overhaul's Uranium and Antimatter, the four reactors, the four drives, the kit parts, the munitions, §hull-ladder the 18 heavy and capital parts and §modules-as-goods the 17 modules");
 
 // Welcome supplies the gates and names; View supplies completion. Exercise the
 // shared builder helper used by BOTH shells, not a parallel UI-only rule list.
 const unlocks = [
   ["prop_bunkerage", "Bunkerage", ["volatile_harvester", "fuel_refinery"]],
-  ["mat_enrichment", "Enrichment", ["smelter", "chemical_works"]],
+  ["mat_enrichment", "Enrichment", ["chemical_works"]],
   ["comp_signal_libraries", "Signal Libraries", ["electronics_fabricator"]],
   ["mat_autoforges", "Autoforges", ["machine_works", "precision_works", "drive_works", "naval_drydock"]],
   ["mat_prefab_construction", "Prefab Construction", ["composite_works", "hull_fabricator"]],
@@ -172,7 +171,7 @@ for (const id of [orbitalOption.research_prerequisite, ...orbitalOption.research
   const level = (tier, label, research, requires = null) => ({ tier, label, costs: [], research_prerequisite: research, requires });
   // §gun-platform: six levels, the first needing no research.
   const ladder = { key: "orbital_defense", costs: [], research_prerequisite: null, tiers: [
-    level(1, "Gun Platform", null), level(2, "Defense Platform", "weap_fire_control"), level(3, "Orbital Battery", "weap_orbital_batteries"),
+    level(1, "Laser Battery", null), level(2, "Defense Platform", "weap_fire_control"), level(3, "Orbital Battery", "weap_orbital_batteries"),
     level(4, "Defense Station", "weap_cm_iii_defense_stations", { yard: "ordnance_foundry", tier: 1 }),
     level(5, "Citadel", "weap_cm_v_grand_batteries", { yard: "naval_drydock", tier: 1 }),
     level(6, "Star Fortress", "weap_cm_v_star_fortress", { yard: "capital_slipway", tier: 1 })] };
@@ -240,6 +239,68 @@ assert.equal(market.shipOption({ key: "tiny_freighter", costs: [] }, yardSystem)
 yardSystem.builds.push({ key: "large_freighter", yard: "naval_drydock", body_id: 0 });
 assert.equal(market.shipOption({ key: "large_freighter", costs: [] }, yardSystem).slipsFull, true);
 
+// §power (Peter, Nov 8 2026): the Power Plant's line is flavour by level;
+// the card's Supplies and Burns rows carry the numbers, and Helium-3 waits
+// for the levels its research opens.
+{
+  const flavour = deps["./worldbuild"].powerPlantFlavour;
+  assert.match(flavour(1), /sunlight/);
+  assert.doesNotMatch(flavour(2), /Deuterium|Helium-3|MW/, "a Solar Array names no fuel and no number");
+  assert.match(flavour(3), /Deuterium/);
+  assert.doesNotMatch(flavour(4), /Helium-3/, "Helium-3 waits for its levels");
+  assert.match(flavour(5), /Helium-3/);
+  assert.doesNotMatch(readFileSync(new URL("../src/shell/deck/empire.ts", import.meta.url), "utf8"), /Solar I–II; Deuterium III–IV/);
+}
+
+// §licences (docs/blueprint-licences.md): research is the skill, the
+// Authority's licence the right to build. An Orbital Shipyard hull's keel
+// waits for its licence; the Buy row shows its price; at war, none is needed.
+{
+  const fresh = { ...system, structures: { shipyard: 1, naval_drydock: 1 }, builds: [] };
+  const option = { key: "large_freighter", costs: [] };
+  state.charter = { licences: [{ hull: "large_freighter", held: false, price: 16196.4 }] };
+  let quote = market.shipOption(option, fresh);
+  assert.equal(quote.unlicensed, true);
+  assert.equal(quote.buildable, false, "researched but unlicensed: no keel");
+  assert.equal(quote.reason, "Needs the Authority's licence.");
+  assert.equal(market.licenceNote(quote.licence), "16,196 Cr");
+  assert.equal(market.licenceForSale(quote.licence), true);
+  state.charter.licences[0] = { hull: "large_freighter", held: true, price: 16196.4 };
+  quote = market.shipOption(option, fresh);
+  assert.equal(quote.unlicensed, false);
+  assert.equal(quote.buildable, true, "licensed: the keel can be laid");
+  assert.equal(market.licenceNote(quote.licence), "Licensed");
+  assert.equal(market.licenceForSale(quote.licence), false);
+  state.charter.licences[0] = { hull: "large_freighter", held: false, price: 32392.8, refusal: { reason: "charter_closed" } };
+  quote = market.shipOption(option, fresh);
+  assert.equal(quote.buildable, false);
+  assert.match(quote.reason, /suspended while your charter is revoked/);
+  assert.equal(market.licenceForSale(quote.licence), false);
+  state.charter.licences[0] = { hull: "large_freighter", held: false, price: 16196.4, refusal: { reason: "at_war" } };
+  assert.equal(market.shipOption(option, fresh).buildable, true, "at war with the Authority: none needed");
+  assert.equal(market.licenceNote(state.charter.licences[0]), "None needed · at war");
+  assert.equal(market.licenceNote({ hull: "titan", held: false, price: 13e6, refusal: { reason: "needs_research" } }), "",
+    "research-locked stays hidden");
+  assert.equal(market.licenceNote({ hull: "dreadnought", held: false, price: 1304244.5, refusal: { reason: "needs_commissioned" } }),
+    "Commissioned only · 1,304,245 Cr");
+  assert.equal(market.shipOption({ key: "tiny_freighter", costs: [] }, fresh).licence, undefined, "a ground-Shipyard hull needs none");
+  delete state.charter;
+  const shellSource = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
+  assert.match(shellSource("shell/deck/empire.ts"), /data-deck-act="builder-buy-licence"/, "desk Shipyard: Buy licence");
+  assert.match(shellSource("shell/deck/empire.ts"), /type: "BuyLicence", hull/);
+  assert.match(shellSource("shell/deck/strategic.ts"), /\$\{this\.licencesHtml\(charter\)\}/, "desk Faction: the licences");
+  assert.match(shellSource("shell/deck/strategic.ts"), /type: "BuyLicence", hull/);
+  assert.match(shellSource("shell/mobile/parity.ts"), /data-mobile-act="buy-licence"/, "mobile: Buy licence");
+  assert.match(shellSource("shell/mobile/parity.ts"), /\$\{licences\}\$\{claims\}\$\{pay\}/, "mobile Faction: the licences and claims");
+  // §claims (v90): both shells sell the Authority's claim on an unowned system
+  // and list the claims held on the Faction page.
+  assert.match(shellSource("shell/deck/empire.ts"), /data-deck-act="buy-claim"/, "desk: Buy claim");
+  assert.match(shellSource("shell/deck/empire.ts"), /type: "BuyClaim", system: system\.id/);
+  assert.match(shellSource("shell/deck/strategic.ts"), /\$\{this\.claimsHtml\(charter\)\}/, "desk Faction: the claims");
+  assert.match(shellSource("shell/mobile/parity.ts"), /data-mobile-act="buy-claim"/, "mobile: Buy claim");
+  assert.match(shellSource("shell/mobile/parity.ts"), /type: "BuyClaim", system: button\.dataset\.system/);
+}
+
 // Render the real catalogues: missing/unfinished research hides a structure
 // even if a stale route or previous selection still points at it. Unaffordable
 // researched structures remain visible; only the research gate hides a row.
@@ -270,6 +331,8 @@ for (const researchState of [undefined, "locked", "available", "queued", "active
   }
 }
 const hullUnlocks = [
+  // §research-locked (Nov 11 2026): the Corvette is Escort Datalink's.
+  ["corvette", "hull_line_iii_escort_datalink"],
   ["small_freighter", "prop_freight_frames"], ["convoy", "prop_heavy_lifters"],
   ["large_freighter", "prop_line_express_charters"], ["heavy_freighter", "prop_line_bulk_charters"],
   ["bulk_freighter", "prop_line_autonomous_freight"],
@@ -277,7 +340,7 @@ const hullUnlocks = [
   ["battleship", "hull_line_vi_battleship"], ["dreadnought", "hull_line_vii_dreadnought"],
   ["titan", "hull_line_viii_titan"],
 ];
-const starterHulls = ["scout", "corvette", "raider", "tiny_freighter", "colony"];
+const starterHulls = ["scout", "raider", "tiny_freighter", "colony"];
 state.galaxy.build_options.push(...[...starterHulls, ...hullUnlocks.map(([key]) => key)].map(key => ({
   key, label: icons.label(key), costs: [{ commodity: "alloys", units: 100 }], build_secs: 30,
 })));
@@ -391,9 +454,10 @@ console.log("Mobile construction: one bar on the order building now, places for 
   }
   assert.equal(market.structureBuildSeconds(mine, land, market.openingBuild("mining_complex", 1, "home", land)), 10);
   assert.equal(market.structureBuildSeconds(mine, land), 18);
-  // §charter-gates: step 4's mine rises in the privateer's flight.
+  // §habitat-first (Nov 8 2026): the raid waits for the Smelter, so the
+  // mine is an ordinary opening build (it rose in the privateer's flight).
   state.founding.stage = "build_mine";
-  assert.equal(market.structureBuildSeconds(mine, land, market.openingBuild("mining_complex", 1, "home", land)), 30);
+  assert.equal(market.structureBuildSeconds(mine, land, market.openingBuild("mining_complex", 1, "home", land)), 10);
   assert.equal(market.structureBuildSeconds({ key: "habitat", build_secs: 20, costs: [] }, land, true), 10, "the others keep ten");
   state.founding.stage = "build_bioharvester";
   assert.equal(market.openingBuild("mining_complex", 2, "home", land), false, "level II keeps its time");

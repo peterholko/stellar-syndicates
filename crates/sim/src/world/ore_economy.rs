@@ -60,17 +60,18 @@ fn the_first_research_grant_funds_the_programme_started_at_the_research_step() {
     let corp = w.players.get_mut(&owner).unwrap();
     corp.founding.enabled = true;
     corp.founding.stage = S::FirstResearch;
-    corp.research.active = Some("mat_enrichment".into());
+    // §freight-frames (Nov 6 2026): the charter's research is Freight Frames.
+    corp.research.active = Some(crate::founding::CHARTER_RESEARCH.into());
     w.advance_founding_programs(&[]);
     assert!(w.players[&owner].founding.research_grant_applied);
     assert_eq!(w.players[&owner].research.progress,
-        crate::research::cost_of("mat_enrichment") - crate::founding::FIRST_RESEARCH_REMAINING_S);
+        crate::research::cost_of(crate::founding::CHARTER_RESEARCH) - crate::founding::FIRST_RESEARCH_REMAINING_S);
     assert_eq!(w.players[&owner].founding.stage, S::FirstResearch, "research needs a staffed Academy");
     site_mut(&mut w,home).set_tier(K::Academy,1);
     site_mut(&mut w,home).assign(K::Academy,Assignment::crew(1));
     w.advance_founding_programs(&[]);
-    assert_eq!(w.players[&owner].founding.stage, S::BuildSmelter,
-        "Enrichment under way at a staffed Academy completes the step");
+    assert_eq!(w.players[&owner].founding.stage, S::AnswerSignal,
+        "Freight Frames under way at a staffed Academy completes the step");
     // The grant is one-time, whatever the player does next.
     let corp = w.players.get_mut(&owner).unwrap();
     corp.research.progress = 1.0;

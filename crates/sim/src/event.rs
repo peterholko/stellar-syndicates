@@ -398,6 +398,10 @@ pub enum EventPayload {
         owner: PlayerId,
         kind: crate::specialist::SpecialistKind,
         dest: EntityId,
+        /// §scarcity: what the contract cost (K times the base); 0 in older
+        /// events, which cost the base.
+        #[serde(default)]
+        cost: f64,
     },
     /// §economy Part 4: an Academy finished a training course — one specialist
     /// joined the system's resident pool. OWNER-ONLY, own clock.
@@ -420,6 +424,18 @@ pub enum EventPayload {
         system: EntityId,
         ship: crate::ship::ShipKind,
         loadout: crate::module::Loadout,
+        n: u32,
+    },
+    /// §reactors-drives: `n` hulls of `ship` in `fleet` now ride `reactor`
+    /// and `drive`, swapped at `system`'s yard.
+    EnginesRefitted {
+        owner: PlayerId,
+        fleet: EntityId,
+        system: EntityId,
+        ship: crate::ship::ShipKind,
+        /// The parts asked for; None kept that part.
+        reactor: Option<crate::fuel::ReactorGrade>,
+        drive: Option<crate::fuel::Drive>,
         n: u32,
     },
     /// §ground M7: a landing was REPULSED — the marines that arrived could not
@@ -449,6 +465,28 @@ pub enum EventPayload {
         defenders: u32,
         suppression: f64,
         pos: crate::math::Vec2,
+        /// §veil: marines the Veil shredded in the descent (0 with no Veil).
+        descent_losses: u32,
+    },
+    /// §veil: the VEIL went up over a besieged system — an ionised sky under a
+    /// held war blockade. Both parties learn it light-delayed from the system,
+    /// like `BlockadeEstablished`: the owner's sky lit up, the besieger's guns
+    /// stopped reaching the ground. `by` is the besieger.
+    VeilRaised {
+        owner: PlayerId,
+        by: PlayerId,
+        system: EntityId,
+        pos: crate::math::Vec2,
+        level: u32,
+    },
+    /// §veil: the VEIL came down — the blockade broke, the reactor ran dry, or
+    /// the owner forbade it. `by` is the besieger if one still stands.
+    VeilDropped {
+        owner: PlayerId,
+        by: Option<PlayerId>,
+        system: EntityId,
+        pos: crate::math::Vec2,
+        reason: VeilDown,
     },
     /// §ground G1: the landing was DESTROYED on the ground. The marines are
     /// gone with the transports that carried them; the colony holds. `held` is
@@ -497,39 +535,6 @@ pub enum EventPayload {
         owner: PlayerId,
         fleet: EntityId,
         system: EntityId,
-    },
-    /// §modules Part B3: a module convoy LANDED its crates into a system's ledger.
-    /// OWNER-ONLY, own clock (own-economy precedent, like SpecialistsDelivered).
-    ModulesDelivered {
-        owner: PlayerId,
-        system: EntityId,
-        manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32>,
-    },
-    /// §modules Part B3 (Sol hub): a module PURCHASE from Sol was settled — credits
-    /// debited now, a delivery convoy dispatched hub → `dest`. OWNER-ONLY, own clock
-    /// (price-certain; the delivery is the risky part, like SpecialistHired).
-    ModulesPurchased {
-        owner: PlayerId,
-        kind: crate::module::ModuleKind,
-        n: u32,
-        dest: EntityId,
-        unit_price: f64,
-    },
-    /// §modules Part B3 (Sol hub): a module SALE cleared at Sol on the convoy's
-    /// arrival — credits paid at the buy-back price. OWNER-ONLY, own clock.
-    ModulesSold {
-        owner: PlayerId,
-        kind: crate::module::ModuleKind,
-        n: u32,
-        unit_price: f64,
-    },
-    /// §modules Part B3: a convoy DIED with modules aboard — the crates are lost
-    /// with the ship (the one true loss rule, like SpecialistsLost). OWNER-ONLY,
-    /// light-delayed from the wreck like any battle news.
-    ModulesLost {
-        owner: PlayerId,
-        manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32>,
-        pos: crate::math::Vec2,
     },
     /// §research: a corporation COMPLETED a programme — its effect applies
     /// instantly across that corporation. OWNER-ONLY.
@@ -607,6 +612,24 @@ pub enum EventPayload {
         owner: PlayerId,
         system: EntityId,
         body: u32,
+    },
+    /// §migration-status: a liner landed its cohort on the owner's world.
+    /// `relocated`: the owner's own people moved from another colony.
+    /// OWNER-ONLY, own clock.
+    MigrantsLanded {
+        owner: PlayerId,
+        system: EntityId,
+        body: u32,
+        people: u32,
+        relocated: bool,
+    },
+    /// §migration-status: a liner found no room on arrival (housing lost or
+    /// the world changed hands) and is taking its cohort back.
+    MigrantsTurnedBack {
+        owner: PlayerId,
+        system: EntityId,
+        body: u32,
+        people: u32,
     },
     /// §economy Part 2: a colony's FOOD STATE moved on the 4-rung ladder
     /// (replaces the old binary HabitatSupplyChanged). OWNER-ONLY news, on the
@@ -786,6 +809,46 @@ pub enum EventPayload {
         what: String,
         cost: f64,
     },
+    /// §licences: the Authority licensed `hull` to the corporation at the
+    /// Hub, for `cost`. Owner-only.
+    LicenceBought {
+        owner: PlayerId,
+        hull: ShipKind,
+        cost: f64,
+    },
+    /// §claims: the Authority sold `owner` its claim on `system`. Owner-only,
+    /// from the Hub.
+    ClaimBought {
+        owner: PlayerId,
+        system: EntityId,
+        cost: f64,
+        lapses_at: f64,
+    },
+    /// §claims: a claim the Authority refused, free (the payment comes home).
+    ClaimRefused {
+        owner: PlayerId,
+        system: EntityId,
+        reason: crate::claims::ClaimRefusal,
+    },
+    /// §claims: a claim held a week unused lapsed, unrefunded.
+    ClaimLapsed {
+        owner: PlayerId,
+        system: EntityId,
+    },
+    /// §claims: a Colony Ship reached `system` without its claim and founded
+    /// nothing. Owner-only, from where the ship is.
+    ClaimMissing {
+        owner: PlayerId,
+        system: EntityId,
+        fleet: EntityId,
+    },
+    /// §licences: a licence the Authority refused, free (the payment comes
+    /// home). Owner-only.
+    LicenceRefused {
+        owner: PlayerId,
+        hull: ShipKind,
+        reason: crate::licence::LicenceRefusal,
+    },
     /// §merchant: the merchant left (charter fulfilled or its stay ran out).
     MerchantDeparted {
         owner: PlayerId,
@@ -799,6 +862,15 @@ pub enum EventPayload {
         system: EntityId,
         pos: crate::Vec2,
         stolen: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
+    },
+    /// §stash (Nov 2 2026): the founder's freighter loaded the den's stash
+    /// (what the raid took) at `pos` and is bringing it home. Owner-only, on
+    /// its light home.
+    FoundingStashLoaded {
+        owner: PlayerId,
+        system: EntityId,
+        pos: crate::Vec2,
+        goods: std::collections::BTreeMap<crate::cargo::Commodity, u32>,
     },
     /// §pirates: a player DESTROYED a pirate enclave's base (ground its defense to
     /// 0). `owner` = the victor (they seize the plunder into their inventory);
@@ -1635,10 +1707,26 @@ impl RaidOutcome {
 }
 
 /// Why a build was soft-rejected (§buildings step 1). Owner-only detail for the
+/// §veil: why a Veil came down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VeilDown {
+    /// The blockade broke (or lifted, or the system changed hands).
+    Relieved,
+    /// The Fusion Plant ran out of fuel for it.
+    Dry,
+    /// The owner forbade raising it here.
+    Forbidden,
+}
+
 /// timeline notice; the request costs nothing (no debit, no job — async-fair).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum BuildRejectReason {
+    /// §reactors-drives: a reactor, drive or fuel the corporation has not
+    /// researched yet (`fuel::known_after`). Never the visible path: the
+    /// client hides unknown parts.
+    ResearchRequired,
     /// Colony construction is withheld until the corporation completes its
     /// founding programme. Other ships and structures remain available.
     FoundingProgramme,
@@ -1674,6 +1762,11 @@ pub enum BuildRejectReason {
     /// §orbital-defense: the corporation already holds (or is raising) its
     /// one Star Fortress.
     StarFortressLimit,
+    /// §licences: the Authority hasn't licensed this hull to the corporation
+    /// (every Orbital Shipyard and Capital Slipway hull needs a licence), or
+    /// its charter is Revoked or Proscribed, which suspends its licences. A
+    /// syndicate at war with the Authority needs none.
+    NeedsLicence,
 }
 
 /// Why an Exchange order (§9) or a freight booking (§TCA) was SOFT-REJECTED.
@@ -1685,6 +1778,9 @@ pub enum BuildRejectReason {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum TradeRejectReason {
+    /// §reactors-drives: the good waits for a research this corporation has
+    /// not completed (`fuel::known_after`); the Hub will not sell it.
+    ResearchRequired,
     /// The corp's MARKET WAREHOUSE holds fewer units than the order needs.
     /// Selling — and sell-side limit escrow — draws ONLY from the warehouse now;
     /// goods held at a system must first be moved to the hub (by TCA freight
@@ -1833,7 +1929,8 @@ impl Event {
             | FlagshipDestroyed { pos, .. } | ColonyHeld { pos, .. }
             | IntelGathered { pos, .. } | ScoutContest { pos, .. } | AssaultHeld { pos, .. }
             | AssaultBegan { pos, .. } | AssaultRepulsed { pos, .. }
-            | SystemPlundered { pos, .. } | ModulesLost { pos, .. }
+            | VeilRaised { pos, .. } | VeilDropped { pos, .. }
+            | SystemPlundered { pos, .. }
             | SpecialistsLost { pos, .. } | PirateEnclaveCleared { pos, .. }
             | PirateRaidInbound { pos, .. } | PirateRaidWithdrawn { pos, .. }
             | NodeAwakened { pos, .. } | NodeCaptured { pos, .. }
@@ -1848,7 +1945,7 @@ impl Event {
             | Citation { pos, .. } | EnforcementDispatched { pos, .. }
             | EnforcementWithdrawn { pos, .. } | JumpFailed { pos, .. }
             | InterdictionRaised { pos, .. } | InterdictionCollapsed { pos, .. }
-            | FoundingRaided { pos, .. } | Vendetta { pos, .. } | GearFound { pos, .. }
+            | FoundingRaided { pos, .. } | FoundingStashLoaded { pos, .. } | Vendetta { pos, .. } | GearFound { pos, .. }
             | WrecksSalvaged { pos, .. } | PrizeTaken { pos, .. } | RaidCapped { pos, .. }
             | RaidSighted { pos, .. } => Some(*pos),
             BuildStarted { system, .. } | SystemUpgraded { system, .. } | StationRefitted { system, .. }
@@ -1857,10 +1954,11 @@ impl Event {
             | SpecialistTrained { system, .. } | ShipLaunched { system, .. }
             | ModuleBuilt { system, .. } | ShipsRefitted { system, .. }
             | GarrisonSupplyStateChanged { system, .. } | FleetRepaired { system, .. }
-            | ModulesDelivered { system, .. } | SpecialistsDelivered { system, .. }
+            | SpecialistsDelivered { system, .. }
             | AssignmentSet { system, .. } | ProductionSuspended { system, .. }
             | ProductionResumed { system, .. } | FoodStateChanged { system, .. }
             | Brownout { system, .. } | PowerRestored { system, .. }
+            | MigrantsLanded { system, .. } | MigrantsTurnedBack { system, .. }
             | MerchantArrived { system, .. } | MerchantTraded { system, .. }
             | MerchantTradeRefused { system, .. } | MerchantDeparted { system, .. }
             | NodeSupplyChanged { system, .. } | GarrisonSupplyChanged { host: system, .. }
@@ -1868,8 +1966,10 @@ impl Event {
             ShipSpawned { id: fleet, .. } | FleetSupplyChanged { fleet, .. }
             | OrderRejected { fleet, .. } | OrderDelivered { fleet, .. }
                 => world.fleets.get(fleet).map(|f| f.pos),
-            SpecialistHired { .. } | ModulesPurchased { .. } | ModulesSold { .. } | HubFuelPurchased { .. }
-            | FuelRescueDispatched { .. } | FuelRescueRejected { .. } => Some(world.hub),
+            SpecialistHired { .. } | HubFuelPurchased { .. }
+            | FuelRescueDispatched { .. } | FuelRescueRejected { .. }
+            | LicenceBought { .. } | LicenceRefused { .. }
+            | ClaimBought { .. } | ClaimRefused { .. } | ClaimLapsed { .. } => Some(world.hub),
             // These are either local intentions, or notifications which already
             // name their arrival (confirmation, diplomacy, operation reports).
             _ => None,

@@ -23,7 +23,7 @@ export interface SignalInfo {
 
 export const SIGNAL_INFO: Record<SignalKind, SignalInfo> = {
   drifting_wreck: { name: "Drifting wreck", slug: "drifting-wreck", blurb: "A dead freighter, drifting in pieces.",
-    mayHold: ["Alloys, Machinery", "Module crate"],
+    mayHold: ["Alloys, Machinery", "Module"],
     icon: `<path d="M4 17 L11 11 H17 M20 11 H23 L28 16 L23 21 H11 Z"/><path d="M14 11 L16 7 M19 21 L21 25"/>` },
   cargo_pod: { name: "Cargo pod", slug: "cargo-pod", blurb: "A lost container, tumbling.",
     mayHold: ["Polymers, Provisions or Semiconductors"],
@@ -50,7 +50,7 @@ export const SIGNAL_INFO: Record<SignalKind, SignalInfo> = {
     mayHold: ["Credits, Armaments", "Weapon crate"],
     icon: `<rect x="7" y="13" width="18" height="11" rx="1"/><path d="M7 17 H25 M14 13 V10 H18 V13"/>` },
   ghost_ship: { name: "Ghost ship", slug: "ghost-ship", blurb: "A crewless warship hulk, half-alive.",
-    mayHold: ["Module crate", "Rarely a blueprint"],
+    mayHold: ["Module", "Rarely a blueprint"],
     icon: `<path d="M4 17 L11 11 H23 L28 16 L23 21 H11 Z"/><path d="M14 11 L16 7 M19 21 L21 25"/><path d="M15 15 L18 18 M18 15 L15 18"/>` },
   precursor_fragment: { name: "Precursor fragment", slug: "precursor-fragment", blurb: "A shard of the old installations.",
     mayHold: ["Large research dossier", "Precision Components", "Rarely a blueprint"],
@@ -63,6 +63,66 @@ export const SIGNAL_INFO: Record<SignalKind, SignalInfo> = {
     icon: `<rect x="7" y="9" width="18" height="14" rx="2"/><path d="M7 14 H25 M16 9 V14"/>` },
 };
 
+/** §signal-report (Peter, Nov 11 2026: "when the player is visiting/
+ * completing a signal operation, an event panel with some art is needed to
+ * explain what happen in the operation"): what the sweep found, in a line or
+ * two. `found` when it brought something home or left a cache, `empty` when
+ * not, and `hurt` after either when the captain was hurt (named once, so
+ * "the captain" there). {captain} is the captain, {ship} the hull, {trader}
+ * the founder's free trader. */
+export const SIGNAL_OUTCOME: Record<SignalKind, { found: string; empty: string; hurt: string }> = {
+  drifting_wreck: { found: "{captain}'s {ship} cut into the wreck and hauled out what its dead crew left.",
+    empty: "{captain}'s {ship} searched the wreck end to end. Scavengers got there first.",
+    hurt: "A bulkhead gave way; the captain was hurt." },
+  cargo_pod: { found: "{captain}'s {ship} matched the pod's tumble and cracked it open.",
+    empty: "{captain}'s {ship} caught the pod. It was empty.",
+    hurt: "Its clamps snapped back; the captain was hurt." },
+  ore_fragment: { found: "{captain} sampled the fragment: rich ore, waiting to be mined.",
+    empty: "{captain} sampled the fragment. Barren rock.",
+    hurt: "The rock split under the drills; the captain was hurt." },
+  silent_probe: { found: "{captain} pulled the probe's survey logs. The Survey Office pays for those.",
+    empty: "{captain} found the probe dead, its memory wiped.",
+    hurt: "Its reactor flared as they opened it; the captain was hurt." },
+  distress_beacon: { found: "{captain}'s {ship} reached the crew in time and brought them aboard.",
+    empty: "{captain} found the beacon still calling. No one was left to answer it.",
+    hurt: "The wreck broke up around them; the captain was hurt getting them out." },
+  sensor_ghost: { found: "The ghost was real: {captain} recovered a sealed data core.",
+    empty: "{captain} swept the reading. Nothing there but static.",
+    hurt: "Something out there fired once; the captain was hurt." },
+  authority_courier: { found: "{captain} recovered the Authority's mail drone. It pays its finders, grudgingly.",
+    empty: "{captain} found the drone gutted. Someone else read the mail.",
+    hurt: "Its tamper charge went off; the captain was hurt." },
+  abandoned_outpost: { found: "{captain}'s crew boarded the outpost before its reactor failed and stripped what they could.",
+    empty: "{captain}'s crew boarded the outpost. Stripped bare long ago.",
+    hurt: "The reactor scrammed as they left; the captain was hurt." },
+  pirate_stash: { found: "{captain} found the stash behind its tripwires and took it.",
+    empty: "{captain} found the stash already looted.",
+    hurt: "The stash was rigged; the captain took the blast." },
+  ghost_ship: { found: "{captain}'s crew boarded the hulk while its guns slept and salvaged what still worked.",
+    empty: "{captain}'s crew boarded the hulk. Nothing aboard still worked.",
+    hurt: "Its point defense woke; the captain was hurt getting out." },
+  precursor_fragment: { found: "{captain} brought the shard home for study, its patterns intact.",
+    empty: "{captain} found the shard inert. Whatever it held is gone.",
+    hurt: "The shard pulsed at their touch; the captain was hurt." },
+  exotic_flare: { found: "{captain}'s {ship} flew into the flare and skimmed the spill.",
+    empty: "The flare guttered out as {captain} arrived.",
+    hurt: "The flare surged; the captain was hurt." },
+  teos_lost_crate: { found: "{captain} found {trader}'s crate, seal unbroken.",
+    empty: "{captain} found {trader}'s crate, already pried open.",
+    hurt: "It was rigged against thieves; the captain was hurt." },
+};
+
+/** The report's account: what happened, and the injury if there was one. */
+export function signalStory(signal: SignalView, ship: string | null, trader: Trader = TRADERS.teo): string {
+  const report = signal.report;
+  if (!report) return "";
+  const lines = SIGNAL_OUTCOME[signal.kind];
+  const fill = (line: string) => line.replaceAll("{captain}", report.captain)
+    .replaceAll("{ship}", ship ?? "ship").replaceAll("{trader}", trader.first);
+  return [fill(report.finds.length ? lines.found : lines.empty), report.hurt_until != null ? fill(lines.hurt) : ""]
+    .filter(Boolean).join(" ");
+}
+
 /** §traders: a signal's card text. The lost crate is the founder's own free
  * trader's, as the server names it. */
 export function signalInfo(kind: SignalKind, trader: Trader = TRADERS.teo): SignalInfo {
@@ -72,6 +132,7 @@ export function signalInfo(kind: SignalKind, trader: Trader = TRADERS.teo): Sign
 }
 
 const ART = "/art/derived/signals/v1";
+const AFTERMATH = "/art/derived/signals/aftermath-v1";
 
 /** The card's painting: the zoomed card crop. */
 export function signalCardArt(kind: SignalKind): { src: string; srcset: string } {
@@ -83,6 +144,14 @@ export function signalCardArt(kind: SignalKind): { src: string; srcset: string }
 export function signalFrameArt(kind: SignalKind): { src: string; srcset: string } {
   const slug = SIGNAL_INFO[kind].slug;
   return { src: `${ART}/${slug}-768.webp`, srcset: `${ART}/${slug}-768.webp 768w, ${ART}/${slug}-1280.webp 1280w` };
+}
+
+/** §signal-report: the report panel's painting: the aftermath
+ * (art-src/signals-aftermath-v1), the card painting standing in until its
+ * master lands. */
+export function signalAftermathArt(kind: SignalKind): { src: string; srcset: string } {
+  const slug = SIGNAL_INFO[kind].slug;
+  return { src: `${AFTERMATH}/${slug}-768.webp`, srcset: `${AFTERMATH}/${slug}-768.webp 768w, ${AFTERMATH}/${slug}-1280.webp 1280w` };
 }
 
 /** Mirrors sim::signals::hurt_chance: 45% less 15 points per Fieldcraft
@@ -246,7 +315,7 @@ export function findRows(signal: SignalView, ship: string | null, now: number, p
       case "standing": return { label: "Authority fee · standing", value: `+${Math.round(find.credits).toLocaleString()} Cr · +${find.standing}`, tone: "good" };
       case "cargo_aboard": return { label: goods(find.goods), value: aboard };
       case "cache": return { label: goods(find.goods), value: "left for a Freighter" };
-      case "module_aboard": return { label: `${label(find.module)} crate`, value: aboard };
+      case "module_aboard": return { label: label(find.module), value: aboard };
       case "dossier": return { label: "Research dossier", value: programmeName(find.programme) };
       case "blueprint": return { label: `${label(find.module)} blueprint`, value: "licensed", tone: "good" };
       case "captain": return { label: `Captain ${find.name}`, value: "in reserve at home", tone: "good" };

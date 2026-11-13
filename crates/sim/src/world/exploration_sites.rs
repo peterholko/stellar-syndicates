@@ -36,10 +36,10 @@ impl World {
             ExpeditionTask::Investigate
         } else if fleet.has_freighter()
             && report.details.as_ref().is_some_and(|d| {
-                (d.cargo.values().any(|&n| n > 0) && fleet.cargo_units() < fleet.cargo_capacity())
-                    || (d.modules.values().any(|&n| n > 0)
-                        && fleet.modules.values().sum::<u32>()
-                            < fleet.freighter_count() * crate::module::MODULE_CONVOY_BERTHS)
+                // §modules-as-goods: a site's modules ride in the hold too.
+                // §hold-room: and a unit of one of them still fits.
+                fleet.cargo_room().fits_any(d.cargo.iter().filter(|(_, n)| **n > 0).map(|(c, _)| *c)
+                    .chain(d.modules.iter().filter(|(_, n)| **n > 0).map(|(m, _)| m.good())))
             })
         {
             ExpeditionTask::Recover
@@ -707,20 +707,16 @@ impl World {
                     // Both manifests are conserved, including partial loads. A
                     // full hold leaves goods on site; cargo never teleports home.
                     for (&kind, amount) in &mut site.details.cargo {
-                        let taken = (*amount)
-                            .min(fleet.cargo_capacity().saturating_sub(fleet.cargo_units()));
+                        let taken = (*amount).min(fleet.cargo_room().fits(kind));
                         fleet.add_cargo(kind, taken);
                         *amount -= taken;
                         changed |= taken > 0;
                     }
-                    let capacity =
-                        fleet.freighter_count() * crate::module::MODULE_CONVOY_BERTHS;
+                    // §modules-as-goods: its modules load as cargo, in the
+                    // same hold.
                     for (&kind, amount) in &mut site.details.modules {
-                        let taken =
-                            (*amount).min(capacity.saturating_sub(fleet.modules.values().sum()));
-                        if taken > 0 {
-                            *fleet.modules.entry(kind).or_default() += taken;
-                        }
+                        let taken = (*amount).min(fleet.cargo_room().fits(kind.good()));
+                        fleet.add_cargo(kind.good(), taken);
                         *amount -= taken;
                         changed |= taken > 0;
                     }
@@ -853,11 +849,12 @@ mod tests {
             let pos = w.fleets[&scout].pos;
             w.fleets.insert(scout, Fleet::single(scout, owner, ShipKind::Convoy, pos, FleetOrder::Idle, None));
             w.finish_expedition(scout, owner, site, ExpeditionTask::Recover, &mut vec![]);
-            assert_eq!(w.fleets[&scout].modules[&module], 1);
+            // §modules-as-goods: the module rides in the hold as cargo.
+            assert_eq!(w.fleets[&scout].cargo_amount(module.good()), 1);
             assert!(!w.exploration.sites[&site].details.modules.contains_key(&module));
-            assert!(!w.systems.iter().any(|s| s.owner == Some(owner) && s.modules.get(&module).copied().unwrap_or(0) > 0));
+            assert!(!w.systems.iter().any(|s| s.owner == Some(owner) && s.module_stock(module) > 0));
             w.finish_expedition(scout, owner, site, ExpeditionTask::Recover, &mut vec![]);
-            assert_eq!(w.fleets[&scout].modules[&module], 1, "no repeat loot");
+            assert_eq!(w.fleets[&scout].cargo_amount(module.good()), 1, "no repeat loot");
         }
     }
 
@@ -1297,11 +1294,12 @@ mod tests {
                 ..
             })
         ));
+        // §hold-room: ore fills a whole room unit a unit.
         let capacity = w.fleets[&fleet].cargo_capacity();
         w.fleets
             .get_mut(&fleet)
             .unwrap()
-            .add_cargo(C::Provisions, capacity);
+            .add_cargo(C::MetallicOre, capacity);
         assert!(
             w.exploration_arrival_order(fleet, pos).is_none(),
             "no room to recover"
@@ -1309,7 +1307,7 @@ mod tests {
         w.fleets
             .get_mut(&fleet)
             .unwrap()
-            .remove_cargo(C::Provisions, capacity);
+            .remove_cargo(C::MetallicOre, capacity);
         w.fleets
             .get_mut(&fleet)
             .unwrap()
@@ -1396,13 +1394,14 @@ mod tests {
         let cargo = w.exploration.sites[&site].details.cargo.clone();
         let id = w.alloc_entity_id();
         let mut f = Fleet::single(id, p, ShipKind::Convoy, pos, FleetOrder::Idle, None);
-        f.add_cargo(C::Provisions, f.cargo_capacity() - 5);
+        // §hold-room: five room units left take ten Alloys (half a room each).
+        f.add_cargo(C::MetallicOre, f.cargo_capacity() - 5);
         w.fleets.insert(id, f);
         w.finish_expedition(id, p, site, ExpeditionTask::Recover, &mut Vec::new());
-        assert_eq!(w.fleets[&id].cargo_units(), w.fleets[&id].cargo_capacity());
+        assert_eq!(w.fleets[&id].hold_used(), w.fleets[&id].cargo_capacity() as u64 * crate::cargo::ROOM_SCALE as u64);
         assert_eq!(
             w.exploration.sites[&site].details.cargo[&C::Alloys],
-            cargo[&C::Alloys] - 5
+            cargo[&C::Alloys] - 10
         );
         assert_eq!(
             w.exploration.sites[&site].known[&p]
@@ -1412,18 +1411,20 @@ mod tests {
                 .cargo,
             cargo
         );
-        assert_eq!(w.fleets[&id].modules[&M::WhippleArmor], 1);
+        // §modules-as-goods: the module shares the hold, so it waits on site.
+        assert_eq!(w.fleets[&id].cargo_amount(M::WhippleArmor.good()), 0);
+        assert_eq!(w.exploration.sites[&site].details.modules.get(&M::WhippleArmor), Some(&1));
         w.fleets
             .get_mut(&id)
             .unwrap()
-            .remove_cargo(C::Provisions, 250);
+            .remove_cargo(C::MetallicOre, 250);
         w.finish_expedition(id, p, site, ExpeditionTask::Recover, &mut Vec::new());
         assert!(w.exploration.sites[&site].details.cargo.is_empty());
         assert!(w.exploration.sites[&site].details.modules.is_empty());
         let aboard = w.fleets[&id].cargo_units();
         w.finish_expedition(id, p, site, ExpeditionTask::Recover, &mut Vec::new());
         assert_eq!(w.fleets[&id].cargo_units(), aboard);
-        assert_eq!(w.fleets[&id].modules[&M::WhippleArmor], 1);
+        assert_eq!(w.fleets[&id].cargo_amount(M::WhippleArmor.good()), 1);
         arrive(&mut w);
         assert!(
             w.exploration.sites[&site].known[&p]

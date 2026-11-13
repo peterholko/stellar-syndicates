@@ -13,7 +13,7 @@ const clamp = (x: number) => Math.max(0, Math.min(1, x));
 
 /** Stateless geometry samples: seeking directly to a time and playing to it
  * yield exactly the same fragments. A miss never reaches this function. */
-export function visitBattleBurst(b: BattleBurst, reducedMotion: boolean, emit: (p: BattleParticle) => void,
+export function visitBattleBurst(b: BattleBurst, emit: (p: BattleParticle) => void,
   ringTilt = -.18): void {
   if (b.age < 0 || b.age >= b.life || b.life <= 0) return;
   const k = clamp(b.age / b.life), fade = 1 - k, r = b.radius;
@@ -26,7 +26,7 @@ export function visitBattleBurst(b: BattleBurst, reducedMotion: boolean, emit: (
 
   // A soft additive halo gives the mesh a hot edge without fullscreen bloom.
   const halo = r * (death ? 2.8 : 2) * (.35 + burst);
-  particle("glow", 0, 0, r * .25, halo, halo, 1, b.color, (reducedMotion ? .24 : .5) * fade * fade);
+  particle("glow", 0, 0, r * .25, halo, halo, 1, b.color, .5 * fade * fade);
   if (b.type === "muzzle") return;
 
   const fireCount = death ? 6 + b.cls * 2 : 3;
@@ -62,13 +62,13 @@ export function visitBattleBurst(b: BattleBurst, reducedMotion: boolean, emit: (
 
   // Hot shrapnel glows and goes out as it cools. The cold metal a blast
   // throws is the hull's own debris, cut from its art by the theater.
-  const shards = reducedMotion ? 3 : death ? 8 + b.cls * 4 : 5;
+  const shards = death ? 8 + b.cls * 4 : 5;
   const glowing = 1 - clamp((k - .18) / .2);
   for (let i = 0; i < shards; i++) {
     const angle = rng() * Math.PI * 2, speed = .7 + rng() * 2.3;
     const elevation = (rng() - .45) * r, size = Math.max(.6, r * (.018 + rng() * .035));
-    const spin = (rng() - .5) * 18 * (reducedMotion ? .15 : 1);
-    const distance = r * speed * (reducedMotion ? burst * .45 : burst);
+    const spin = (rng() - .5) * 18;
+    const distance = r * speed * burst;
     particle("shard", Math.cos(angle) * distance, Math.sin(angle) * distance,
       r * .3 + elevation * burst, size, size * .55, size * (2 + rng() * 2),
       k < .12 ? 0xfff0c0 : 0xffb050, fade * .95 * glowing,

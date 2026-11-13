@@ -3,7 +3,7 @@
 //! It is cleared like the den (an idle warship within reach opens the
 //! assault), and its loot becomes a private salvage contract. The next crew
 //! comes a few hours later, a little stronger. One left alone for a day sends
-//! its raiders after its founder's freighters and barges outside Gun Platform
+//! its raiders after its founder's freighters and barges outside Laser Battery
 //! cover. Humans only.
 use serde::{Deserialize, Serialize};
 
@@ -156,7 +156,7 @@ impl World {
     }
 
     /// An ignored hideout's raiders hunt their founder's freighters and barges
-    /// outside Gun Platform cover, never anyone else's.
+    /// outside Laser Battery cover, never anyone else's.
     pub(super) fn launch_hideout_pack(&mut self, pid: EntityId, owner: PlayerId, base_pos: Vec2,
         covered: &dyn Fn(Vec2) -> bool) -> bool
     {

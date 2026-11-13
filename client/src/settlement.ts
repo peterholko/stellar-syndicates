@@ -10,7 +10,7 @@ export const FOUNDING_STORY = [
     text: "The Terran Charter Authority has opened a wormhole to another galaxy. Beyond its shimmering gate lie uncharted stars, untapped riches, and worlds waiting for their first settlers. The first expeditions are crossing. Your future waits on the other side.",
     alt: "Expedition ships leave Earth for a blue wormhole far out in open space, with another galaxy visible through the gate." },
   { art: "stellar-charter", title: "Stellar Charter",
-    text: "{corporation} has been granted a stellar charter by the Terran Charter Authority, the privilege to settle a new planet. Two thousand settlers are ready to begin a new life under your leadership. The Authority will not forget what you owe.",
+    text: "{corporation} has been granted a stellar charter by the Terran Charter Authority, the privilege to settle a new planet. Seven thousand settlers are ready to begin a new life under your leadership. The Authority will not forget what you owe.",
     alt: "A civilian official hands a planetary charter to an expedition leader aboard an orbital station." },
   { art: "first-landing", title: "A world to call home",
     text: "Start with a small settlement, not an empire. Develop your colony, turn its resources into trade, and decide what your corporation will become.",
@@ -36,7 +36,6 @@ export const SETTLEMENT_PROJECTS: { id: SettlementProject; key: string; title: s
   { id: "prospect", key: "camp_prospect", title: "Prospect the home world", detail: "Reveal your chosen world's local opportunity and locate accessible Ferrite workings.", costs: [], seconds: 60, art: "mining_complex" },
   { id: "surface_workings", key: "camp_workings", title: "Open surface workings", detail: "Increase the home Ferrite deposit's output by 50%. Requires a completed survey and Mining Complex; does not unlock Tier II.", costs: [["alloys", 8], ["machinery", 2]], seconds: 120, art: "mining_complex" },
   { id: "storehouse", key: "camp_storehouse", title: "Expand the storehouse", detail: "Enlarge the colony ship's holds from 1,000 to 1,300 goods. More export buffer between visits; ship loading speed is unchanged.", costs: [["alloys", 7], ["machinery", 1]], seconds: 90, art: "warehouse" },
-  { id: "quarters", key: "camp_quarters", title: "Build permanent quarters", detail: "Accommodation grows from 3,000 to 6,000 people. New workers still need food, jobs and a physical migrant arrival.", costs: [["alloys", 5], ["machinery", 1]], seconds: 120, art: "habitat" },
 ];
 
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -53,8 +52,6 @@ export function projectStatus(body: BodyView, system: SystemStateView, project: 
   const job = system.builds.find(j => j.body_id === body.id && j.key === project.key);
   if (job) return job.queued ? "Queued" : "Under construction";
   if (project.id === "surface_workings" && (!camp.completed.includes("prospect") || !body.structures.mining_complex)) return "Needs survey and mine";
-  if (project.id === "quarters" && body.structures.habitat > 1) return "Superseded by higher tier";
-  if (project.id === "quarters" && body.structures.habitat !== 1) return "Needs a Habitat";
   if (project.costs.some(([c, n]) => {
     const reserved = (system.industry?.reservations ?? []).reduce((sum, r) => sum + (r.goods[c] ?? 0), 0);
     return (system.stockpile?.find(s => s.commodity === c)?.units ?? 0) - reserved < n;
@@ -157,6 +154,12 @@ export class SettlementUI {
     if (this.dialog.open) this.render();
   }
 
+  /** The prologue, the landing card or a camp project is on screen
+   * (§charter-advisor: the advisor introduces themselves after it). */
+  get open(): boolean {
+    return this.dialog.open;
+  }
+
   connectionChanged(): void {
     if (this.state.link !== "online") this.submitting = false;
     if (this.dialog.open) this.render();
@@ -190,7 +193,7 @@ export class SettlementUI {
         const caption = slide.text.replace("{corporation}", () => this.state.name?.trim() || "Your corporation");
         html = `<div class="settlement-story"><header class="settlement-story-header"><div><small>STELLAR SYNDICATES</small><span>Prologue · ${this.step + 1} / ${FOUNDING_STORY.length}</span></div><button type="button" data-settlement-act="skip">Skip story</button></header><figure class="settlement-story-frame">${storyImage(slide)}</figure><div class="settlement-content settlement-story-caption"><h1 id="settlement-title" tabindex="-1">${esc(slide.title)}</h1><p>${esc(caption)}</p>${statusLine}<footer><button type="button" data-settlement-act="back" ${this.step === 0 ? "disabled" : ""}>Back</button><button type="button" class="settlement-primary" data-settlement-act="next">${this.step === LANDING_STEP - 1 ? "Your world" : "Continue"}</button></footer></div></div>`;
       } else {
-        const content = `<p>Your colony ship lands and becomes the Command Center: a 1 MW reactor and holds for 1,000 goods. 7,000 settlers live aboard until you build a Habitat.</p><div class="settlement-kit">${structureImage("command_center", 1, "lg")}</div><p>Your settlers are counting on you: feed them, then start mining.</p>`;
+        const content = `<p>Your colony ship lands and becomes the Command Center: holds for 1,000 goods, and in them the engines of your first freighter. 7,000 settlers live aboard until you build a Habitat.</p><div class="settlement-kit">${structureImage("command_center", 1, "lg")}</div><p>Your charter: mine Ferrite, smelt Alloys, ship them to the Market Hub. House your settlers first.</p>`;
         const invite = this.invite;
         const inviteLine = !invite ? "" : invite.ok
           ? `<p class="settlement-invite">Invited by <b>${esc(invite.from ?? "a friend")}</b>${invite.near ? ` · home near ${esc(invite.near)}` : ""}${invite.syndicate ? ` · joins ${esc(invite.syndicate)}` : ""}</p>`
@@ -204,7 +207,7 @@ export class SettlementUI {
       const chosen = FOUNDING_PROFILES.find(p => p.id === body.founding_camp!.profile)!;
       const delay = Math.ceil(Math.hypot((this.state.galaxy?.systems.find(s => s.id === system.id)?.pos.x ?? 0) - (this.state.commandCenter?.x ?? 0),
         (this.state.galaxy?.systems.find(s => s.id === system.id)?.pos.y ?? 0) - (this.state.commandCenter?.y ?? 0)) / ((this.state.galaxy?.c ?? 1) * WARP_FACTOR));
-      html = `<div class="settlement-content"><header><small>${chosen.name} · Founding Camp</small><button type="button" data-settlement-act="close" aria-label="Close settlement projects">×</button><h1 id="settlement-title">Develop ${esc(body.name)}</h1></header><p>${chosen.detail}</p><p>Housing: ${Math.round(body.population * 1e6).toLocaleString()} / ${Math.round((body.population_capacity ?? .003) * 1e6).toLocaleString()} · System storage: ${system.storage_used} / ${system.storage_cap}</p><div class="settlement-projects">${SETTLEMENT_PROJECTS.map(p => {
+      html = `<div class="settlement-content"><header><small>${chosen.name} · Founding Camp</small><button type="button" data-settlement-act="close" aria-label="Close settlement projects">×</button><h1 id="settlement-title">Develop ${esc(body.name)}</h1></header><p>${chosen.detail}</p><p>Housing: ${Math.round(body.population * 1e6).toLocaleString()} / ${Math.round((body.population_capacity ?? 0) * 1e6).toLocaleString()} · System storage: ${system.storage_used} / ${system.storage_cap}</p><div class="settlement-projects">${SETTLEMENT_PROJECTS.map(p => {
         const status = projectStatus(body, system, p);
         return `<article>${structureImage(p.art, 1, "md")}<div><h2>${p.title}</h2><p>${p.detail}</p><small>${p.costs.length ? p.costs.map(([c, n]) => `${n} ${label(c)}`).join(" · ") : "No goods required"} · ${p.seconds}s base</small><button type="button" data-settlement-act="review" data-project="${p.id}" ${status !== "Ready" || offline ? "disabled" : ""}>${status === "Ready" ? "Review project" : status}</button></div></article>`;
       }).join("")}</div>${this.review ? `<section class="settlement-review" role="group" aria-label="Confirm project"><b>${SETTLEMENT_PROJECTS.find(p => p.id === this.review)?.title}</b><p>Order travel: ${delay}s. Uses local unreserved stock; construction takes its turn in this planet's queue. Progress appears after report light returns.</p><button type="button" class="settlement-primary" data-settlement-act="confirm" ${offline ? "disabled" : ""}>Confirm project</button><button type="button" data-settlement-act="cancel">Cancel</button></section>` : ""}<p role="status">${offline ? "Reconnecting…" : esc(this.notice)}</p><p class="settlement-muted">These are optional investments, not new export requirements. Keep materials for the Service Berth and your preferred next step.</p></div>`;

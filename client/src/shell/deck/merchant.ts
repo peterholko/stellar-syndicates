@@ -4,15 +4,17 @@
 // 16 2026): a negotiation with the trader (§traders: one of three, dealt per
 // corporation), who talks about the offer on the table; the prices are the
 // sim's.
-import { fmt, fmtDur } from "../../core/derive/format";
+import { fmt } from "../../core/derive/format";
 import { spendableMarketCredits } from "../../core/derive/market";
 import {
-  dockedMerchant, isMerchantErrand, isMerchantTarget, merchantErrand, merchantLeavesIn, merchantQuote, merchantShortfall,
-  oreAtHome, type MerchantGoods,
+  dockedMerchant, isMerchantErrand, isMerchantTarget, merchantBlock, merchantErrand, merchantQuote,
+  merchantShortfall, sellableAtHome, type MerchantGoods,
 } from "../../core/derive/merchant";
-import { fuelRoom } from "../../core/derive/founding";
+import { fuelNeed } from "../../core/derive/founding";
 import { dealLine, refusalLine, traderLine, traderOf, traderPortrait, traderResult, type TraderLine } from "../../core/derive/trader";
 import { commodityIcon, label } from "../../icons";
+import { goodsTab, goodsTabsOf, isGoodsTab, pickGoodsTab, type GoodsTab } from "../../core/derive/goods";
+import { goodsTabsHtml } from "./goods-tabs";
 import type { Commodity, SystemStateView } from "../../protocol";
 import { liveSimTime } from "../../state";
 import { lastHtmlWritten, renderDeferred, setHtml } from "../dom";
@@ -29,6 +31,8 @@ interface MerchantHooks {
 export class DeckMerchantRoutes {
   private buys: MerchantGoods = {};
   private sells: MerchantGoods = {};
+  /** §goods-tabs: the trader's goods in Resources · Parts · Modules. */
+  private tab: GoodsTab = "resources";
   /** When the last deal was sent (sim time), until the amounts change. */
   private sentAt: number | null = null;
   private appliedTarget = "";
@@ -46,13 +50,13 @@ export class DeckMerchantRoutes {
     const st = this.ctx.state;
     const home = this.home();
     const signature = sheetFingerprint([
-      route, this.buys, this.sells, this.sentAt, Math.floor(liveSimTime()), st.merchant, st.wallet, st.timeline.length,
+      route, this.buys, this.sells, this.tab, this.sentAt, Math.floor(liveSimTime()), st.merchant, st.wallet, st.timeline.length,
       home ? [home.stockpile, home.storage_used, home.storage_cap] : null,
     ]);
     if (!force && signature === this.signature) return true;
     const active = document.activeElement;
     if (!force && active && this.root.contains(active) && active instanceof HTMLInputElement) {
-      this.patchOreAtHome();
+      this.patchHeldAtHome();
       return true;
     }
     if (renderDeferred(this.root.id, () => this.render(route, true))) return true;
@@ -64,17 +68,26 @@ export class DeckMerchantRoutes {
   handleAction(button: HTMLButtonElement, route: DeckRoute | null): boolean {
     if (route?.name !== "merchant") return false;
     const act = button.dataset.deckAct;
-    if (act === "merchant-max") {
-      // All the ore you hold, up to what the trader takes.
+    if (act === "merchant-max" || act === "merchant-room") {
+      // Max: all you hold of what the trader buys, up to what it takes.
+      // §storage-full: the sale that makes room for the deal.
       const merchant = dockedMerchant(this.ctx.state);
-      const units = merchant ? Math.min(merchant.ore_room, oreAtHome(this.home())) : 0;
-      if (units > 0) this.sells.metallic_ore = units; else delete this.sells.metallic_ore;
+      if (!merchant) return true;
+      const units = act === "merchant-room" ? Number(button.dataset.units) || 0
+        : Math.min(merchant.buy_room, sellableAtHome(merchant, this.home()));
+      if (units > 0) this.sells[merchant.buys] = units; else delete this.sells[merchant.buys];
       this.sentAt = null;
       this.signature = "";
       this.render(route, true);
       // A box you typed in keeps its own value through a redraw: put Max in it.
-      const box = this.root.querySelector<HTMLInputElement>('[data-merchant-input="sell:metallic_ore"]');
+      const box = this.root.querySelector<HTMLInputElement>(`[data-merchant-input="sell:${merchant.buys}"]`);
       if (box) box.value = units > 0 ? String(units) : "";
+      return true;
+    }
+    if (act === "merchant-tab") {
+      if (isGoodsTab(button.dataset.goodsTab)) this.tab = button.dataset.goodsTab;
+      this.signature = "";
+      this.render(route, true);
       return true;
     }
     if (act !== "merchant-submit") return false;
@@ -101,18 +114,19 @@ export class DeckMerchantRoutes {
     this.signature = "";
   }
 
-  /** The table isn't redrawn while an amount box has the cursor; the ore at
-   * home still ticks up as the mines work. */
-  private patchOreAtHome(): void {
+  /** The table isn't redrawn while an amount box has the cursor; the Alloys
+   * at home still tick up as the Smelter works. */
+  private patchHeldAtHome(): void {
     const merchant = this.ctx.state.merchant;
-    const held = oreAtHome(this.home());
     const count = this.root.querySelector(".deck-merchant-row__held b");
-    if (!merchant || !count || count.textContent === fmt(held)) return;
+    if (!merchant || !count) return;
+    const held = sellableAtHome(merchant, this.home());
+    if (count.textContent === fmt(held)) return;
     count.textContent = fmt(held);
-    const box = this.root.querySelector<HTMLInputElement>('[data-merchant-input="sell:metallic_ore"]');
-    if (box) box.max = String(Math.min(merchant.ore_room, held));
+    const box = this.root.querySelector<HTMLInputElement>(`[data-merchant-input="sell:${merchant.buys}"]`);
+    if (box) box.max = String(Math.min(merchant.buy_room, held));
     const most = this.root.querySelector<HTMLButtonElement>('[data-deck-act="merchant-max"]');
-    if (most) most.disabled = merchant.phase !== "docked" || Math.min(merchant.ore_room, held) <= 0;
+    if (most) most.disabled = merchant.phase !== "docked" || Math.min(merchant.buy_room, held) <= 0;
     // The DOM no longer matches the last html written: the next redraw must
     // reconcile, even if the count is back where it was.
     lastHtmlWritten.delete(this.root);
@@ -129,14 +143,14 @@ export class DeckMerchantRoutes {
   }
 
   /** A guide shortcut opens the table with that build's shortfall, or the
-   * errand's goods (§charter-v5 "Sell ore", "Buy Deuterium"), on it. */
+   * errand's goods (§charter-v5 "Sell Alloys", "Buy Uranium"), on it. */
   private applyRouteTarget(route: DeckRoute): void {
     const target = route.query?.for ?? "";
     if (target === this.appliedTarget) return;
     this.appliedTarget = target;
     const merchant = dockedMerchant(this.ctx.state);
     if (merchant && isMerchantErrand(target)) {
-      ({ buys: this.buys, sells: this.sells } = merchantErrand(target, this.home(), merchant, fuelRoom(this.ctx.state)));
+      ({ buys: this.buys, sells: this.sells } = merchantErrand(target, this.home(), merchant, fuelNeed(this.ctx.state)));
       this.sentAt = null;
     } else if (merchant && isMerchantTarget(target)) {
       this.buys = merchantShortfall(this.ctx.state, this.home(), target, merchant);
@@ -168,7 +182,7 @@ export class DeckMerchantRoutes {
       return result && !result.ok ? refusalLine(trader, result.reason) : dealLine(trader);
     }
     const quote = merchantQuote(merchant, this.buys, this.sells, this.home(), this.credits());
-    return traderLine(trader, merchant, this.buys, this.sells, quote, dealt, !!this.ctx.state.founding?.bounty_received);
+    return traderLine(trader, merchant, this.buys, this.sells, quote, dealt);
   }
 
   private html(): string {
@@ -186,29 +200,44 @@ export class DeckMerchantRoutes {
     const says = this.line(dealt);
     const who = traderOf(st.founding);
     const portrait = traderPortrait(who, says.mood, () => { this.signature = ""; });
-    const status = merchant.phase === "arriving" ? "Arriving" : merchant.phase === "leaving" ? "Leaving"
-      : `Leaves in ${fmtDur(merchantLeavesIn(merchant, liveSimTime()))}`;
+    // §den-contract: docked for the whole charter, so no countdown.
+    const status = merchant.phase === "arriving" ? "Arriving" : merchant.phase === "leaving" ? "Leaving" : "Docked";
     const trader = `<header class="deck-merchant__trader" data-mood="${says.mood}">`
       + `<img class="deck-merchant__portrait${portrait.painted ? "" : " is-interim"}" src="${esc(portrait.src)}" alt="${esc(portrait.alt)}" width="210" height="210">`
       + `<div class="deck-merchant__who"><b>${esc(who.name)}</b><small>the ${esc(who.ship)} · ${esc(status)}</small></div>`
       + `<p class="deck-merchant__says" role="status">“${esc(says.text)}”</p></header>`;
-    const held = oreAtHome(home);
-    const give = row("metallic_ore", `${merchant.ore_price.toFixed(1)} Cr · takes ${merchant.ore_room} more`,
-      "sell", this.sells.metallic_ore ?? 0, Math.min(merchant.ore_room, held), docked, held);
-    const get = merchant.goods.map((good) => row(good.commodity, `${good.price.toFixed(1)} Cr · ${good.stock} left`,
+    const held = sellableAtHome(merchant, home);
+    const give = row(merchant.buys, `${merchant.buy_price.toFixed(1)} Cr · takes ${merchant.buy_room} more`,
+      "sell", this.sells[merchant.buys] ?? 0, Math.min(merchant.buy_room, held), docked, held);
+    // §shipbuilding-overhaul: the trader's one discount — the first Fission
+    // Core at half the Hub mid, the rest at its usual price.
+    // §goods-tabs: the trader's goods in Resources · Parts · Modules (what it
+    // carries); amounts picked on another tab stay in the deal.
+    const tabs = goodsTabsOf(merchant.goods.map((good) => good.commodity));
+    const tab = pickGoodsTab(this.tab, tabs);
+    const get = merchant.goods.filter((good) => goodsTab(good.commodity) === tab).map((good) => row(good.commodity, good.featured_price != null
+      ? `first ${good.featured_price.toFixed(1)} Cr, then ${good.price.toFixed(1)} · ${good.stock} left`
+      : `${good.price.toFixed(1)} Cr · ${good.stock} left`,
       "buy", this.buys[good.commodity] ?? 0, good.stock, docked)).join("");
     const table = `<div class="deck-merchant__table">`
       + `<section class="deck-merchant__side" aria-label="You give"><h3>You give</h3>${give}</section>`
-      + `<section class="deck-merchant__side" aria-label="You get"><h3>You get</h3>${get}</section></div>`;
+      + `<section class="deck-merchant__side" aria-label="You get"><h3>You get</h3>${goodsTabsHtml("merchant-tab", tab, tabs, "Trader's goods")}${get}</section></div>`;
     const net = quote.cost - quote.revenue;
     const empty = !quote.cost && !quote.revenue;
+    const block = docked ? merchantBlock(merchant, this.sells, quote, home, who.first, this.credits()) : null;
+    const stored = `storage ${quote.netUnits > 0 ? "+" : ""}${quote.netUnits}`;
     const terms = empty ? "Name your terms."
       : `${net > 0 ? `You pay <b>${fmt(net)} Cr</b>` : net < 0 ? `You receive <b>${fmt(-net)} Cr</b>` : "Even trade"}`
-        + `${quote.netUnits ? ` · storage ${quote.netUnits > 0 ? "+" : ""}${quote.netUnits}` : ""}`;
+        + `${quote.netUnits ? ` · ${block?.storage ? `<span class="is-over">${stored}</span>` : stored}` : ""}`;
     const canSubmit = docked && !empty && !quote.error;
+    // §storage-full: a blocked deal says why over the terms, with the sale
+    // that makes room (or §three-stipends pays) when that is what blocks it.
+    const good = label(merchant.buys);
+    const fix = block?.sell ? `<button type="button" data-deck-act="merchant-room" data-units="${block.sell}" title="${block.storage ? `Selling ${good} makes room in the same deal.` : `Selling ${good} pays for the same deal.`}">Sell ${fmt(block.sell)} ${esc(good)}</button>` : "";
+    const notice = block ? `<p class="deck-merchant__blocked${block.full ? " is-full" : ""}"${block.storage && !fix ? ` title="Buy less, or make room at home first."` : ""}><span>${esc(block.text)}</span>${fix}</p>` : "";
     // The terms and the handshake stay pinned to the panel's foot.
-    const dock = `<div class="deck-merchant__dock"><div class="deck-ticket-quote">${terms}</div>` +
-      `<button type="button" class="is-primary" data-deck-act="merchant-submit" title="Settles at your home at once" ${canSubmit ? "" : "disabled"}>Trade</button></div>`;
+    const dock = `<div class="deck-merchant__dock">${notice}<div class="deck-ticket-quote">${terms}</div>` +
+      `<button type="button" class="is-primary" data-deck-act="merchant-submit" title="${esc(block?.text ?? "Settles at your home at once")}" ${canSubmit ? "" : "disabled"}>Trade</button></div>`;
     return `<section class="deck-page deck-merchant">${trader}${table}${dock}</section>`;
   }
 }

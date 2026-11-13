@@ -2,3 +2,8 @@
 # these files by content hash, so they never change in place.
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# §client-updates (docs/client-updates.md): the newest build's stamp, which
+# open tabs check; never cached.
+/version.json
+  Cache-Control: no-store

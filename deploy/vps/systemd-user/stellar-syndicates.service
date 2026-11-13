@@ -1,0 +1,16 @@
+# The game server. Starts at boot (peter has linger) and comes back after a
+# crash; bin/start-app.sh and bin/stop-app.sh drive it for deploys.
+[Unit]
+Description=Stellar Syndicates game server (127.0.0.1:18080)
+
+[Service]
+ExecStart=%h/stellar-syndicates/bin/run-app.sh
+Restart=on-failure
+RestartSec=5
+# The shutdown save takes a few seconds; never kill it part-way.
+TimeoutStopSec=60
+StandardOutput=append:%h/stellar-syndicates/logs/app.log
+StandardError=inherit
+
+[Install]
+WantedBy=default.target

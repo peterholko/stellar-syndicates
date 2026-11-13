@@ -75,7 +75,7 @@ mod tests {
     }
 
     fn build(w: &mut World, owner: PlayerId, home: EntityId) {
-        w.step(&[Command::BuildShip { player_id: owner, system_id: home,
+        w.step(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(), player_id: owner, system_id: home,
             ship_kind: ShipKind::TinyFreighter, join: None, loadout: Default::default() }]);
         assert_eq!(w.build_queue.len(), 1);
     }
@@ -178,6 +178,7 @@ mod tests {
             assert!(events.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected {
                 reason: crate::event::BuildRejectReason::NoSlip { .. }, .. })));
             w.players.get_mut(&owner).unwrap().research.completed.insert("prop_line_express_charters".into());
+            w.players.get_mut(&owner).unwrap().licences.insert(ShipKind::LargeFreighter, 0.0); // §licences
             let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
             s.bodies.iter_mut().find(|b| b.id == body).unwrap().structures.insert(K::NavalDrydock, 1);
             for (good, _) in crate::build::recipe_for(BuildKind::Ship { ship: ShipKind::LargeFreighter }).costs {

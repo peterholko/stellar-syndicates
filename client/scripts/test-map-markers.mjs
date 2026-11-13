@@ -53,7 +53,8 @@ for (const [name, url] of Object.entries(MAP_GLYPHS)) {
 const exploration = { siteTitle: site => site.details?.name ?? `Unknown contact ${site.id}`,
   siteStatus: site => site.status ?? (site.details ? "Recovery available" : "Unidentified · Scout needed") };
 const markers = compile("core/derive/map-markers.ts", { "./exploration": exploration,
-  "./format": { fmt: n => n.toLocaleString("en-US"), fmtDur: s => `${Math.round(s / 60)}m`, operationTitle: op => op.title ?? "Contract" } });
+  "./format": { fmt: n => n.toLocaleString("en-US"), fmtDur: s => `${Math.round(s / 60)}m`, operationTitle: op => op.title ?? "Contract",
+    operationLeft: (op, now) => op.expires_at - now > 1e12 ? null : Math.max(0, op.expires_at - now) } });
 let previous = 0;
 for (const zoom of [.5, 1, 2, 4, 8, 16, 24, 96]) {
   const size = markers.contactBadgePx(zoom);
@@ -171,8 +172,11 @@ assert.match(src("shell/mobile/map.ts"), /case "operation":/);
 {
   const render = src("render.ts");
   const draw = render.slice(render.indexOf("private drawPrivateerLastSeen("), render.indexOf("private drawProjections("));
-  assert.match(draw, /const show = !!f && !!at && !!f\.privateer && !state\.ghosts\.some\(\(ghost\) => ghost\.id === f\.privateer\);/,
-    "hidden while the privateer is in view");
+  // Nov 1 2026: the server sends `founding.privateer` only while it is in view,
+  // so requiring the id hid the marker always (Oct 30's shot faked the id).
+  assert.match(draw, /const show = !!f && !!at && f\.den == null && !state\.ghosts\.some\(\(ghost\) => ghost\.id === f\.privateer\);/,
+    "hidden while the privateer is in view, and (§den-retreat) while his den is known");
+  assert.doesNotMatch(draw, /!!f\.privateer/, "out of sight, the served founding carries no privateer id");
   assert.match(draw, /stroke\(\{ color: COL_PIRATE/, "in pirate amber");
   assert.match(draw, /`Hunting area · \$\{names\.family \? names\.privateer : "Privateer"\}`/, "named for the nephew");
   assert.match(draw, /const area = Math\.max\(PRIVATEER_HUNT_SU \* this\.scale, r \* 2\.5\);/, "the hunting area at true scale");

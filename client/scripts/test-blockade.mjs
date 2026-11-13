@@ -16,7 +16,9 @@ const load = (file, deps = {}) => {
 const fmtDur = secs => `${Math.round(secs)}s`;
 const b = load("core/derive/blockade.ts", { "./format": { fmtDur },
   "../../protocol": { fleetCargoUnits: g => g.loaded ?? 0 },
-  "./fleet": { fleetCargoCapacity: g => g.hold ?? 0 } });
+  // §hold-room: the hold reads room (loaded units of whole-room goods here).
+  "./fleet": { fleetCargoCapacity: g => g.hold ?? 0, fleetHoldUsed: g => (g.loaded ?? 0) * 4,
+    fmtRoom: q => (q / 4).toLocaleString(undefined, { maximumFractionDigits: 2 }) } });
 let tests = 0;
 const test = (name, fn) => { fn(); tests++; console.log(`PASS ${name}`); };
 

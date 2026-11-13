@@ -20,12 +20,11 @@ export interface TraderLine { text: string; mood: TraderMood }
 interface TraderVoice {
   arriving: string;
   leaving: string;
-  lastCall: string;
-  lastCallDealt: string;
   again: string;
   greeting: string;
   both: string;
-  ore: (price: string) => string;
+  /** On what you offer it (§sell-alloys, Nov 11 2026: Alloys). */
+  sale: (price: string) => string;
   bigSpend: string;
   armaments: string;
   chips: string;
@@ -33,8 +32,8 @@ interface TraderVoice {
   deal: string;
   credits: string;
   stock: string;
-  oreCap: string;
-  oreHome: string;
+  cap: string;
+  short: string;
   storage: string;
   charter: string;
   notMine: string;
@@ -59,21 +58,19 @@ export const TRADERS: Record<TraderSlug, Trader> = {
     about: "Loud, theatrical haggler.", voice: {
     arriving: "Hold your horses, I'm still docking.",
     leaving: "Too late, friend. I've a schedule.",
-    lastCall: "Last call, friend! I'm off before the shooting starts.",
-    lastCallDealt: "Anything else? The clock's ticking.",
     again: "Back for more? Good, good.",
     greeting: "Raided! Terrible. Lucky I came by, eh?",
     both: "Now we're talking!",
-    ore: (price) => `Ore? Heavy, dirty stuff. ${price} a unit, and I'm being kind.`,
+    sale: (price) => `Alloys? Still warm! ${price} a unit, and I'm being kind.`,
     bigSpend: "A big spender! I like you already.",
     armaments: "The pointy end of trade. Not cheap.",
     chips: "Chips! The genuine article.",
     goods: "Fine goods, fair-ish prices.",
     deal: "Done! You'll tell your grandchildren.",
-    credits: "Credits, friend. Or ore. I take both.",
+    credits: "Credits, friend. Or Alloys. I take both.",
     stock: "Ha! I'd sell you the ship if I could.",
-    oreCap: "I've a hold, not a moon.",
-    oreHome: "You haven't dug that much yet.",
+    cap: "I've a hold, not a moon.",
+    short: "You haven't smelted that much yet.",
     storage: "And where would you put it all?",
     charter: "Your charter's in the red. I don't touch that.",
     notMine: "Not my line of goods.",
@@ -83,12 +80,10 @@ export const TRADERS: Record<TraderSlug, Trader> = {
     about: "Former Authority customs auditor. Exact.", voice: {
     arriving: "Docking. One moment.",
     leaving: "My manifest is closed.",
-    lastCall: "Final call. I leave before the shooting starts.",
-    lastCallDealt: "Anything further? I leave shortly.",
     again: "Back again. Efficient.",
     greeting: "Raided. Unfortunate. I carry what they took.",
     both: "A two-way ledger. Good.",
-    ore: (price) => `Ore. ${price} a unit. That is the price.`,
+    sale: (price) => `Alloys. ${price} a unit. That is the price.`,
     bigSpend: "A substantial order. Noted.",
     armaments: "Armaments. Certified, and priced accordingly.",
     chips: "Semiconductors. Genuine. I checked every one.",
@@ -96,8 +91,8 @@ export const TRADERS: Record<TraderSlug, Trader> = {
     deal: "Done. It is in your stores.",
     credits: "The numbers don't close.",
     stock: "My stock is finite.",
-    oreCap: "My hold has a limit. That is past it.",
-    oreHome: "You don't have that ore.",
+    cap: "My hold has a limit. That is past it.",
+    short: "You don't have those Alloys.",
     storage: "Your stores are full.",
     charter: "Your charter is in the red. Regulations.",
     notMine: "Not on my manifest.",
@@ -107,21 +102,19 @@ export const TRADERS: Record<TraderSlug, Trader> = {
     about: "Old hauler, shrewder than she looks.", voice: {
     arriving: "Slow ships get there too, pet. Nearly tied up.",
     leaving: "That's me away, pet. Mind how you go.",
-    lastCall: "Last orders, pet. I'm off before the guns start.",
-    lastCallDealt: "Anything else, pet? I'll not linger.",
     again: "Back again? You'll have me rich.",
     greeting: "Raided, were you? Oh, pet. Let's see what we can do.",
     both: "Now that's proper trading.",
-    ore: (price) => `Ore, is it? ${price} a unit. Fair's fair.`,
+    sale: (price) => `Alloys, is it? ${price} a unit. Fair's fair.`,
     bigSpend: "Well! Someone's had a good week.",
     armaments: "Guns, is it? Mind you use them well.",
     chips: "Chips. Real ones. I don't sell rubbish.",
     goods: "Good honest goods, pet.",
     deal: "Done and dusted. Off you go, pet.",
-    credits: "Credits first, pet. Or ore.",
+    credits: "Credits first, pet. Or Alloys.",
     stock: "I've not got that much, pet.",
-    oreCap: "My old hold won't take that much.",
-    oreHome: "You've not dug that yet, pet.",
+    cap: "My old hold won't take that much.",
+    short: "You've not smelted that yet, pet.",
     storage: "And where would you put it, pet?",
     charter: "Your charter's in the red. I can't, pet.",
     notMine: "That's not my line.",
@@ -131,21 +124,19 @@ export const TRADERS: Record<TraderSlug, Trader> = {
     about: "Quick, cheeky young hustler.", voice: {
     arriving: "Two minutes, chief. Just parking.",
     leaving: "Gotta run, chief. Places to be.",
-    lastCall: "Last chance, chief! I'm gone before the fireworks.",
-    lastCallDealt: "Anything else? Clock's running, chief.",
     again: "You again! My favourite customer.",
     greeting: "Raided? Rough. Good news: I've got exactly what they took.",
     both: "Swap and shop. Love it.",
-    ore: (price) => `Ore? Sure. ${price} a unit. Practically charity.`,
+    sale: (price) => `Alloys? Sure. ${price} a unit. Practically charity.`,
     bigSpend: "Big order! You're making my week.",
     armaments: "Armaments. Fresh stock, all legal.",
     chips: "Chips! Real ones, I promise.",
     goods: "Quality goods, quick service.",
     deal: "Done! Pleasure doing business, chief.",
-    credits: "Bit short there, chief. Credits or ore.",
+    credits: "Bit short there, chief. Credits or Alloys.",
     stock: "Whoa, I don't have that many.",
-    oreCap: "My hold can't take that much ore, chief.",
-    oreHome: "You haven't got that much ore.",
+    cap: "My hold can't take that many, chief.",
+    short: "You haven't got that many Alloys.",
     storage: "Where's it all going to go, chief?",
     charter: "Your charter's in the red. Can't touch it.",
     notMine: "Don't carry that, sorry.",
@@ -186,15 +177,16 @@ export function traderPortrait(trader: Trader, mood: TraderMood, onLoad: () => v
   return { src: portraitInterim(trader), alt: `The ${trader.ship}.`, painted: false };
 }
 
-type VoiceLine = Exclude<keyof TraderVoice, "ore">;
+type VoiceLine = Exclude<keyof TraderVoice, "sale">;
 
 /** The trader's word on a refusal, the sim's reason or the stall's own. */
 const REFUSED: [RegExp, VoiceLine][] = [
   [/credits/i, "credits"],
   [/hasn't that much/i, "stock"],
-  [/won't take that much ore/i, "oreCap"],
-  [/ore at home/i, "oreHome"],
+  [/won't take that many/i, "cap"],
+  // Before "at home": "Not enough storage room at home" is the storage's.
   [/storage/i, "storage"],
+  [/^Not enough .+ at home/i, "short"],
   [/charter/i, "charter"],
   [/doesn't (sell|buy)/i, "notMine"],
   [/isn't docked/i, "arriving"],
@@ -216,10 +208,10 @@ export function traderResult(timeline: readonly TimelineEntry[], since: number):
 /** What the trader says about the offer on the table. Nothing entered: a
  * greeting; an offer that won't go: why, in the trader's words; an offer that
  * will: their take on it. `dealt`: a trade already went through this visit.
- * `lastCall` (§charter-v5): the privateer's bounty is paid and the trader
- * leaves soon. */
+ * §den-contract (Nov 5 2026): it stays for the charter, so it has no last
+ * call. */
 export function traderLine(trader: Trader, m: MerchantView, buys: MerchantGoods, sells: MerchantGoods,
-  quote: MerchantQuote, dealt: boolean, lastCall = false): TraderLine {
+  quote: MerchantQuote, dealt: boolean): TraderLine {
   const v = trader.voice;
   if (m.phase === "arriving") return { text: v.arriving, mood: "neutral" };
   if (m.phase === "leaving") return { text: v.leaving, mood: "scoff" };
@@ -227,12 +219,11 @@ export function traderLine(trader: Trader, m: MerchantView, buys: MerchantGoods,
   const buying = entered(buys);
   const selling = entered(sells);
   if (!buying.length && !selling.length) {
-    if (lastCall) return { text: dealt ? v.lastCallDealt : v.lastCall, mood: "neutral" };
     return dealt ? { text: v.again, mood: "pleased" } : { text: v.greeting, mood: "neutral" };
   }
   if (quote.error) return refusalLine(trader, quote.error);
   if (buying.length && selling.length) return { text: v.both, mood: "pleased" };
-  if (selling.length) return { text: v.ore(price(m.ore_price)), mood: "neutral" };
+  if (selling.length) return { text: v.sale(price(m.buy_price)), mood: "neutral" };
   if (quote.cost >= 1_500) return { text: v.bigSpend, mood: "pleased" };
   if (buying.includes("armaments")) return { text: v.armaments, mood: "neutral" };
   if (buying.includes("electronics")) return { text: v.chips, mood: "neutral" };

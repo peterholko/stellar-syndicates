@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::cargo::Cargo;
+use crate::cargo::{Cargo, Commodity};
 use crate::ids::{EntityId, PlayerId};
 use crate::math::Vec2;
 use crate::movement::advance_toward;
@@ -151,15 +151,23 @@ pub enum ShipKind {
     CombatFreighter,
 }
 
-/// Mass added per unit of cargo carried. Under the constant-speed movement model
-/// cargo does NOT slow a fleet; the extra mass raises fuel burn over a given
-/// distance, so richer shipments are more expensive to move. Tunable.
-pub const CARGO_MASS_PER_UNIT: f64 = 28.0;
+/// Mass added per unit of cargo carried, for the HEAVIEST class (raw ore).
+/// Under the constant-speed movement model cargo does NOT slow a fleet; the
+/// extra mass raises fuel burn over a given distance, so richer shipments are
+/// more expensive to move. §cargo-mass (Nov 7 2026): goods weigh by class
+/// (`Commodity::mass_per_unit`); this is the ore figure, and what a planned
+/// load of unknown goods is priced at.
+pub const CARGO_MASS_PER_UNIT: f64 = crate::cargo::MASS_RAW;
 
 /// Whole cargo units in the legacy Convoy / Medium Freighter. Other sizes use
 /// `ShipKind::cargo_units`; a mixed fleet sums its actual holds (including pods).
 /// Standing logistics uses that same aggregate capacity. Tunable.
 pub const CARGO_UNITS_PER_CONVOY: u32 = 400;
+
+/// §shipbuilding-overhaul: firepower of one Pulse Laser (the light gun)…
+pub const PULSE_LASER_FIREPOWER: f64 = 0.5;
+/// …and of one Beam Battery (the line gun). Tunable.
+pub const BEAM_BATTERY_FIREPOWER: f64 = 2.0;
 
 /// The player freight ladder (Tunable). The legacy Convoy is the medium hull:
 /// upgrading its hold preserves every existing manifest instead of shrinking it.
@@ -309,15 +317,88 @@ impl ShipKind {
         self == ShipKind::Raider || self.is_player_freighter()
     }
 
-    /// Built-in jump drives are carried only by the two dark
-    /// reconnaissance/strike hulls. §fuel-overhaul: any other hull but the ships
-    /// of the line can fit a Jump Drive module after Antimatter Synthesis.
-    pub fn has_jump_drive(self) -> bool {
-        matches!(self, ShipKind::Raider | ShipKind::Scout)
+    /// §shipbuilding-overhaul: a station-keeping hull (barge, crane, depot)
+    /// carries half the engine density of a ship that goes places.
+    pub fn is_working_hull(self) -> bool {
+        matches!(self, ShipKind::MiningBarge | ShipKind::Builder | ShipKind::MiningBeltStation)
     }
 
-    /// §fuel-overhaul: a jump-capable hull's antimatter bottle: two full-range
-    /// jumps of the bare hull, at least [`crate::fuel::ANTIMATTER_BOTTLE_MIN`].
+    /// §shipbuilding-overhaul: the warp CORES a hull of this kind is built with
+    /// (of whatever grade): one per 650 hull mass, half again on a warship,
+    /// half on a working hull, at least one. The Survey Probe's burn-out drive
+    /// needs none. Peter (Nov 6 2026): "the tiny freighter requires 2 warp
+    /// engines but the interceptor requires just one because it is smaller
+    /// mass." Tunable.
+    pub fn engines(self) -> u32 {
+        // §hull-ladder (docs/hull-ladder-plan.md, Nov 7 2026): engines are half
+        // a hull's price, so the counts climb the ladder (×5 a warship rung at
+        // a light engine of 1,000) and the big hulls take heavy and capital
+        // engines (`engine_size`). Peter: the Tiny keeps its two, the
+        // Interceptor its one.
+        match self {
+            ShipKind::SurveyProbe => 0,
+            ShipKind::Raider | ShipKind::Scout => 1,
+            ShipKind::Corvette => 5,
+            ShipKind::Destroyer => 25,
+            ShipKind::Cruiser => 5,
+            ShipKind::Battleship => 25,
+            ShipKind::Dreadnought => 10,
+            ShipKind::Titan => 100,
+            ShipKind::TinyFreighter => 2,
+            ShipKind::SmallFreighter => 4,
+            ShipKind::Convoy | ShipKind::Freighter => 13,
+            ShipKind::LargeFreighter => 40,
+            ShipKind::HeavyFreighter => 5,
+            ShipKind::BulkFreighter => 15,
+            ShipKind::CombatFreighter => 3,
+            ShipKind::Colony => 10,
+            ShipKind::Transport => 15,
+            ShipKind::Builder => 4,
+            ShipKind::MiningBarge => 3,
+            ShipKind::MiningBeltStation => 30,
+        }
+    }
+
+    /// §hull-ladder: the size of this hull's engines and frame. Light up to
+    /// the Destroyer and the Large Freighter, heavy for the Cruiser, the
+    /// Battleship and the two big haulers, capital for the Dreadnought and
+    /// the Titan.
+    pub fn engine_size(self) -> crate::fuel::EngineSize {
+        use crate::fuel::EngineSize;
+        match self {
+            ShipKind::Cruiser | ShipKind::Battleship | ShipKind::HeavyFreighter | ShipKind::BulkFreighter => EngineSize::Heavy,
+            ShipKind::Dreadnought | ShipKind::Titan => EngineSize::Capital,
+            _ => EngineSize::Light,
+        }
+    }
+
+    /// The reactor good this hull is built with at `grade`.
+    pub fn reactor_good(self, grade: crate::fuel::ReactorGrade) -> Commodity { self.engine_size().reactor(grade) }
+    /// The drive good this hull is built with for `drive`.
+    pub fn drive_good(self, drive: crate::fuel::Drive) -> Commodity { self.engine_size().drive(drive) }
+
+    /// The engine a hull takes when nothing chose one: scripted spawns
+    /// (pirates, the Authority, test fixtures). The two dark hulls keep their
+    /// jump on an Antimatter Reactor and a Maelstrom Drive; everything else
+    /// flies a Fusion Reactor on a Zephyr Drive, at rated speed. A yard build
+    /// picks its engine explicitly (`Command::BuildShip::reactor` / `drive`).
+    pub fn default_engine(self) -> crate::fuel::Engine {
+        use crate::fuel::{Drive, ReactorGrade};
+        match self {
+            ShipKind::Raider | ShipKind::Scout => (ReactorGrade::Antimatter, Drive::Maelstrom),
+            _ => (ReactorGrade::Fusion, Drive::Zephyr),
+        }
+    }
+
+    /// Can a hull of this kind be built with (or refitted to) this engine? The
+    /// reactor must power the drive, and ships of the line never take a
+    /// Maelstrom Drive: a capital arrives, it never chases.
+    pub fn can_mount(self, reactor: crate::fuel::ReactorGrade, drive: crate::fuel::Drive) -> bool {
+        self.engines() > 0 && reactor.powers(drive) && !(drive.jumps() && self.is_siege_anchor())
+    }
+
+    /// §fuel-overhaul: a Fold hull's antimatter bottle: two full-range jumps of
+    /// the bare hull, at least [`crate::fuel::ANTIMATTER_BOTTLE_MIN`].
     pub fn antimatter_bottle(self) -> f64 {
         (self.hull_mass() * crate::fuel::ANTIMATTER_PER_HULL_MASS).max(crate::fuel::ANTIMATTER_BOTTLE_MIN)
     }
@@ -346,31 +427,33 @@ impl ShipKind {
     // anchor-point notes on `outcome_probs`), so pre-existing raid results are
     // numerically unchanged. All tunable.
 
-    /// Offensive weight when this kind is the AGGRESSOR in an engagement.
-    pub fn attack_weight(self) -> f64 {
+    /// §shipbuilding-overhaul: the GUNS a hull of this kind is built with —
+    /// `(Pulse Lasers, Beam Batteries)`. They are kit parts, and their sum is
+    /// the hull's firepower (`attack_weight`): a Pulse Laser is 0.5, a Beam
+    /// Battery 2.0. Counts reproduce the pre-overhaul weights, so the balance
+    /// matrix stands; capitals carrying a few Pulse Lasers read as secondary
+    /// batteries. Only the Destroyer moved (2.4 → 2.5). Civilians, working
+    /// hulls, the Scout and the Combat Freighter carry none. Tunable.
+    pub fn guns(self) -> (u32, u32) {
         match self {
-            ShipKind::Builder => 0.0,  // cranes do not shoot
-            ShipKind::Raider => 3.0,   // the hunter
-            ShipKind::Corvette => 1.0, // guards; barely bites back
-            ShipKind::Convoy => 0.0,   // civilians don't attack
-            ShipKind::TinyFreighter | ShipKind::SmallFreighter | ShipKind::LargeFreighter
-                | ShipKind::HeavyFreighter | ShipKind::BulkFreighter => 0.0,
-            ShipKind::Colony => 0.0,   // colonists, not soldiers
-            ShipKind::Scout => 0.0,    // dies if engaged — speed is its armor
-            ShipKind::SurveyProbe => 0.0, // no guns: a drone
-            ShipKind::MiningBarge => 0.0, // cutters are not guns
-            ShipKind::MiningBeltStation => 0.0, // §belts: a depot, not a fort
-            ShipKind::CombatFreighter => 0.0, // §holds: unarmed — it needs escorts
-            // §ladder: raw broadside climbs the ladder — but per Armaments
-            // spent it DECLINES past the Cruiser (the efficiency invariant).
-            ShipKind::Destroyer => 2.4,
-            ShipKind::Cruiser => 4.5,
-            ShipKind::Battleship => 8.0,
-            ShipKind::Dreadnought => 15.0, // battle rules v12 (was 12)
-            ShipKind::Titan => 24.0,
-            ShipKind::Transport => 0.0, // troopers do not fight ships
-            ShipKind::Freighter => 0.0, // an unarmed common carrier
+            ShipKind::Raider => (6, 0),      // the hunter: a gunboat
+            ShipKind::Corvette => (2, 0),    // the screen; barely bites back
+            ShipKind::Destroyer => (1, 1),
+            ShipKind::Cruiser => (1, 2),
+            ShipKind::Battleship => (0, 4),
+            ShipKind::Dreadnought => (2, 7), // battle rules v12: 15
+            ShipKind::Titan => (0, 12),
+            _ => (0, 0),
         }
+    }
+
+    /// Offensive weight when this kind is the AGGRESSOR in an engagement: the
+    /// sum of its guns (§shipbuilding-overhaul). Raw broadside climbs the
+    /// ladder — but per Weapon Mount spent it DECLINES past the Cruiser (the
+    /// efficiency invariant).
+    pub fn attack_weight(self) -> f64 {
+        let (pulse, batteries) = self.guns();
+        pulse as f64 * PULSE_LASER_FIREPOWER + batteries as f64 * BEAM_BATTERY_FIREPOWER
     }
 
     /// Defensive weight when this kind is ATTACKED (or screening a defender).
@@ -546,10 +629,12 @@ pub const CAPITAL_MASS_THRESHOLD: f64 = 7_000.0;
 
 /// §ladder: does this hull require its research programme (UnlockHull) before
 /// it can be built? Warship ladder hulls and freight above Tiny are researched.
+/// §research-locked (Nov 11 2026): the Corvette too (Escort Datalink).
 pub fn requires_hull_unlock(kind: ShipKind) -> bool {
     matches!(
         kind,
-        ShipKind::Destroyer
+        ShipKind::Corvette
+            | ShipKind::Destroyer
             | ShipKind::Convoy
             | ShipKind::SmallFreighter
             | ShipKind::LargeFreighter
@@ -647,6 +732,14 @@ pub const ALL_SHIP_KINDS: [ShipKind; 22] = [
 /// and orders can, in principle, overtake any raider. Recomputed from the speed
 /// table so a future speed edit can't silently outrun light unnoticed.
 pub fn fastest_ship_speed() -> f64 {
+    // §reactors-drives: on the fastest drive.
+    fastest_rated_speed() * crate::fuel::Drive::Maelstrom.speed_mult()
+}
+
+/// The speed table's top entry, before any drive: what the "comfortable"
+/// light margin is measured against (the drive ladder spends the headroom
+/// above it down to the floor).
+pub fn fastest_rated_speed() -> f64 {
     ALL_SHIP_KINDS
         .iter()
         .map(|k| k.max_speed())
@@ -1144,22 +1237,57 @@ pub struct Ship {
     /// Remaining hull. Full = [`ShipKind::hull_mass`] (the tactical engine's
     /// battle HP). Damage persists here between engagements until repaired.
     pub hp: f64,
+    /// §reactors-drives: the REACTOR this hull's engines run on, built or
+    /// refitted. Names the fuel it burns. serde default = Fission.
+    #[serde(default)]
+    pub reactor: crate::fuel::ReactorGrade,
+    /// The WARP DRIVE its engines turn: speed, Stealth, the jump. serde
+    /// default = Zephyr.
+    #[serde(default)]
+    pub drive: crate::fuel::Drive,
 }
 
 impl Ship {
-    /// A fresh, undamaged hull.
+    /// A fresh, undamaged hull on its kind's default engine.
     pub fn new(id: u32, kind: ShipKind, loadout: crate::module::Loadout) -> Self {
+        Self::with_engine(id, kind, loadout, kind.default_engine())
+    }
+
+    /// A fresh, undamaged hull built with `engine` (reactor, drive).
+    pub fn with_engine(id: u32, kind: ShipKind, loadout: crate::module::Loadout, engine: crate::fuel::Engine) -> Self {
         Ship {
             id,
             kind,
             loadout,
             hp: kind.hull_mass(),
+            reactor: engine.0,
+            drive: engine.1,
         }
+    }
+
+    /// This hull's engine.
+    pub fn engine(&self) -> crate::fuel::Engine { (self.reactor, self.drive) }
+
+    /// This hull's tank for its reactor's fuel, in units: the rung's energy
+    /// aboard per unit of hull mass (an Antimatter hull's at least its jump
+    /// bottle), times the fit's tank multiplier.
+    pub fn tank(&self) -> f64 {
+        if self.kind.engines() == 0 {
+            return 0.0;
+        }
+        let base = self.kind.hull_mass() * self.reactor.tank_per_hull_mass();
+        let base = if self.reactor == crate::fuel::ReactorGrade::Antimatter { base.max(crate::fuel::ANTIMATTER_BOTTLE_MIN) } else { base };
+        base * self.loadout.fuel_capacity_mult()
     }
     /// Full hull — the tactical engine's `max_hp` for this kind.
     pub fn max_hp(&self) -> f64 {
         self.kind.hull_mass()
     }
+    /// §shipbuilding-overhaul Phase 5: this hull's beam guns (one crystal
+    /// each), Torpedo Racks and Mass Drivers.
+    pub fn beam_guns(&self) -> f64 { crate::munitions::beam_guns(self.kind, &self.loadout) }
+    pub fn racks(&self) -> f64 { crate::munitions::racks(&self.loadout) }
+    pub fn drivers(&self) -> f64 { crate::munitions::drivers(&self.loadout) }
     /// Missing hull (never negative).
     pub fn deficit(&self) -> f64 {
         (self.max_hp() - self.hp).max(0.0)
@@ -1237,8 +1365,6 @@ pub(crate) struct FuelResearch {
     /// §fuel-overhaul: Fusion Freight's multiplier on a player freighter
     /// hull's fusion burn, and its cargo's (1 until researched).
     pub freighter_fusion: f64,
-    /// §fuel-overhaul: Fusion Reactors lets fusion tanks take Helium-3.
-    pub helium3: bool,
     /// Torch Regime's multiplier on a warship hull's cruise burn (never on
     /// freighters, and never on a jump).
     pub warship_burn: f64,
@@ -1257,13 +1383,16 @@ pub(crate) struct FuelResearch {
     pub cargo: f64,
     /// §holds: Prize Holds' multiplier on a Combat Freighter's hold.
     pub prize_hold: f64,
+    /// §shipbuilding-overhaul Phase 5: Hardened Magazines' multiplier on the
+    /// torpedo and slug magazines (never on crystals: one per gun).
+    pub magazine: f64,
 }
 
 impl Default for FuelResearch {
     fn default() -> Self {
-        Self { capacity: 1.0, consumption: 1.0, freighter_fusion: 1.0, helium3: false,
+        Self { capacity: 1.0, consumption: 1.0, freighter_fusion: 1.0,
             warship_burn: 1.0, speed: 1.0, warship_speed: 1.0, freighter_speed: 1.0, warship_fuel: 1.0, stream: 1.0, cargo: 1.0,
-            prize_hold: 1.0 }
+            prize_hold: 1.0, magazine: 1.0 }
     }
 }
 
@@ -1274,7 +1403,6 @@ impl FuelResearch {
             capacity: mods.get(&crate::research::ModKey::FuelCapacity).copied().unwrap_or(1.0),
             consumption: mods.get(&crate::research::ModKey::FuelConsumption).copied().unwrap_or(1.0),
             freighter_fusion: mods.get(&crate::research::ModKey::FreighterFusionBurn).copied().unwrap_or(1.0),
-            helium3: state.completed.contains(crate::power::FUSION_RESEARCH),
             warship_burn: mods.get(&crate::research::ModKey::WarshipBurn).copied().unwrap_or(1.0),
             speed: mods.get(&crate::research::ModKey::SpeedAll).copied().unwrap_or(1.0),
             warship_speed: mods.get(&crate::research::ModKey::SpeedWarship).copied().unwrap_or(1.0),
@@ -1283,7 +1411,52 @@ impl FuelResearch {
             stream: 1.0,
             cargo: 1.0,
             prize_hold: mods.get(&crate::research::ModKey::RaidSteal).copied().unwrap_or(1.0),
+            magazine: mods.get(&crate::research::ModKey::MagazineCapacity).copied().unwrap_or(1.0),
         }
+    }
+}
+
+/// §hold-room (Nov 10 2026): the room left in a hold, in quarters of a room
+/// unit (`crate::cargo::ROOM_SCALE`), so a quarter-room part and a whole-room
+/// unit of ore draw on one integer. Capacities stay in room units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HoldRoom(u64);
+
+impl HoldRoom {
+    /// No limit: a pirate's first fleet stows a whole seizure.
+    pub const UNLIMITED: Self = Self(u64::MAX);
+
+    /// `capacity` room units, less `used` quarters.
+    pub fn new(capacity: u32, used: u64) -> Self {
+        Self((capacity as u64 * crate::cargo::ROOM_SCALE as u64).saturating_sub(used))
+    }
+
+    /// Units of `c` that fit.
+    pub fn fits(self, c: Commodity) -> u32 {
+        (self.0 / c.room_quarters() as u64).min(u32::MAX as u64) as u32
+    }
+
+    /// Stow up to `want` units of `c`: the units that fit, their room taken.
+    pub fn take(&mut self, c: Commodity, want: u32) -> u32 {
+        let n = want.min(self.fits(c));
+        self.0 = self.0.saturating_sub(n as u64 * c.room_quarters() as u64);
+        n
+    }
+
+    /// No room left at all.
+    pub fn is_full(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Does a unit of any of `goods` fit? A hold with half a room unit left is
+    /// full for ore but not for Alloys.
+    pub fn fits_any(self, goods: impl IntoIterator<Item = Commodity>) -> bool {
+        goods.into_iter().any(|c| self.fits(c) > 0)
+    }
+
+    /// The room left, in quarters.
+    pub fn quarters(self) -> u64 {
+        self.0
     }
 }
 
@@ -1405,6 +1578,18 @@ pub struct Fleet {
     /// §fuel-overhaul: the ANTIMATTER BOTTLE on jump-capable hulls.
     #[serde(default)]
     pub antimatter: f64,
+    /// §shipbuilding-overhaul Phase 5: the MAGAZINES (`crate::munitions`).
+    /// Torpedoes for the racks and Slugs for the drivers, filled at a dock
+    /// like a tank and drawn down round by round in battle (rules v17); Beam
+    /// Crystals in the beam guns, one per gun, fresh with the hull and worn by
+    /// firing. Fleets no player pays for (pirates, the Authority) carry none
+    /// and are exempt.
+    #[serde(default)]
+    pub torpedoes: f64,
+    #[serde(default)]
+    pub slugs: f64,
+    #[serde(default)]
+    pub crystals: f64,
     /// Runtime cache, not a saved upgrade or a fuel grant. Rebuilt from the
     /// owner's research; old snapshots need no new authoritative fields.
     #[serde(skip)]
@@ -1472,14 +1657,6 @@ pub struct Fleet {
     /// serde default keeps every old snapshot loading (nobody aboard).
     #[serde(default)]
     pub passengers: BTreeMap<crate::specialist::SpecialistKind, u32>,
-    /// §modules Part B3: MODULE CRATES aboard (kind → count) — cargo, not fits.
-    /// A `TransferModules` convoy hauls them between systems under the SAME
-    /// two-tier fog rule as `passengers`/`cargo` (broadcast hides them, sensor
-    /// coverage reveals the manifest). Deposited into the destination ledger on
-    /// arrival; lost with the fleet; folded in on merge. serde default = none
-    /// aboard, so every old snapshot loads unchanged.
-    #[serde(default)]
-    pub modules: BTreeMap<crate::module::ModuleKind, u32>,
     /// ENGAGEMENT POSTURE (§offensive-orders Part 2): standing per-fleet aggression
     /// — Passive (default), Defensive, or WeaponsFree. serde default = Passive so
     /// every old snapshot loads with today's behaviour (byte-preserving).
@@ -1607,11 +1784,10 @@ impl Fleet {
     ) -> Self {
         let mut composition = BTreeMap::new();
         composition.insert(kind, 1);
-        // A fleet-of-one starts with full base stores: the founding fleet,
+        // A fleet-of-one starts with a full tank: the founding fleet,
         // replacements and scripted hulls. §fuel-overhaul: a hull built at a yard
         // is emptied at launch and fills at the yard's dock (`launch_empty`).
-        let hull_mass = kind.hull_mass();
-        Fleet {
+        let mut fleet = Fleet {
             id,
             owner,
             // §roster: the fleet-of-one primitive is one HULL at full health.
@@ -1630,10 +1806,13 @@ impl Fleet {
             notified_held: false,
             marines_spent: 0,
             warp: false,
-            fuel: hull_mass * crate::fuel::FUEL_PER_HULL_MASS,
+            fuel: 0.0,
             helium3: 0.0,
-            uranium: if kind.is_siege_anchor() { 0.0 } else { hull_mass * crate::fuel::FUEL_PER_HULL_MASS },
-            antimatter: if kind.has_jump_drive() { kind.antimatter_bottle() } else { 0.0 },
+            uranium: 0.0,
+            antimatter: 0.0,
+            torpedoes: 0.0,
+            slugs: 0.0,
+            crystals: 0.0,
             fuel_research: FuelResearch::default(),
             regime: crate::transit::Regime::Thrusters,
             drive_state: DriveState::default(),
@@ -1647,7 +1826,6 @@ impl Fleet {
             raid_sighted: None,
             raid_repeat: None,
             passengers: BTreeMap::new(),
-            modules: BTreeMap::new(),
             posture: crate::doctrine::EngagementPosture::Passive,
             pirate_faction: None,
             pirate_den: None,
@@ -1667,11 +1845,24 @@ impl Fleet {
             held_outside: None,
             disposable: false,
             silent: false,
-        }
+        };
+        fleet.fill_stores();
+        fleet
     }
 
-    /// §fuel-overhaul: a fleet-of-one flying Slow on Uranium (the founding
-    /// freighter's default regime).
+    /// A fleet-of-one on `engine` (reactor, drive), tank full.
+    pub fn single_on(id: EntityId, owner: PlayerId, kind: ShipKind, engine: crate::fuel::Engine, pos: Vec2,
+        order: FleetOrder, cargo: Option<Cargo>) -> Self
+    {
+        let mut fleet = Self::single(id, owner, kind, pos, order, cargo);
+        for s in &mut fleet.ships { s.reactor = engine.0; s.drive = engine.1; }
+        fleet.launch_empty();
+        fleet.fill_stores();
+        fleet
+    }
+
+    /// §fuel-overhaul: a fleet-of-one flying Slow (the founding freighter's
+    /// default throttle).
     pub fn single_slow(id: EntityId, owner: PlayerId, kind: ShipKind, pos: Vec2,
         order: FleetOrder, cargo: Option<Cargo>) -> Self
     {
@@ -1728,13 +1919,58 @@ impl Fleet {
         self.ships.clear();
         self.next_ship_id = 0;
         self.add_fitted(kind, &crate::module::Loadout::default(), n);
+        self.launch_empty();
+        self.fill_stores();
     }
 
-    /// Full fusion tank and fission store for the hulls aboard now. A spawned
-    /// formation is sized after `Fleet::single`, whose stores fit one hull.
+    /// Every tank and magazine full for the hulls aboard now. A spawned
+    /// formation is sized after `Fleet::single`, whose tank fits one hull.
     pub fn fill_stores(&mut self) {
-        self.fuel = self.fuel.max(self.fuel_capacity());
-        self.uranium = self.uranium.max(self.uranium_capacity());
+        for c in crate::fuel::ReactorGrade::ALL.map(|g| g.fuel()).into_iter().chain(crate::munitions::MUNITIONS) {
+            let cap = self.tank_capacity(c);
+            let store = self.store_mut(c);
+            *store = store.max(cap);
+        }
+    }
+
+    /// Push `n` fresh hulls of `(kind, loadout)` on `engine` (reactor, drive)
+    /// at FULL health and refresh the cache.
+    pub fn add_fitted_on(&mut self, kind: ShipKind, loadout: &crate::module::Loadout, engine: crate::fuel::Engine, n: u32) {
+        for _ in 0..n {
+            let id = self.alloc_ship_id();
+            let ship = Ship::with_engine(id, kind, loadout.clone(), engine);
+            // §shipbuilding-overhaul Phase 5: a new gun comes with its crystal;
+            // racks and drivers launch empty and load at the dock.
+            self.crystals += ship.beam_guns();
+            self.ships.push(ship);
+        }
+        if n > 0 {
+            self.rebuild_cache();
+        }
+    }
+
+    /// §reactors-drives: refit `n` hulls of `kind` to `reactor` and/or
+    /// `drive` (None keeps that part), those not yet on the target first by
+    /// id. Returns the engines that came out, one per hull changed, for the
+    /// yard's stockpile. Tanks of a fuel no hull burns any more are clamped by
+    /// the caller.
+    pub fn set_engines(&mut self, kind: ShipKind, reactor: Option<crate::fuel::ReactorGrade>,
+        drive: Option<crate::fuel::Drive>, n: u32) -> Vec<crate::fuel::Engine>
+    {
+        let target = |s: &Ship| (reactor.unwrap_or(s.reactor), drive.unwrap_or(s.drive));
+        let mut idx: Vec<usize> = (0..self.ships.len())
+            .filter(|i| self.ships[*i].kind == kind && self.ships[*i].engine() != target(&self.ships[*i]))
+            .collect();
+        idx.sort_by_key(|i| self.ships[*i].id);
+        idx.truncate(n as usize);
+        let mut out = Vec::with_capacity(idx.len());
+        for i in idx {
+            let to = target(&self.ships[i]);
+            out.push(self.ships[i].engine());
+            self.ships[i].reactor = to.0;
+            self.ships[i].drive = to.1;
+        }
+        out
     }
 
     /// ABSORB hulls from another fleet (merge / relief / a completed refit),
@@ -1813,6 +2049,16 @@ impl Fleet {
     /// its hulls. What an assault is measured in.
     pub fn marines(&self) -> u32 {
         let carried: u32 = self.ships.iter().map(|s| marine_capacity(s.kind)).sum();
+        carried.saturating_sub(self.marines_spent)
+    }
+
+    /// §veil: the marines aboard TROOP TRANSPORTS only — the hulls hardened and
+    /// slow enough to get down through a Veil. A capital's boarding party stays
+    /// aboard while a Veil is up. Spent complements come off this first, since
+    /// a landing commits the whole formation.
+    pub fn transport_marines(&self) -> u32 {
+        let carried: u32 = self.ships.iter().filter(|s| s.kind == ShipKind::Transport)
+            .map(|s| marine_capacity(s.kind)).sum();
         carried.saturating_sub(self.marines_spent)
     }
 
@@ -1958,9 +2204,12 @@ impl Fleet {
         CountClass::from_count(self.total_count())
     }
 
-    /// Add `n` UNFITTED ships of `kind` at full health (§roster).
+    /// Add `n` UNFITTED ships of `kind` at full health (§roster), tanks full:
+    /// the scripted-spawn primitive (packs growing, relief squadrons, test
+    /// setup). A yard build joins through `add_fitted_on` and fills at the dock.
     pub fn add(&mut self, kind: ShipKind, n: u32) {
         self.add_fitted(kind, &crate::module::Loadout::default(), n);
+        self.fill_stores();
     }
 
     /// Remove up to `n` ships of `kind`. Sheds UNFITTED hulls first (the
@@ -2039,16 +2288,11 @@ impl Fleet {
             .unwrap_or(0)
     }
 
-    /// Every hull must carry a jump drive: built in (Interceptor, Scout) or a
-    /// fitted Jump Drive (§fuel-overhaul).
+    /// §shipbuilding-overhaul: a fleet jumps only when every hull with engines
+    /// rides a Fold Core (and at least one does).
     pub fn can_jump(&self) -> bool {
-        !self.composition.is_empty() && self.composition.iter().all(|(k, n)| {
-            *n == 0 || k.has_jump_drive() || self.loadouts.get(k).is_some_and(|fits| {
-                fits.iter()
-                    .filter(|(key, _)| crate::module::Loadout::from_key(key).has_jump_drive())
-                    .map(|(_, c)| *c).sum::<u32>() >= *n
-            })
-        })
+        self.ships.iter().any(|s| s.kind.engines() > 0 && s.drive.jumps())
+            && self.ships.iter().all(|s| s.kind.engines() == 0 || s.drive.jumps())
     }
 
     /// §explore: is this fleet ACTIVELY SURVEYING (in the dwell window)? Drives
@@ -2232,9 +2476,37 @@ impl Fleet {
         expected.next().is_none()
     }
 
-    /// Total occupied hold space across every commodity.
+    /// Units aboard across every commodity. §hold-room: a COUNT of goods, not
+    /// the room they fill (`Self::hold_used`); capacity checks use room.
     pub fn cargo_units(&self) -> u32 {
         self.cargo.map_or(0, |cargo| cargo.units) + self.cargo_extra.values().copied().sum::<u32>()
+    }
+
+    /// §hold-room: the room the goods aboard fill, in quarters.
+    pub fn hold_used(&self) -> u64 {
+        self.cargo.map_or(0, |c| c.units as u64 * c.commodity.room_quarters() as u64)
+            + crate::cargo::manifest_quarters(&self.cargo_extra)
+    }
+
+    /// The room left under `capacity` room units: a plunder rig, or a hold
+    /// after a refit.
+    pub fn room_under(&self, capacity: u32) -> HoldRoom {
+        HoldRoom::new(capacity, self.hold_used())
+    }
+
+    /// The room left in every hold, loot-only included.
+    pub fn cargo_room(&self) -> HoldRoom {
+        self.room_under(self.cargo_capacity())
+    }
+
+    /// §holds: the room a dock, a market or a route may still fill.
+    pub fn trade_room(&self) -> HoldRoom {
+        self.room_under(self.trade_capacity())
+    }
+
+    /// Do the goods aboard fit in `capacity` room units?
+    pub fn cargo_fits(&self, capacity: u32) -> bool {
+        self.hold_used() <= capacity as u64 * crate::cargo::ROOM_SCALE as u64
     }
 
     pub fn cargo_amount(&self, commodity: crate::cargo::Commodity) -> u32 {
@@ -2318,9 +2590,12 @@ impl Fleet {
         }
     }
 
-    /// Cargo mass carried by the fleet (§7).
+    /// Cargo mass carried by the fleet (§7): each good at its own weight
+    /// (`Commodity::mass_per_unit`), so a hold of ore burns twice what a hold
+    /// of Alloys does and fuel for a colony rides nearly free.
     pub fn cargo_mass(&self) -> f64 {
-        self.cargo_units() as f64 * CARGO_MASS_PER_UNIT
+        self.cargo.as_ref().map_or(0.0, |c| c.units as f64 * c.commodity.mass_per_unit())
+            + self.cargo_extra.iter().map(|(c, n)| *n as f64 * c.mass_per_unit()).sum::<f64>()
     }
 
     /// Total mass = Σ hull + cargo (§7). Drives fuel-∝-distance×mass exactly as
@@ -2329,178 +2604,285 @@ impl Fleet {
         self.hull_mass() + self.cargo_mass()
     }
 
-    /// How much fuel this formation can carry.
-    ///
+    // --- §reactors-drives: engines, tanks and burn --------------------------
+
+    /// Hulls with engines aboard, by reactor.
+    pub fn reactors(&self) -> BTreeMap<crate::fuel::ReactorGrade, u32> {
+        let mut out = BTreeMap::new();
+        for s in self.ships.iter().filter(|s| s.kind.engines() > 0) {
+            *out.entry(s.reactor).or_insert(0) += 1;
+        }
+        out
+    }
+
+    /// Hulls with engines aboard, by drive.
+    pub fn drives(&self) -> BTreeMap<crate::fuel::Drive, u32> {
+        let mut out = BTreeMap::new();
+        for s in self.ships.iter().filter(|s| s.kind.engines() > 0) {
+            *out.entry(s.drive).or_insert(0) += 1;
+        }
+        out
+    }
+
+    /// Hulls with engines aboard, by (reactor, drive).
+    pub fn engines_aboard(&self) -> BTreeMap<crate::fuel::Engine, u32> {
+        let mut out = BTreeMap::new();
+        for s in self.ships.iter().filter(|s| s.kind.engines() > 0) {
+            *out.entry(s.engine()).or_insert(0) += 1;
+        }
+        out
+    }
+
+    /// The slowest drive aboard: the formation flies on it. None with no
+    /// engines aboard.
+    pub fn slowest_drive(&self) -> Option<crate::fuel::Drive> {
+        self.ships.iter().filter(|s| s.kind.engines() > 0).map(|s| s.drive).min()
+    }
+
+    /// §reactors-drives: the slowest drive's multiplier on rated speed (1 with
+    /// no engines aboard).
+    pub fn drive_speed_mult(&self) -> f64 {
+        self.slowest_drive().map_or(1.0, |d| d.speed_mult())
+    }
+
+    /// §reactors-drives: the slowest drive's multiplier on ENERGY a distance —
+    /// every hull flies at its speed, so every hull pays its square.
+    pub fn drive_energy_mult(&self) -> f64 {
+        self.slowest_drive().map_or(1.0, |d| d.energy_mult())
+    }
+
+    /// The fuels the hulls aboard burn, in commodity order.
+    pub fn fuels_aboard(&self) -> Vec<Commodity> {
+        let mut v: Vec<Commodity> = self.ships.iter().filter(|s| s.kind.engines() > 0).map(|s| s.reactor.fuel()).collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    /// §shipbuilding-overhaul Phase 5: every store a dock fills — the fuels
+    /// the hulls burn and the munitions the guns aboard can hold.
+    pub fn supplies_aboard(&self) -> Vec<Commodity> {
+        let mut v = self.fuels_aboard();
+        v.extend(crate::munitions::MUNITIONS.into_iter().filter(|c| self.magazine_capacity(*c) > 1e-9));
+        v
+    }
+
+    /// Beam guns, Torpedo Racks and Mass Drivers aboard.
+    pub fn beam_guns(&self) -> f64 { self.ships.iter().map(Ship::beam_guns).sum() }
+    pub fn racks(&self) -> f64 { self.ships.iter().map(Ship::racks).sum() }
+    pub fn drivers(&self) -> f64 { self.ships.iter().map(Ship::drivers).sum() }
+
+    /// The MAGAZINE for a munition: rounds per rack or driver (Hardened
+    /// Magazines widens them), one crystal per beam gun.
+    pub fn magazine_capacity(&self, c: Commodity) -> f64 {
+        use crate::munitions::{CRYSTALS_PER_GUN, SLUGS_PER_DRIVER, TORPEDOES_PER_RACK};
+        match c {
+            Commodity::Torpedoes => self.racks() * TORPEDOES_PER_RACK * self.fuel_research.magazine,
+            Commodity::Slugs => self.drivers() * SLUGS_PER_DRIVER * self.fuel_research.magazine,
+            Commodity::BeamCrystals => self.beam_guns() * CRYSTALS_PER_GUN,
+            _ => 0.0,
+        }
+    }
+
+    /// Anything aboard that takes a munition.
+    pub fn has_magazines(&self) -> bool {
+        crate::munitions::MUNITIONS.iter().any(|c| self.magazine_capacity(*c) > 1e-9)
+    }
+
+    /// The magazines as the battle engine carries them.
+    pub fn magazine(&self) -> crate::munitions::Magazine {
+        crate::munitions::Magazine {
+            torpedoes: self.torpedoes,
+            slugs: self.slugs,
+            crystals: self.crystals,
+            crystal_capacity: self.magazine_capacity(Commodity::BeamCrystals),
+        }
+    }
+
+    /// Take the engine's magazines back after a round. A rack that died took
+    /// its rounds with it (clamped to what is left); crystals keep their wear
+    /// across the guns that remain.
+    pub fn apply_magazine(&mut self, m: &crate::munitions::Magazine) {
+        self.torpedoes = m.torpedoes.min(self.magazine_capacity(Commodity::Torpedoes));
+        self.slugs = m.slugs.min(self.magazine_capacity(Commodity::Slugs));
+        let cap = self.magazine_capacity(Commodity::BeamCrystals);
+        // Same guns as when the engine took them: the exact value back (so a
+        // quiet round records no new input); fewer guns: the same wear across
+        // the ones that remain.
+        self.crystals = if (cap - m.crystal_capacity).abs() < 1e-9 || m.crystal_capacity <= 1e-9 { m.crystals.min(cap) }
+            else { (m.crystals / m.crystal_capacity).clamp(0.0, 1.0) * cap };
+    }
+
+    /// The fuel of the heaviest hull mass aboard: the one a one-fuel verb
+    /// (a rescue, a raid's bunker) reaches for.
+    pub fn primary_fuel(&self) -> Option<Commodity> {
+        let mut by_fuel: BTreeMap<Commodity, f64> = BTreeMap::new();
+        for s in self.ships.iter().filter(|s| s.kind.engines() > 0) {
+            *by_fuel.entry(s.reactor.fuel()).or_insert(0.0) += s.kind.hull_mass();
+        }
+        by_fuel.into_iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|(f, _)| f)
+    }
+
+    /// The TANK for `fuel`: what the hulls burning it can hold, in units.
     /// Proportional to hull mass, because the per-tick burn is too — which makes
-    /// RANGE roughly independent of fleet size. A capital group is expensive to
-    /// move but not short-legged, so mass buys you cost, not a shorter leash.
-    /// Cargo is excluded: a hold full of ore is not a fuel bunker.
-    pub fn fuel_capacity(&self) -> f64 {
-        let extra_mass: f64 = self.loadouts.iter().map(|(kind, fits)| {
-            fits.iter().map(|(key, n)| kind.hull_mass() * *n as f64
-                * (crate::module::Loadout::from_key(key).fuel_capacity_mult() - 1.0)).sum::<f64>()
-        }).sum();
-        (self.hull_mass() + extra_mass) * crate::fuel::FUEL_PER_HULL_MASS * self.fuel_research.capacity
+    /// RANGE roughly independent of fleet size and, since every grade holds the
+    /// same ENERGY per unit of mass, of the core grade. Cargo is excluded: a
+    /// hold full of ore is not a fuel bunker. Bunkerage multiplies every tank.
+    pub fn tank_capacity(&self, fuel: Commodity) -> f64 {
+        if fuel.is_munition() {
+            return self.magazine_capacity(fuel);
+        }
+        self.ships.iter().filter(|s| s.reactor.fuel() == fuel).map(Ship::tank).sum::<f64>()
+            * self.fuel_research.capacity
     }
 
-    /// §fuel-overhaul: the FISSION STORE's size, by the same rule as the tank but
-    /// counting only hulls that carry one (every hull but the ships of the line).
-    pub fn uranium_capacity(&self) -> f64 {
-        let base: f64 = self.composition.iter()
-            .filter(|(kind, _)| !kind.is_siege_anchor())
-            .map(|(kind, n)| kind.hull_mass() * *n as f64).sum();
-        let extra_mass: f64 = self.loadouts.iter().filter(|(kind, _)| !kind.is_siege_anchor())
-            .map(|(kind, fits)| {
-                fits.iter().map(|(key, n)| kind.hull_mass() * *n as f64
-                    * (crate::module::Loadout::from_key(key).fuel_capacity_mult() - 1.0)).sum::<f64>()
-            }).sum();
-        (base + extra_mass) * crate::fuel::FUEL_PER_HULL_MASS * self.fuel_research.capacity
+    /// Units of `fuel` aboard (a munition: its magazine).
+    pub fn store(&self, fuel: Commodity) -> f64 {
+        match fuel {
+            Commodity::Uranium => self.uranium,
+            Commodity::Deuterium => self.fuel,
+            Commodity::Helium3 => self.helium3,
+            Commodity::Antimatter => self.antimatter,
+            Commodity::Torpedoes => self.torpedoes,
+            Commodity::Slugs => self.slugs,
+            Commodity::BeamCrystals => self.crystals,
+            _ => 0.0,
+        }
     }
 
-    /// §fuel-overhaul: the ANTIMATTER BOTTLE: two full-range jumps per
-    /// jump-capable hull (built-in drives or a fitted Jump Drive).
-    pub fn antimatter_capacity(&self) -> f64 {
-        self.composition.iter().filter(|(_, n)| **n > 0).map(|(kind, n)| {
-            let fitted = self.loadouts.get(kind).map(|fits| fits.iter()
-                .filter(|(key, _)| crate::module::Loadout::from_key(key).has_jump_drive())
-                .map(|(_, c)| *c).sum::<u32>()).unwrap_or(0);
-            let drives = if kind.has_jump_drive() { *n } else { fitted.min(*n) };
-            kind.antimatter_bottle() * drives as f64
-        }).sum()
+    pub fn store_mut(&mut self, fuel: Commodity) -> &mut f64 {
+        match fuel {
+            Commodity::Uranium => &mut self.uranium,
+            Commodity::Deuterium => &mut self.fuel,
+            Commodity::Helium3 => &mut self.helium3,
+            Commodity::Antimatter => &mut self.antimatter,
+            Commodity::Torpedoes => &mut self.torpedoes,
+            Commodity::Slugs => &mut self.slugs,
+            Commodity::BeamCrystals => &mut self.crystals,
+            other => panic!("{other:?} is not a fuel or a munition"),
+        }
     }
 
-    /// §fuel-overhaul: empty every store (a hull fresh off the slip).
+    /// Room left in the tank for `fuel`.
+    pub fn room(&self, fuel: Commodity) -> f64 {
+        (self.tank_capacity(fuel) - self.store(fuel)).max(0.0)
+    }
+
+    /// Fill the tank (or magazine) for `fuel` from a supply, returning what
+    /// was taken.
+    pub fn take_fuel(&mut self, fuel: Commodity, available: f64) -> f64 {
+        if !fuel.is_supply() {
+            return 0.0;
+        }
+        let taken = self.room(fuel).min(available.max(0.0));
+        *self.store_mut(fuel) += taken;
+        taken
+    }
+
+    /// The Deuterium tank (the Fusion Cores' fuel). Kept under its old name:
+    /// the wire and the client call the Deuterium tank `fuel`.
+    pub fn fuel_capacity(&self) -> f64 { self.tank_capacity(Commodity::Deuterium) }
+    /// The Uranium tank (the Fission Cores' fuel).
+    pub fn uranium_capacity(&self) -> f64 { self.tank_capacity(Commodity::Uranium) }
+    /// The Helium-3 tank (the Helium Cores' fuel).
+    pub fn helium3_capacity(&self) -> f64 { self.tank_capacity(Commodity::Helium3) }
+    /// The Antimatter tank (the Fold Cores' fuel and jump bottle).
+    pub fn antimatter_capacity(&self) -> f64 { self.tank_capacity(Commodity::Antimatter) }
+
+    /// §fuel-overhaul: empty every tank and magazine (a hull fresh off the
+    /// slip; its crystals come with its guns through `add_fitted_on`).
     pub fn launch_empty(&mut self) {
         self.fuel = 0.0;
         self.helium3 = 0.0;
         self.uranium = 0.0;
         self.antimatter = 0.0;
+        self.torpedoes = 0.0;
+        self.slugs = 0.0;
+        self.crystals = 0.0;
     }
 
-    /// Fusion-tank SPACE in use: Deuterium units plus Helium-3 units.
-    pub fn fusion_space_used(&self) -> f64 {
-        (self.fuel - (crate::fuel::HELIUM3_FUEL_EQUIV - 1.0) * self.helium3).max(0.0)
+    /// Free room in the Deuterium tank.
+    pub fn fusion_room(&self) -> f64 { self.room(Commodity::Deuterium) }
+
+    /// Fill the Deuterium tank, returning what was taken.
+    pub fn refuel(&mut self, available: f64) -> f64 { self.take_fuel(Commodity::Deuterium, available) }
+    /// Fill the Helium-3 tank, returning the units taken.
+    pub fn refuel_helium3(&mut self, available: f64) -> f64 { self.take_fuel(Commodity::Helium3, available) }
+    /// Fill the Uranium tank, returning what was taken.
+    pub fn refuel_uranium(&mut self, available: f64) -> f64 { self.take_fuel(Commodity::Uranium, available) }
+    /// Fill the Antimatter tank, returning what was taken.
+    pub fn refuel_antimatter(&mut self, available: f64) -> f64 { self.take_fuel(Commodity::Antimatter, available) }
+
+    /// Deuterium units aboard.
+    pub fn deuterium(&self) -> f64 { self.fuel }
+
+    /// ENERGY aboard (in Uranium) across every tank, and the tanks' total.
+    pub fn energy_aboard(&self) -> f64 {
+        crate::fuel::ReactorGrade::ALL.iter().map(|g| self.store(g.fuel()) * g.energy_per_unit()).sum()
     }
 
-    /// Free fusion-tank space.
-    pub fn fusion_room(&self) -> f64 {
-        (self.fuel_capacity() - self.fusion_space_used()).max(0.0)
+    pub fn energy_capacity(&self) -> f64 {
+        crate::fuel::ReactorGrade::ALL.iter().map(|g| self.tank_capacity(g.fuel()) * g.energy_per_unit()).sum()
     }
 
-    /// Fill the fusion tank with Deuterium from a supply, returning what was
-    /// actually taken.
-    pub fn refuel(&mut self, available: f64) -> f64 {
-        let taken = self.fusion_room().min(available.max(0.0));
-        self.fuel += taken;
-        taken
-    }
-
-    /// Fill the fusion tank with Helium-3 units (one unit of space each, six of
-    /// energy), returning the units taken. Needs Fusion Reactors.
-    pub fn refuel_helium3(&mut self, available: f64) -> f64 {
-        if !self.fuel_research.helium3 {
-            return 0.0;
-        }
-        let taken = self.fusion_room().min(available.max(0.0));
-        self.fuel += taken * crate::fuel::HELIUM3_FUEL_EQUIV;
-        self.helium3 += taken;
-        taken
-    }
-
-    /// Fill the fission store with Uranium, returning what was taken.
-    pub fn refuel_uranium(&mut self, available: f64) -> f64 {
-        let taken = (self.uranium_capacity() - self.uranium).max(0.0).min(available.max(0.0));
-        self.uranium += taken;
-        taken
-    }
-
-    /// Fill the antimatter bottle, returning what was taken.
-    pub fn refuel_antimatter(&mut self, available: f64) -> f64 {
-        let taken = (self.antimatter_capacity() - self.antimatter).max(0.0).min(available.max(0.0));
-        self.antimatter += taken;
-        taken
-    }
-
-    /// Burn fusion energy: Deuterium first, the dense Helium-3 last.
-    pub fn burn_fusion(&mut self, energy: f64) {
-        let equiv = crate::fuel::HELIUM3_FUEL_EQUIV;
-        let deuterium = (self.fuel - equiv * self.helium3).max(0.0);
-        if energy > deuterium {
-            self.helium3 = (self.helium3 - (energy - deuterium) / equiv).max(0.0);
-        }
-        self.fuel = (self.fuel - energy).max(0.0);
-        self.helium3 = self.helium3.min(self.fuel / equiv);
-    }
-
-    /// Deuterium units in the fusion tank (energy not held as Helium-3).
-    pub fn deuterium(&self) -> f64 {
-        (self.fuel - crate::fuel::HELIUM3_FUEL_EQUIV * self.helium3).max(0.0)
-    }
-
-    /// The store the current throttle burns: Uranium on Slow, else the tank.
-    pub fn propulsion_store(&self) -> f64 {
-        if self.burns_uranium() { self.uranium } else { self.fuel }
-    }
-
-    /// That store's full size (the fusion tank's at Deuterium energy).
-    pub fn propulsion_capacity(&self) -> f64 {
-        if self.burns_uranium() { self.uranium_capacity() } else { self.fuel_capacity() }
-    }
-
-    /// §fuel-overhaul: what an escort burns while flying formation on a charge:
-    /// the charge's Uranium regime when it can fly it, else its own fusion tank.
-    /// Returns (burns Uranium, energy-per-distance multiplier).
-    pub fn formation_burn(&self, charge_slow: bool) -> (bool, f64) {
-        let uranium = charge_slow && self.can_slow();
-        (uranium, self.cruise_mult_for(uranium) * self.fuel_research.consumption)
-    }
-
-    /// How far this fleet can still go at `factor` (1 on thrusters,
-    /// `WARP_FACTOR` in warp). Distance, not time — what a range ring draws.
-    pub fn range_at(&self, factor: f64) -> f64 {
-        let per_second = crate::fuel::fuel_tick(self.mass(), self.transit_speed(), 1.0)
-            * self.propulsion_fuel_mult();
-        if per_second <= 1e-12 {
-            return f64::INFINITY;
-        }
-        (self.propulsion_store() / per_second) * self.transit_speed() * factor
-    }
-
-    /// §fuel-overhaul: every formation without a ship of the line can fly Slow
-    /// on Uranium. Rechecked live, so merging a capital in ends it.
-    pub fn can_slow(&self) -> bool {
-        self.composition.iter().any(|(_, n)| *n > 0)
-            && self.composition.iter().all(|(kind, n)| *n == 0 || !kind.is_siege_anchor())
-    }
-
-    /// Flying Slow on the fission store this tick.
-    pub fn burns_uranium(&self) -> bool {
+    /// Flying Slow this tick (half speed, a quarter of the energy per distance).
+    pub fn flies_slow(&self) -> bool {
         self.transit == TransitMode::Slow && self.can_slow()
     }
 
-    /// The throttle's multiplier on energy per distance.
-    pub fn cruise_fuel_mult(&self) -> f64 {
-        self.cruise_mult_for(self.burns_uranium())
+    /// Any formation can throttle back to Slow.
+    pub fn can_slow(&self) -> bool {
+        self.ships.iter().any(|s| s.kind.engines() > 0)
     }
 
-    /// The multiplier on energy per distance on one store, weighed hull by hull
-    /// by mass, since burn is proportional to mass: on Uranium a quarter for
-    /// every hull; on the fusion tank, Fusion Freight's cut for each player
-    /// freighter and the cargo it carries, so an escort riding along costs its
-    /// own share and no more. Torch Regime makes warship hulls thirstier on
-    /// either store.
-    pub fn cruise_mult_for(&self, uranium: bool) -> f64 {
-        let total = self.mass();
-        if total <= 1e-9 {
-            return if uranium { crate::fuel::SLOW_FUEL_MULT } else { 1.0 };
+    /// Stealth needs every engine-bearing hull on a Gale Drive or better.
+    pub fn can_stealth(&self) -> bool {
+        self.can_slow() && self.ships.iter().all(|s| s.kind.engines() == 0 || s.drive.can_stealth())
+    }
+
+    /// The throttle the fleet actually flies: Stealth falls back to Full on a
+    /// fission hull.
+    pub fn effective_transit(&self) -> TransitMode {
+        match self.transit {
+            TransitMode::Stealth if !self.can_stealth() => TransitMode::Full,
+            TransitMode::Slow if !self.can_slow() => TransitMode::Full,
+            mode => mode,
         }
-        let regime = |freighter: bool| if uranium { crate::fuel::SLOW_FUEL_MULT }
-            else if freighter { self.fuel_research.freighter_fusion } else { 1.0 };
-        let hulls: f64 = self.composition.iter().filter(|(_, n)| **n > 0).map(|(kind, n)| {
-            let torch = if kind.is_combatant() { self.fuel_research.warship_burn * self.fuel_research.warship_fuel } else { 1.0 };
-            kind.hull_mass() * *n as f64 * regime(kind.is_player_freighter()) * torch
-        }).sum();
-        (hulls + self.cargo_mass() * regime(self.has_freighter())) / total
+    }
+
+    /// The throttle's multiplier on ENERGY per distance.
+    pub fn cruise_fuel_mult(&self) -> f64 {
+        self.cruise_mult_for(self.flies_slow())
+    }
+
+    /// The multiplier on energy per distance at a throttle, weighed hull by hull
+    /// by mass, since burn is proportional to mass: on Slow a quarter for every
+    /// hull; on Full, Fusion Freight's cut for each player freighter and the
+    /// cargo it carries, so an escort riding along costs its own share and no
+    /// more. Torch Regime makes warship hulls thirstier at either throttle.
+    pub fn cruise_mult_for(&self, slow: bool) -> f64 {
+        let total = self.mass();
+        let drive = self.drive_energy_mult();
+        if total <= 1e-9 {
+            return drive * if slow { crate::fuel::SLOW_FUEL_MULT } else { 1.0 };
+        }
+        let hulls: f64 = self.composition.iter().filter(|(_, n)| **n > 0)
+            .map(|(kind, n)| kind.hull_mass() * *n as f64 * self.hull_regime(*kind, slow)).sum();
+        drive * (hulls + self.cargo_mass() * self.cargo_regime(slow)) / total
+    }
+
+    /// One hull's energy multiplier at a throttle (see `cruise_mult_for`).
+    fn hull_regime(&self, kind: ShipKind, slow: bool) -> f64 {
+        let torch = if kind.is_combatant() { self.fuel_research.warship_burn * self.fuel_research.warship_fuel } else { 1.0 };
+        let regime = if slow { crate::fuel::SLOW_FUEL_MULT }
+            else if kind.is_player_freighter() { self.fuel_research.freighter_fusion } else { 1.0 };
+        regime * torch
+    }
+
+    /// The cargo's energy multiplier: Fusion Freight's cut rides a freighter's hold.
+    fn cargo_regime(&self, slow: bool) -> f64 {
+        if slow { crate::fuel::SLOW_FUEL_MULT }
+        else if self.has_freighter() { self.fuel_research.freighter_fusion } else { 1.0 }
     }
 
     /// Research and the selected throttle compose once, both in the physical
@@ -2509,7 +2891,91 @@ impl Fleet {
         self.cruise_fuel_mult() * self.fuel_research.consumption
     }
 
-    /// §fuel-overhaul: Antimatter a jump of `distance` burns from the bottle.
+    /// §fuel-overhaul: what an escort burns while flying formation on a charge:
+    /// the charge's throttle. Returns (slow, energy-per-distance multiplier).
+    pub fn formation_burn(&self, charge_slow: bool) -> (bool, f64) {
+        let slow = charge_slow && self.can_slow();
+        (slow, self.cruise_mult_for(slow) * self.fuel_research.consumption)
+    }
+
+    /// UNITS of each fuel aboard that `base` energy (a `fuel_tick` of this
+    /// fleet's mass and speed, before throttle and research) costs at a
+    /// throttle. Each hull pays its mass share of the energy — regime, Torch
+    /// Regime and research consumption included — from its own core's fuel,
+    /// and the cargo's share rides every hull by mass.
+    pub fn burn_units(&self, base: f64, slow: bool) -> Vec<(Commodity, f64)> {
+        let total = self.mass();
+        if total <= 1e-9 || base <= 0.0 {
+            return Vec::new();
+        }
+        let hull_total = self.hull_mass().max(1e-9);
+        let cargo = self.cargo_mass() * self.cargo_regime(slow);
+        // §reactors-drives: the slowest drive sets the pace and its square the
+        // energy, for every hull.
+        let drive = self.drive_energy_mult();
+        let mut units: BTreeMap<Commodity, f64> = BTreeMap::new();
+        for s in self.ships.iter().filter(|s| s.kind.engines() > 0) {
+            let mass = s.kind.hull_mass();
+            let weight = mass * self.hull_regime(s.kind, slow) + cargo * mass / hull_total;
+            let energy = base * self.fuel_research.consumption * drive * weight / total;
+            *units.entry(s.reactor.fuel()).or_insert(0.0) += energy / s.reactor.energy_per_unit();
+        }
+        units.into_iter().collect()
+    }
+
+    /// Can every tank cover its share of `units`?
+    pub fn can_pay(&self, units: &[(Commodity, f64)]) -> bool {
+        units.iter().all(|(fuel, u)| self.store(*fuel) + 1e-9 >= *u)
+    }
+
+    /// Draw `units` from the tanks (never below zero).
+    pub fn pay(&mut self, units: &[(Commodity, f64)]) {
+        for (fuel, u) in units {
+            let store = self.store_mut(*fuel);
+            *store = (*store - u).max(0.0);
+        }
+    }
+
+    /// Burn `energy` (in Uranium) spread over the hulls by mass, each from its
+    /// own fuel: the interdiction field's charge, a test's drain.
+    pub fn burn_energy(&mut self, energy: f64) {
+        let hull_total = self.hull_mass();
+        if hull_total <= 1e-9 || energy <= 0.0 {
+            return;
+        }
+        let shares: Vec<(Commodity, f64)> = self.ships.iter().filter(|s| s.kind.engines() > 0)
+            .map(|s| (s.reactor.fuel(), energy * s.kind.hull_mass() / hull_total / s.reactor.energy_per_unit()))
+            .collect();
+        self.pay(&shares);
+    }
+
+    /// The fuel the fleet needs most: the tank with the least range at the
+    /// current throttle, and its room. None when nothing aboard burns fuel.
+    pub fn thirstiest(&self) -> Option<(Commodity, f64)> {
+        let base = crate::fuel::fuel_tick(self.mass(), self.transit_speed(), 1.0);
+        self.burn_units(base.max(1e-9), self.flies_slow()).into_iter()
+            .map(|(fuel, per_s)| (fuel, if per_s > 1e-12 { self.store(fuel) / per_s } else { f64::INFINITY }))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(fuel, _)| (fuel, self.room(fuel)))
+    }
+
+    /// How far this fleet can still go at `factor` (1 on thrusters,
+    /// `WARP_FACTOR` in warp): the shortest tank's range at the current
+    /// throttle. Distance, not time — what a range ring draws.
+    pub fn range_at(&self, factor: f64) -> f64 {
+        let speed = self.transit_speed();
+        let base = crate::fuel::fuel_tick(self.mass(), speed, 1.0);
+        let units = self.burn_units(base, self.flies_slow());
+        if units.is_empty() {
+            return f64::INFINITY;
+        }
+        let seconds = units.iter()
+            .map(|(fuel, per_s)| if *per_s <= 1e-12 { f64::INFINITY } else { self.store(*fuel) / per_s })
+            .fold(f64::INFINITY, f64::min);
+        seconds * speed * factor
+    }
+
+    /// §fuel-overhaul: Antimatter a jump of `distance` burns from the Fold tank.
     pub fn jump_antimatter_cost(&self, distance: f64) -> f64 {
         crate::fuel::fuel_cost(distance, self.mass()) / crate::transit::JUMP_FUEL_FACTOR
             * self.fuel_research.consumption
@@ -2518,10 +2984,7 @@ impl Fleet {
     /// Formation speed × throttle. Slow's fuel saving is separate: simply
     /// halving speed and burn/second would leave total trip fuel unchanged.
     pub fn transit_speed(&self) -> f64 {
-        let throttle = if self.transit == TransitMode::Slow && !self.can_slow() {
-            1.0
-        } else { self.transit.fraction() };
-        self.max_speed() * throttle
+        self.max_speed() * self.effective_transit().fraction()
     }
 
     /// §sensors: what the core is doing right now. Under way is read off the
@@ -2531,10 +2994,7 @@ impl Fleet {
     pub fn core_state(&self) -> crate::detection::CoreState {
         use crate::detection::CoreState;
         if self.vel.length() > crate::detection::UNDER_WAY_SU_S {
-            let mode = if self.transit == TransitMode::Slow && !self.can_slow() {
-                TransitMode::Full
-            } else { self.transit };
-            return CoreState::UnderWay(mode);
+            return CoreState::UnderWay(self.effective_transit());
         }
         let building = matches!(self.order,
             FleetOrder::Construct { started: Some(_), .. } | FleetOrder::Demolish { started: Some(_), .. });
@@ -2549,7 +3009,9 @@ impl Fleet {
     /// at full throttle. Recorded with every served sample, so the View judges
     /// it in the retarded frame exactly as the sim's own sensors do.
     pub fn core_output(&self) -> f64 {
-        crate::detection::core_output(self.mass(), self.max_speed(), self.core_state())
+        // §reactors-drives: the drive's speed bonus is not louder — sensor
+        // ranges stay tuned in Raiders-at-rated-speed, whatever the drive.
+        crate::detection::core_output(self.mass(), self.max_speed() / self.drive_speed_mult(), self.core_state())
     }
 
     /// The fleet's detection SIGNATURE (§sensors) at its CURRENT state: √ of
@@ -2589,7 +3051,9 @@ impl Fleet {
                     .map(|(key, _)| base * crate::module::Loadout::from_key(key).speed_mult())
                     .fold(unfitted, f64::min)
             })
-            .fold(f64::INFINITY, f64::min);
+            .fold(f64::INFINITY, f64::min)
+            // §reactors-drives: the slowest drive aboard sets the pace.
+            * self.drive_speed_mult();
         if self.founding_privateer {
             hull_speed * crate::founding::PRIVATEER_SPEED_MULT
         } else if self.operation_privateer {
@@ -2884,7 +3348,8 @@ mod tests {
         let mut f = fleet(&[(ShipKind::TinyFreighter, 1), (ShipKind::Raider, 1)], None);
         assert_eq!(f.crew_count(), 17);
         let rate = f.upkeep_per_sec();
-        assert!((rate * 25.0 * 60.0 - 1.02).abs() < 1e-12,
+        // §progression: a person eats at the output scale.
+        assert!((rate * 25.0 * 60.0 - 1.02 * crate::production::OUTPUT_SCALE).abs() < 1e-12,
             "a 25-minute escort circuit feeds 17 people, not 1,750");
         f.cargo = Some(Cargo { commodity: Commodity::MetallicOre, units: 50 });
         f.transit = TransitMode::Stealth;
@@ -2992,6 +3457,22 @@ mod tests {
     }
 
     #[test]
+    fn a_hold_of_ore_outweighs_a_hold_of_alloys_or_fuel() {
+        let hold = |commodity| Some(Cargo { commodity, units: 50 });
+        let ore = fleet(&[(ShipKind::Convoy, 1)], hold(Commodity::MetallicOre));
+        let alloys = fleet(&[(ShipKind::Convoy, 1)], hold(Commodity::Alloys));
+        let mut mixed = fleet(&[(ShipKind::Convoy, 1)], hold(Commodity::Uranium));
+        mixed.cargo_extra.insert(Commodity::Alloys, 50);
+        assert!((ore.cargo_mass() - 50.0 * crate::cargo::MASS_RAW).abs() < 1e-9);
+        assert!((alloys.cargo_mass() - 50.0 * crate::cargo::MASS_BULK).abs() < 1e-9);
+        assert!((mixed.cargo_mass() - 50.0 * (crate::cargo::MASS_SUPPLY + crate::cargo::MASS_BULK)).abs() < 1e-9);
+        assert!((mixed.mass() - ShipKind::Convoy.hull_mass() - mixed.cargo_mass()).abs() < 1e-9);
+        let d = 10_000.0;
+        assert!(crate::fuel::fuel_cost(d, ore.mass()) > crate::fuel::fuel_cost(d, alloys.mass()),
+            "the same hold of ore burns more than of Alloys");
+    }
+
+    #[test]
     fn broadcasts_if_any_member_broadcasts() {
         // Corporate logistics may run silent; the Authority carrier may not.
         assert!(!fleet(&[(ShipKind::Raider, 2), (ShipKind::Convoy, 1)], None).broadcasts());
@@ -3016,12 +3497,39 @@ mod tests {
 
     #[test]
     fn corporate_convoys_are_dark_without_becoming_jump_ships() {
+        use crate::fuel::{Drive, ReactorGrade};
         assert!(!ShipKind::Convoy.broadcasts());
-        assert!(!ShipKind::Convoy.has_jump_drive());
+        assert!(!ShipKind::Convoy.default_engine().1.jumps());
         assert!(ShipKind::Freighter.broadcasts());
-        assert!(!ShipKind::Freighter.has_jump_drive());
-        assert!(ShipKind::Raider.has_jump_drive() && !ShipKind::Raider.broadcasts());
-        assert!(ShipKind::Scout.has_jump_drive() && !ShipKind::Scout.broadcasts());
+        assert!(!ShipKind::Freighter.default_engine().1.jumps());
+        assert!(ShipKind::Raider.default_engine() == (ReactorGrade::Antimatter, Drive::Maelstrom) && !ShipKind::Raider.broadcasts());
+        assert!(ShipKind::Scout.default_engine() == (ReactorGrade::Antimatter, Drive::Maelstrom) && !ShipKind::Scout.broadcasts());
+        // The power rule, and no Maelstrom on a ship of the line.
+        assert!(!ShipKind::Battleship.can_mount(ReactorGrade::Antimatter, Drive::Maelstrom));
+        assert!(ShipKind::Battleship.can_mount(ReactorGrade::Antimatter, Drive::Tempest));
+        assert!(ShipKind::Battleship.can_mount(ReactorGrade::Helium, Drive::Tempest));
+        assert!(!ShipKind::Raider.can_mount(ReactorGrade::Fission, Drive::Gale));
+        assert!(ShipKind::Raider.can_mount(ReactorGrade::Fusion, Drive::Zephyr));
+    }
+
+    /// §hull-ladder (docs/hull-ladder-plan.md §2): the engine-count table —
+    /// engines are half of every hull, in the hull's size.
+    #[test]
+    fn engines_follow_the_ladder() {
+        use crate::fuel::EngineSize as Sz;
+        let table = [
+            (ShipKind::Scout, 1, Sz::Light), (ShipKind::Raider, 1, Sz::Light), (ShipKind::Corvette, 5, Sz::Light),
+            (ShipKind::Destroyer, 25, Sz::Light), (ShipKind::Cruiser, 5, Sz::Heavy), (ShipKind::Battleship, 25, Sz::Heavy),
+            (ShipKind::Dreadnought, 10, Sz::Capital), (ShipKind::Titan, 100, Sz::Capital),
+            (ShipKind::TinyFreighter, 2, Sz::Light), (ShipKind::CombatFreighter, 3, Sz::Light), (ShipKind::SmallFreighter, 4, Sz::Light),
+            (ShipKind::Convoy, 13, Sz::Light), (ShipKind::Colony, 10, Sz::Light), (ShipKind::Transport, 15, Sz::Light),
+            (ShipKind::LargeFreighter, 40, Sz::Light), (ShipKind::HeavyFreighter, 5, Sz::Heavy), (ShipKind::BulkFreighter, 15, Sz::Heavy),
+            (ShipKind::MiningBarge, 3, Sz::Light), (ShipKind::Builder, 4, Sz::Light), (ShipKind::MiningBeltStation, 30, Sz::Light),
+            (ShipKind::SurveyProbe, 0, Sz::Light),
+        ];
+        for (kind, n, size) in table {
+            assert_eq!((kind.engines(), kind.engine_size()), (n, size), "{kind:?}");
+        }
     }
 
     #[test]

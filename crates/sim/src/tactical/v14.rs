@@ -61,7 +61,7 @@ impl TacticalState {
     /// checkpoint (like `add_initial_attacker_platforms`). Only v14 battles
     /// know worlds; a second call changes nothing.
     pub fn place_world(&mut self, home: u8) {
-        if !matches!(self.rules, Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. }) || self.world.is_some() {
+        if !matches!(self.rules, Rules::V14 { .. } | Rules::V15 { .. } | Rules::V16 { .. } | Rules::V17 { .. }) || self.world.is_some() {
             return;
         }
         let home = home.min(1);

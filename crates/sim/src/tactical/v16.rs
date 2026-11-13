@@ -4,7 +4,8 @@
 //! archived replay rebuilds after a server rebuild or an OS update. Before
 //! v16 the platform's libm, as the optimizer rewrote it, made debug and
 //! release builds diverge in about half of all fights (see `Math`).
-//! Everything else is v15.
+//! Everything else is v15. New battles open on v17 (`open_current`), which
+//! keeps all of this.
 
 use super::v1::{Distribution, ProjSetup, SimOutcome, TacticalState, PROJECTION_BATTLE_ID};
 use super::{v3, Rules};
@@ -15,9 +16,8 @@ use crate::{EntityId, Vec2};
 use std::collections::BTreeMap;
 
 impl TacticalState {
-    /// New battles open on the current rules. Saved battles keep the version
-    /// they opened with; the frozen constructors stay available for tests.
-    pub fn open_current(seed: u64, battle: u64, a: &[(EntityId, Ship)], d: &[(EntityId, Ship)],
+    /// Frozen v16 constructor (new battles open on the current rules: `open_current`).
+    pub(crate) fn open_v16(seed: u64, battle: u64, a: &[(EntityId, Ship)], d: &[(EntityId, Ship)],
         tiers: u32, pool: f64, bearing: Vec2) -> Self {
         let mut state = Self::open_v15(seed, battle, a, d, tiers, pool, bearing);
         let Rules::V15 { maneuver_seed } = state.rules else { unreachable!() };
@@ -31,15 +31,18 @@ fn rules(seed: u64) -> Rules {
     Rules::V16 { maneuver_seed }
 }
 
+#[allow(dead_code)] // archived rules remain executable for regression comparisons
 pub fn simulate_engagement(setup: &ProjSetup, seed: u64) -> SimOutcome {
     super::v1::simulate_engagement_with_rules(setup, seed, rules(seed))
 }
 
+#[allow(dead_code)]
 pub fn project_distribution(setup: &ProjSetup, seed: u64, k: u32) -> Distribution {
     super::v1::project_distribution_using(setup, seed, k, simulate_engagement)
 }
 
 /// Estimation receives only profiles in the observer's arrived picture (v6).
+#[allow(dead_code)]
 pub fn project_distribution_with_missions(setup: &ProjSetup, seed: u64, k: u32,
     missions: &BTreeMap<EntityId, MissionProfile>) -> Distribution {
     super::v1::project_distribution_using(setup, seed, k, |s, seed| {
@@ -49,6 +52,7 @@ pub fn project_distribution_with_missions(setup: &ProjSetup, seed: u64, k: u32,
 
 /// The estimate for a fight at a world held by side `home` (0 attacker, 1
 /// defender), with each side's station hardpoints as the viewer knows them.
+#[allow(dead_code)]
 pub fn project_distribution_at_world(setup: &ProjSetup, seed: u64, k: u32,
     missions: &BTreeMap<EntityId, MissionProfile>, home: u8, stations: &[Vec<MountSpec>; 2]) -> Distribution {
     super::v1::project_distribution_using(setup, seed, k, |s, seed| {

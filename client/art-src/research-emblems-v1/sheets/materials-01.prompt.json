@@ -1,0 +1,68 @@
+{
+  "name": "materials-01",
+  "mode": "built-in image_gen",
+  "source_brief": "docs/research-emblem-sheets.md",
+  "prompt": "Use case: stylized-concept. Asset type: a sheet of six transparent research emblems for Stellar Syndicates, a premium dark sci-fi strategy game. They join an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw SIX new emblems. Do not copy any of Image 1's six motifs, and ignore Image 1's grey backdrop.\nField: Materials. Colour, all six badges: charcoal gunmetal with a molten orange-amber glow. Everything else stays in the family's navy, charcoal and silver.\nLayout: landscape 1536 x 1024 canvas, three columns and two rows, exactly Image 1's arrangement. Six identical hexagon badges, each about 450 px tall, centred in its own 512 x 512 cell, with clear empty space between badges and around the sheet. Badges never touch or overlap.\nBadge (every one the same): a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. Each motif sits inside its rim, centred, about 70% of the face's width. Nothing crosses a rim.\nMotifs, reading left to right, top row then bottom row:\n1. Top left: A heavy spiral drill bit boring down into layered rock strata, bright orange sparks and glowing chips at its tip.\n2. Top centre: A conical ore hopper funnelling raw grey rock into the open mouth of a glowing orange smelting furnace below it.\n3. Top right: A tall stack of heavy banded cargo crates with orange hazard stripes, a freight hook hanging above them.\n4. Bottom left: A single cast metal ingot ringed by a circular recovery arrow made of flowing molten orange metal.\n5. Bottom centre: A tilted vibrating sieve tray full of rough grey rock, a few glowing orange ore nuggets dropping through its mesh.\n6. Bottom right: A crane hook lowering one flat prefab wall panel into place beside two panels already standing, orange weld light at the seam.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. Each motif is one clear subject that still reads at 48 px: a few large forms, restrained small detail. The six must look clearly different from each other at a glance: vary silhouette, scale and composition, never the same object twice.\nBackground: genuinely transparent PNG with real alpha everywhere outside the hexagons. No drop shadow, outer glow, grey backdrop, panel, vignette, cell borders or grid lines.\nConstraints: exactly six badges. No text, letters, numbers, Roman numerals, captions, labels, logos, watermark, frames or UI.",
+  "keys": [
+    "mat_deep_bores",
+    "mat_enrichment",
+    "mat_bulk_storage",
+    "mat_ore_recovery",
+    "mat_beneficiation",
+    "mat_prefab_construction"
+  ],
+  "references": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png",
+      "sha256": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+    }
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-3323213d-8a64-4c83-875a-3c4d25e9169b.png",
+  "edits": [],
+  "verification": {
+    "width": 1536,
+    "height": 1024,
+    "hasAlpha": true,
+    "badges": [
+      {
+        "left": 206,
+        "top": 115,
+        "width": 321,
+        "height": 370
+      },
+      {
+        "left": 606,
+        "top": 114,
+        "width": 324,
+        "height": 371
+      },
+      {
+        "left": 1007,
+        "top": 115,
+        "width": 323,
+        "height": 370
+      },
+      {
+        "left": 206,
+        "top": 523,
+        "width": 321,
+        "height": 371
+      },
+      {
+        "left": 605,
+        "top": 523,
+        "width": 325,
+        "height": 371
+      },
+      {
+        "left": 1007,
+        "top": 523,
+        "width": 323,
+        "height": 371
+      }
+    ],
+    "sha256": "44f6a835ad7e3bcf7bb1c07d6aca0a9f85feab0b4563c71a06a734f13bd29489",
+    "nativeBytesPreserved": true
+  }
+}

@@ -20,7 +20,7 @@ const descriptions = catalog.slice(catalog.indexOf("const STRUCTURE_DESCRIPTION"
 // §power: the Power Plant borrows the Fuel Refinery's art until its own lands;
 // §fuel-overhaul: so do the Uranium Mill and the Antimatter Plant.
 const STAND_INS = { uranium_mill: "Uranium Mill", antimatter_plant: "Antimatter Plant" };
-assert.deepEqual(structures.sort(), [...descriptions.matchAll(/^  (\w+): "/gm)].map(match => match[1]).filter(key => !["service_berth", "command_center", "living_terraces", "power_plant", "asteroid_quarry", "vault", "assembly_hall", ...Object.keys(STAND_INS)].includes(key)).sort(), "legacy standalone structures retain their original tiered art");
+assert.deepEqual(structures.sort(), [...descriptions.matchAll(/^  (\w+): "/gm)].map(match => match[1]).filter(key => !["service_berth", "command_center", "living_terraces", "power_plant", "asteroid_quarry", "vault", "assembly_hall", "veil_projector", ...Object.keys(STAND_INS)].includes(key)).sort(), "legacy standalone structures retain their original tiered art");
 // §asteroid-quarry: its menu icons are its own rock, framed square.
 assert.match(icons.structureImage("asteroid_quarry", 2), /\/asteroid-quarry\/v2\/icon-tier-2-128\.webp 128w/);
 for (let tier = 1; tier <= 6; tier++) {
@@ -31,6 +31,18 @@ for (let tier = 1; tier <= 6; tier++) {
 }
 // §power: the Power Plant has no separate menu set either; menus use its scene sprites.
 assert.match(icons.structureImage("power_plant", 2), /\/planet-surface-structures\/v2\/buildings\/power_plant\/tier-2-128\.webp/);
+// §veil: one three-tier set serves menu icons, structure rows and details.
+for (let tier = 1; tier <= 3; tier++) {
+  const html = icons.structureImage("veil_projector", tier);
+  assert.match(html, /title="Veil Projector"/);
+  for (const size of [128, 256, 512]) {
+    const url = `/art/derived/planet-surface-structures/v2/buildings/veil_projector/tier-${tier}-${size}.webp`;
+    assert.ok(html.includes(`${url} ${size}w`));
+    const meta = await sharp(await readFile(new URL(`public${url}`, root))).metadata();
+    assert.deepEqual([meta.width, meta.height, meta.hasAlpha], [size, size, true]);
+  }
+}
+assert.match(icons.structureImage("veil_projector", 99), /veil_projector\/tier-3-128\.webp/);
 for (const [key, name] of Object.entries(STAND_INS)) assert.equal(icons.structureImage(key, 2), icons.structureImage("fuel_refinery", 2).replace("Fuel Refinery", name), `the ${name}'s stand-in art, under its own name`);
 // §vault: the Garrison's dug-in art stands in until the Vault's own lands.
 assert.equal(icons.structureImage("vault", 2), icons.structureImage("garrison", 2).replace("Garrison", "Vault"), "the Vault's stand-in art, under its own name");

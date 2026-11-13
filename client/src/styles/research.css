@@ -1,0 +1,9 @@
+/* §research-panel (Nov 1 2026): research emblems, shared by both shells. Every
+   emblem is square with its hexagon centred at 88% of its height, so a
+   programme emblem replacing its field's fallback never changes size. Each
+   surface sets the rendered size; the width/height attributes only hold space
+   while the image loads. */
+.research-emblem { display: block; flex: 0 0 auto; max-width: none; object-fit: contain; }
+/* The last fallback when emblem art cannot load: the field's UI icon. */
+.research-emblem--icon { display: inline-grid; place-items: center; width: var(--emblem, 48px); height: var(--emblem, 48px); }
+.research-emblem--icon > .icon { width: 56%; height: 56%; object-fit: contain; }

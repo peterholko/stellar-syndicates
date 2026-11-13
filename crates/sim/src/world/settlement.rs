@@ -84,7 +84,6 @@ impl World {
         if project == P::SurfaceWorkings
             && (!camp.done(P::Prospect) || b.tier(K::MiningComplex) == 0)
             || project == P::Storehouse && sys.landing_holds <= 0.0
-            || project == P::Quarters && b.tier(K::Habitat) != 1
         {
             events.push(Event::new(
                 self.time,
@@ -140,6 +139,9 @@ impl World {
             ship_work: None,
             join: None,
             loadout: Default::default(),
+            reactor: Default::default(),
+            drive: Default::default(),
+            charged: Vec::new(),
         });
         events.push(Event::new(
             self.time,
@@ -198,7 +200,7 @@ impl World {
                     d.richness *= 1.5;
                 }
             }
-            P::Storehouse | P::Quarters => {} // capacities derive from the completed physical project
+            P::Storehouse => {} // the holds derive from the completed physical project
         }
         true
     }
@@ -254,7 +256,7 @@ mod tests {
         let b = w.systems.iter_mut().find(|s| s.id == home).unwrap().bodies.iter_mut().find(|b| b.id == id).unwrap();
         for kind in kinds {
             b.set_tier(*kind, 1);
-            if *kind != K::Habitat {
+            if kind.takes_workforce() {
                 b.assignments.insert(*kind, crate::production::Assignment::crew(1));
             }
         }
@@ -291,9 +293,10 @@ mod tests {
             assert!(b.has_deposit_for(K::Bioharvester));
             assert_eq!(w.players[&owner].credits, 2000.0);
             assert_eq!(w.fleets.values().filter(|f| f.owner == owner).count(), 0);
-            // §charter-crates: the Landfall crate; the rest come chapter by chapter.
-            assert_eq!(sys.stockpile[&C::Alloys], 110.0);
-            assert_eq!(sys.stockpile[&C::Machinery], 47.0);
+            // §charter-crates: the Landfall crate; the rest come chapter by
+            // chapter. §smelt-from-landing: with the Smelter's 30 and 15.
+            assert_eq!(sys.stockpile[&C::Alloys], 245.0);
+            assert_eq!(sys.stockpile[&C::Machinery], 104.0);
         }
     }
     #[test]
@@ -356,33 +359,56 @@ mod tests {
     #[test]
     fn a_camp_keeps_a_food_reserve_instead_of_filling_its_warehouse() {
         let (mut w, _owner, home, id) = start(F::VerdantLowlands);
-        build_on_camp(&mut w, home, id, &[K::Bioharvester, K::Agroplex, K::Habitat]);
+        // §habitat-first (Nov 8 2026): the food chain runs on a Solar Array.
+        build_on_camp(&mut w, home, id, &[K::PowerPlant, K::Bioharvester, K::Agroplex, K::Habitat]);
         let mut events = Vec::new();
+        let food_at = |w: &World| { let s = w.systems.iter().find(|s| s.id == home).unwrap();
+            s.stockpile.get(&C::Provisions).copied().unwrap_or(0.0) + s.stockpile.get(&C::Biomass).copied().unwrap_or(0.0) };
+        let reserve_at = |w: &World| { let s = w.systems.iter().find(|s| s.id == home).unwrap();
+            crate::settlement::camp_food_reserve(s.bodies.iter().map(|b| b.population * b.provisions_mult()).sum::<f64>()
+                * crate::colony::PROVISIONS_PER_MILLION_PER_S) };
+        let held = |w: &World| w.systems.iter().find(|s| s.id == home).unwrap().bodies.iter().any(|b| b.assignments
+            .get(&K::Bioharvester).is_some_and(|a| a.suspended == Some(crate::production::SuspendReason::FoodReserve)));
+        // §progression (Nov 11 2026): people eat at the output scale, but the
+        // reserve keeps its units, so the landing crate's Provisions sit under
+        // it and the first Bioharvester harvests from landing.
+        let landed = food_at(&w);
+        assert!(landed < reserve_at(&w), "landed {landed:.1} under the reserve {:.1}", reserve_at(&w));
         // Twenty sim-minutes of the default Bioharvester -> Agroplex chain.
         for _ in 0..(20 * 60 * crate::config::TICK_HZ) {
             w.accrue_production(&mut events);
+            assert!(!held(&w), "under the reserve the harvest never holds");
         }
+        // The Agroplex turns each tick's Biomass into Provisions at once, so
+        // the harvest shows as food beyond what the camp ate, not as Biomass.
+        assert!(food_at(&w) > landed, "the Bioharvester harvests from landing: {:.1} of {landed:.1}", food_at(&w));
+        let reserve = reserve_at(&w);
         let sys = w.systems.iter().find(|s| s.id == home).unwrap();
-        let demand = sys.bodies.iter().map(|b| b.population * b.provisions_mult()).sum::<f64>()
-            * crate::colony::PROVISIONS_PER_MILLION_PER_S;
-        let reserve = crate::settlement::camp_food_reserve(demand);
-        let food = sys.stockpile.get(&C::Provisions).copied().unwrap_or(0.0)
-            + sys.stockpile.get(&C::Biomass).copied().unwrap_or(0.0);
-        assert!(food <= reserve + 5.0, "food {food:.1} must hover at the reserve {reserve:.1}");
+        let food = food_at(&w);
+        assert!(food <= reserve + 5.0, "food {food:.1} must not grow past the reserve {reserve:.1}");
         let goods: f64 = sys.stockpile.iter().filter(|(c, _)| !matches!(c, C::Provisions | C::Biomass))
             .map(|(_, n)| n).sum();
         assert!(sys.storage_headroom() >= sys.storage_cap() - goods - reserve - 5.0,
             "food never crowds out the holds' room for ore: {:.1}", sys.storage_headroom());
         assert_eq!(sys.food_state, crate::colony::FoodState::WellSupplied);
-        let held = sys.bodies.iter().any(|b| b.assignments.get(&K::Bioharvester)
-            .is_some_and(|a| a.suspended == Some(crate::production::SuspendReason::FoodReserve)));
-        let producing = sys.bodies.iter().any(|b| b.assignments.get(&K::Bioharvester)
-            .is_some_and(|a| a.suspended.is_none()));
-        assert!(held || producing);
         assert!(!events.iter().any(|e| matches!(e.payload,
             EventPayload::ProductionSuspended { reason: crate::production::SuspendReason::NoInputs, .. }
             | EventPayload::ProductionSuspended { reason: crate::production::SuspendReason::FoodReserve, .. })),
             "a reserve hold is quiet policy, not an input outage");
+        // Filled to the reserve, the harvest holds; it resumes under 75%.
+        let set_food = |w: &mut World, n: f64| { let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+            s.stockpile.insert(C::Biomass, 0.0);
+            s.stockpile.insert(C::Provisions, n); };
+        let mut later = Vec::new();
+        set_food(&mut w, reserve + 1.0);
+        w.accrue_production(&mut later);
+        assert!(held(&w), "at the reserve the harvest holds");
+        set_food(&mut w, reserve * 0.8);
+        w.accrue_production(&mut later);
+        assert!(held(&w), "above 75% it stays held");
+        set_food(&mut w, reserve * 0.7);
+        w.accrue_production(&mut later);
+        assert!(!held(&w), "under 75% it resumes");
     }
 
     #[test]
@@ -440,8 +466,8 @@ mod tests {
         let (mut w, owner, home, id) = start(F::CoastalPlains);
         build_on_camp(&mut w, home, id, &[K::Habitat]);
         queue(&mut w, owner, home, id, P::Prospect);
-        queue(&mut w, owner, home, id, P::Quarters);
-        queue(&mut w, owner, home, id, P::Quarters);
+        queue(&mut w, owner, home, id, P::Storehouse);
+        queue(&mut w, owner, home, id, P::Storehouse);
         assert_eq!(w.build_queue.len(), 2);
         assert!(w.build_queue[1].is_queued_structure());
         assert_eq!(
@@ -450,23 +476,17 @@ mod tests {
         );
         assert_eq!(
             w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&C::Alloys],
-            105.0
+            238.0
         );
         let slots = body(&w, home, id).infrastructure_slots();
         finish(&mut w);
         assert_eq!(body(&w, home, id).infrastructure_slots(), slots + 1);
-        assert_eq!(body(&w, home, id).population_capacity(), 0.008);
+        // §habitat-rebase: the camp's Habitat I is a plain Habitat I.
+        let b = body(&w, home, id);
+        assert_eq!(b.population_capacity(), crate::colony::POP_CAP_PER_HABITAT_TIER * b.habitat_capacity_mult());
         w = serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
         finish(&mut w);
-        assert_eq!(body(&w, home, id).population_capacity(), 0.012);
-        assert_eq!(
-            body(&w, home, id).population,
-            crate::colony::HOME_FOUNDING_POP,
-            "housing is not instant people"
-        );
         // §charter-v4: the Storehouse enlarges the colony ship's holds.
-        queue(&mut w, owner, home, id, P::Storehouse);
-        finish(&mut w);
         assert_eq!(
             w.systems
                 .iter()
@@ -474,6 +494,11 @@ mod tests {
                 .unwrap()
                 .storage_cap(),
             crate::build::LANDING_HOLDS + crate::build::STOREHOUSE_HOLDS
+        );
+        assert_eq!(
+            body(&w, home, id).population,
+            crate::colony::HOME_FOUNDING_POP,
+            "a project is not instant people"
         );
         assert!(w.build_queue.is_empty());
     }
@@ -556,7 +581,7 @@ mod tests {
                     .map(|(_, n)| n)
                     .sum::<f64>();
             }
-            for project in [P::Prospect, P::SurfaceWorkings, P::Storehouse, P::Quarters] {
+            for project in [P::Prospect, P::SurfaceWorkings, P::Storehouse] {
                 costs += project
                     .recipe()
                     .costs
@@ -599,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_settlement_capacity_and_profile_wait_for_report_light() {
+    fn completed_settlement_profile_waits_for_report_light() {
         let (mut w, owner, home, id) = start(F::CoastalPlains);
         build_on_camp(&mut w, home, id, &[K::Habitat]);
         w.record_information();
@@ -607,45 +632,21 @@ mod tests {
         let cc = pos + Vec2::new(10.0 * crate::transit::signal_speed(w.config.c), 0.0);
         w.players.get_mut(&owner).unwrap().command_center = cc;
         w.time += 20.0;
-        w.finish_settlement_project(owner, home, id, P::Quarters);
+        let slots = body(&w, home, id).infrastructure_slots();
+        w.finish_settlement_project(owner, home, id, P::Prospect);
         w.record_information();
-        let before = w
-            .information
-            .site(home, cc, w.config.c, w.time + 9.0)
-            .unwrap();
-        assert_eq!(
-            before
+        let seen = |at: f64| {
+            w.information
+                .site(home, cc, w.config.c, at)
+                .unwrap()
                 .system
                 .bodies
                 .iter()
                 .find(|b| b.id == id)
                 .unwrap()
-                .population_capacity(),
-            0.008
-        );
-        let after = w
-            .information
-            .site(home, cc, w.config.c, w.time + 10.0)
-            .unwrap();
-        assert_eq!(
-            after
-                .system
-                .bodies
-                .iter()
-                .find(|b| b.id == id)
-                .unwrap()
-                .population_capacity(),
-            0.012
-        );
-        assert_eq!(
-            after
-                .system
-                .bodies
-                .iter()
-                .find(|b| b.id == id)
-                .unwrap()
-                .population,
-            crate::colony::HOME_FOUNDING_POP
-        );
+                .infrastructure_slots()
+        };
+        assert_eq!(seen(w.time + 9.0), slots);
+        assert_eq!(seen(w.time + 10.0), slots + 1, "the Coastal Plains site, once its report arrives");
     }
 }

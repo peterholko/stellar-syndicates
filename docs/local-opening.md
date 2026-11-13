@@ -92,20 +92,22 @@ listed in [founding-charter.md](founding-charter.md#stipends). The 4,500 Cr
 privateer bounty is announced the same way. Replacement hulls are announced
 separately.
 
-Once the charter is fulfilled, the **Charter ledger** opens on Command (and on
-the mobile Operations sheet): 23 tiered goals, three visible at a time and each
-paid once, in any order. "Join or found a syndicate" leads, with any waiting
-invitations. Later goals cover an Exchange limit order, storage, population,
+Once the charter is fulfilled, the **Charter ledger** opens on Operations, under
+Your next chapter (both shells): 23 tiered goals, three visible at a time and each
+paid once, in any order. On desktop each goal is one row: title, progress and
+reward, its button, the sentence on hover. "Join or found a syndicate" leads,
+with any waiting invitations. Later goals cover an Exchange limit order, storage, population,
 refining, a second Freighter, hull count, contracts, research, a second system
 and Tier II structures. Rewards stay at 2,000 Cr or less. A corporation that
 opens the ledger long after its charter has goals it already met recorded
 without payment, so old saves do not receive a windfall.
 
-Founder protection now lasts until 24 hours after the programme completes,
-never less than 24 hours from its start, and never more than 48. An unfinished
-programme keeps the 48-hour ceiling. The guide shows it in hours and minutes,
-with what it covers. The 30-minute minimum only governs when a founder may end
-it early by attacking another corporation.
+Founder protection lasts 24 hours from founding, however far the charter has
+got (Nov 10 2026). It used to run until a day after completion, up to 48 hours,
+which paid an unfinished charter the most; nothing a player wants may depend on
+staying in the tutorial. The guide shows it in hours and minutes, with what it
+covers. The 30-minute minimum only governs when a founder may end it early by
+attacking another corporation.
 
 ## Focus while landing
 

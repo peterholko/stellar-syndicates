@@ -1,4 +1,5 @@
 import "../../styles/deck.css";
+import { coach, CONTRACT_COACH } from "../coach";
 import { commsBadge } from "../../core/derive/social";
 import { bindAccountForm } from "../account";
 
@@ -24,7 +25,7 @@ import { foundingHomeSystemId, systemName } from "../../core/derive/geo";
 import { logToast } from "../../core/derive/history";
 import { DECK_ROUTES, DeckRouter, type DeckCrumb, type DeckRoute, type DeckRouteName } from "./router";
 import { DeckCommandStrip } from "./strip";
-import { DeckCommandRoutes } from "./command";
+import { DeckFoundingGuide } from "./founding-guide";
 import { deckTradeNotice, DeckMarketRoutes } from "./market";
 import { DeckMerchantRoutes } from "./merchant";
 import { DeckStores } from "./stores";
@@ -32,11 +33,11 @@ import { DeckShipyardRoutes } from "./shipyard";
 import { DeckSignalsRoutes } from "./signals";
 import { openSignals } from "../../core/derive/signals";
 import { DeckPolicyRoutes } from "./policy";
+import { closeIndustryMenu } from "../industry";
 import { DeckFleetRoutes } from "./fleet";
 import { DeckLogRoutes } from "./log";
 import { bindResearchNet } from "../../core/derive/research";
-import { fmtDur, gameClock, informationDelay } from "../../core/derive/format";
-import { merchantLeavesIn } from "../../core/derive/merchant";
+import { gameClock, informationDelay } from "../../core/derive/format";
 import { traderOf } from "../../core/derive/trader";
 import { isProjectKey, isStructureJob, needsWorkforce, slotLine, worldSlots } from "../../core/derive/worldbuild";
 import { icon, label as buildLabel } from "../../icons";
@@ -62,7 +63,7 @@ class DeckShell implements Shell {
   private toasts: DeckToasts | null = null;
   private strip: DeckCommandStrip | null = null;
   private empire: DeckEmpireRoutes | null = null;
-  private command: DeckCommandRoutes | null = null;
+  private guide: DeckFoundingGuide | null = null;
   private welcome: DeckWelcome | null = null;
   private market: DeckMarketRoutes | null = null;
   private merchant: DeckMerchantRoutes | null = null;
@@ -134,6 +135,7 @@ class DeckShell implements Shell {
       replace: (route) => this.router?.replace(route),
       openGroundViewer: (id) => this.theaters?.openGround(id),
       openWorldBuild: (systemId, bodyId, query) => this.openWorldBuild(systemId, bodyId, query),
+      underlay: () => this.popoutWorld(),
       notice: (html) => this.setStatus(html),
       toast: (title, message, tone, destination) => this.toasts?.push({ title, message, tone, destination }),
     });
@@ -144,22 +146,26 @@ class DeckShell implements Shell {
       notice: (text) => this.setStatus(escapeHtml(text)),
     });
     this.welcome = new DeckWelcome(byId("deck-welcome"), ctx, {
-      runFounding: () => this.command?.runFoundingPrimary(),
+      runFounding: () => this.guide?.runFoundingPrimary(),
       openLog: () => this.router?.go({ name: "log" }),
       go: (route) => this.router?.go(route),
     }, signal);
-    this.command = new DeckCommandRoutes(byId("deck-workspace-body"), byId("deck-founding"), ctx, {
+    this.guide = new DeckFoundingGuide(byId("deck-founding"), ctx, {
       go: (route) => this.router?.go(route),
       openWorld: (systemId, bodyId, structure) => {
         if (structure) this.empire?.focusWorldStructure(structure);
         this.openWorldPanel(systemId, bodyId);
       },
+      openWorldBuild: (systemId, bodyId, query, mode) => this.openWorldBuild(systemId, bodyId, query, mode),
       focusFleet: (id) => this.map?.focusFleet(id),
       openFleetDetails: (id) => this.fleet?.openDetails(id),
       flyIntoSystem: (id) => this.flyIntoSystem(id),
-      notice: (html) => this.setStatus(html),
-      inbox: () => this.log?.items() ?? [],
-      runInboxPrimary: (key) => this.log?.runPrimary(key),
+      followShipment: (id) => {
+        const home = foundingHomeSystemId();
+        if (!home) return;
+        this.focusShipment(id, home);
+        this.ctx?.renderer.trackShipment(id, home);
+      },
     });
     this.market = new DeckMarketRoutes(byId("deck-workspace-body"), ctx, {
       go: (route) => this.router?.go(route),
@@ -197,6 +203,7 @@ class DeckShell implements Shell {
     });
     this.strategic = new DeckStrategicRoutes(byId("deck-workspace-body"), ctx, {
       go: (route) => this.router?.go(route),
+      replace: (route) => this.router?.replace(route),
       openWorld: (systemId, bodyId) => this.openWorldPanel(systemId, bodyId),
       back: () => this.router?.back(),
       notice: (html) => this.setStatus(html),
@@ -224,7 +231,8 @@ class DeckShell implements Shell {
     );
     bindFleetNet(() => ctx.net);
     bindResearchNet(() => ctx.net);
-    bindMarketDerive(() => ctx.net, () => this.empire?.composedFit ?? []);
+    bindMarketDerive(() => ctx.net, () => this.empire?.composedFit ?? [], () => this.empire?.composedReactor ?? "fission",
+      () => this.empire?.composedDrive ?? "zephyr");
     this.removeDebug = installDeckDebug(
       ctx,
       (id) => this.theaters?.openBattle(id),
@@ -292,7 +300,6 @@ class DeckShell implements Shell {
       if (this.strategic?.handleAction(button, this.router?.current ?? null)) return;
       if (this.fleet?.handleAction(button, this.router?.current ?? null)) return;
       if (this.log?.handleAction(button, this.router?.current ?? null)) return;
-      if (this.command?.handleWorkspaceAction(button, this.router?.current ?? null)) return;
       if (this.empire?.handleAction(button, this.router?.current ?? null)) return;
       if (this.market?.handleAction(button, this.router?.current ?? null)) return;
       if (this.stores?.handleAction(button, this.router?.current ?? null)) return;
@@ -387,7 +394,7 @@ class DeckShell implements Shell {
     }, { passive: true, signal });
     byId("deck-founding").addEventListener("click", (event) => {
       const button = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]");
-      if (button) this.command?.handleFoundingAction(button);
+      if (button) this.guide?.handleFoundingAction(button);
     }, { signal });
     byId("deck-zoom").addEventListener("click", (event) => {
       const action = (event.target as Element).closest<HTMLButtonElement>("[data-deck-act]")?.dataset.deckAct;
@@ -425,8 +432,7 @@ class DeckShell implements Shell {
     window.addEventListener("keydown", (event) => this.keyDown(event), { signal });
     this.syncSessionVisibility();
     this.renderChrome(true);
-    if (ctx.state.playerId !== null) this.openRoute("command");
-    else requestAnimationFrame(() => byId<HTMLInputElement>("deck-login")?.focus());
+    if (ctx.state.playerId === null) requestAnimationFrame(() => byId<HTMLInputElement>("deck-login")?.focus());
   }
 
   /** §raid-focus (Oct 26 2026): out of a planet or system view to the galaxy
@@ -446,6 +452,30 @@ class DeckShell implements Shell {
     renderer.frameRaid(raider.pos, home.pos);
   }
 
+  /** §privateer-contract: Contracts, the charter's contract on top, its
+   * Accept ringed. */
+  openContract(): void {
+    this.router?.go({ name: "operations" });
+    coach("contract-accept", CONTRACT_COACH);
+  }
+
+  /** §export-follow (Peter, Nov 2 2026): the first shipment's departure takes
+   * the player to the freighter the way a raid's sighting does: out to the
+   * galaxy map, it selected, one camera move framing it with home; boot.ts
+   * puts the tracking window on it until it warps at the hyperlimit. */
+  focusShipment(id: string, homeId: string): void {
+    const renderer = this.ctx?.renderer;
+    const freighter = this.ctx?.state.ghosts.find((entry) => entry.id === id);
+    const home = this.ctx?.state.galaxy?.systems.find((entry) => entry.id === homeId);
+    if (!renderer || !this.map || !freighter || !home || renderer.viewMode.type === "battle") return;
+    if (renderer.viewMode.type === "system") {
+      renderer.exitSystemView();
+      renderer.setSystemDynamic([], [], true);
+    }
+    this.map.focusFleet(id);
+    renderer.frameRaid(freighter.pos, home.pos);
+  }
+
   onCore(events: CoreEvent[]): void {
     this.empire?.onCore(events, this.router?.current ?? null);
     this.market?.onCore(events, this.router?.current ?? null);
@@ -454,7 +484,6 @@ class DeckShell implements Shell {
       const fleetAbsorbed = this.fleet?.onCoreEvent(event, this.router?.current ?? null) ?? false;
       if (event.kind === "Welcomed") {
         this.syncSessionVisibility();
-        this.openRoute("command");
       } else if (event.kind === "SessionReplaced") {
         byId("deck-join-error").textContent = "Session ended. Please sign in again.";
         byId<HTMLButtonElement>("deck-join-button").disabled = false;
@@ -489,18 +518,18 @@ class DeckShell implements Shell {
     const mode = this.ctx?.renderer.viewMode;
     // §home-step: the guide's first step is done once home's System View is open.
     if (this.ctx && mode?.type === "system" && !this.ctx.state.homeOpened
-      && noteHomeOpened(this.ctx.state, mode.systemId, foundingHomeSystemId())) this.command?.invalidate();
+      && noteHomeOpened(this.ctx.state, mode.systemId, foundingHomeSystemId())) this.guide?.invalidate();
     // §home-world-step: the second once one of its worlds is open.
     const route = this.router?.current;
     if (this.ctx && route?.name === "world" && !this.ctx.state.homeWorldOpened
-      && noteHomeWorldOpened(this.ctx.state, route.params?.systemId ?? null, foundingHomeSystemId())) this.command?.invalidate();
+      && noteHomeWorldOpened(this.ctx.state, route.params?.systemId ?? null, foundingHomeSystemId())) this.guide?.invalidate();
     this.strip?.render();
     this.renderChrome();
     this.stores?.renderBar(this.router?.current ?? null);
     this.news?.render();
     this.renderZoom();
     this.empire?.render(this.router?.current ?? null);
-    this.command?.render(this.router?.current ?? null);
+    this.guide?.render();
     this.welcome?.render();
     this.market?.render(this.router?.current ?? null);
     this.merchant?.render(this.router?.current ?? null);
@@ -543,7 +572,7 @@ class DeckShell implements Shell {
     this.toasts?.teardown();
     this.strip?.clear();
     this.empire?.teardown();
-    this.command?.teardown();
+    this.guide?.teardown();
     this.welcome?.teardown();
     this.market?.invalidate();
     this.merchant?.invalidate();
@@ -563,7 +592,7 @@ class DeckShell implements Shell {
     this.toasts = null;
     this.strip = null;
     this.empire = null;
-    this.command = null;
+    this.guide = null;
     this.welcome = null;
     this.market = null;
     this.merchant = null;
@@ -709,6 +738,9 @@ class DeckShell implements Shell {
       this.ctx.intent.clearJumpAiming();
     } else if (this.ctx.intent.intentAiming.guard) {
       this.ctx.intent.clearGuardAiming();
+    } else if (closeIndustryMenu(this.ctx.state)) {
+      // §route-picker: the route editor's open goods list, before its panel.
+      this.policy?.render(this.router?.current ?? null, true);
     } else if (this.constructionMenu) {
       this.setConstructionMenu(false);
     } else if (!byId("deck-nav-overflow").hidden) {
@@ -730,6 +762,10 @@ class DeckShell implements Shell {
     } else if (this.ctx.renderer.viewMode.type === "battle") {
       this.ctx.renderer.exitBattleView();
       if (this.router?.current) this.router.back();
+    } else if (this.popoutWorld()) {
+      // §merchant: the trader's stall (or the Shipyard view) closes back to
+      // the planet beneath it.
+      this.router!.back();
     } else if (this.router?.current?.name === "world") {
       // The planet is the deepest rung: Esc climbs to the orrery and its
       // system workspace before the orrery itself is left.
@@ -831,9 +867,12 @@ class DeckShell implements Shell {
         this.ctx.renderer.selectedJumpDepartureKey = target.key;
         this.router.go({ name: "fleet", params: { id: target.key, object: "jump-departure", fleetLabel: "Jump departure" } });
         break;
-      case "anchor":
-        this.router.go({ name: "command" });
+      case "anchor": {
+        // Your own Command Center opens home; a rival's is its readout only.
+        const home = target.own ? foundingHomeSystemId() : null;
+        if (home) this.flyIntoSystem(home);
         break;
+      }
       case "clearSystemBody":
         if (this.router.current?.name === "world") this.router.back();
         break;
@@ -902,9 +941,9 @@ class DeckShell implements Shell {
     // The trader is news only once its pop-up has told it docked.
     chip.hidden = !merchant || merchant.phase !== "docked" || !this.ctx.state.storyTold.has("free_trader");
     if (!merchant || chip.hidden) return;
-    const status = fmtDur(merchantLeavesIn(merchant, liveSimTime()));
+    // §den-contract: docked for the whole charter, so no countdown.
     const trader = traderOf(this.ctx.state.founding);
-    setHtml(chip, `<button type="button" class="deck-construction-chip__button" data-deck-act="merchant-chip" title="${escapeHtml(trader.name)} of the ${escapeHtml(trader.ship)}, at your home">${icon("market", "sm")}<span><b>Free trader</b> · ${status}</span></button>`);
+    setHtml(chip, `<button type="button" class="deck-construction-chip__button" data-deck-act="merchant-chip" title="${escapeHtml(trader.name)} of the ${escapeHtml(trader.ship)}, at your home">${icon("market", "sm")}<span><b>Free trader</b></span></button>`);
   }
 
   private setConstructionMenu(open: boolean): void {
@@ -918,7 +957,7 @@ class DeckShell implements Shell {
   /// builder over the planet, exactly as if the player had gone there and
   /// pressed Build. A `build` route asking for it becomes its system, so Back
   /// climbs world → system like any other world.
-  private openWorldBuild(systemId: string, bodyId: number, query: Record<string, string>): void {
+  private openWorldBuild(systemId: string, bodyId: number, query: Record<string, string>, mode: "structures" | "ships" = "structures"): void {
     if (!this.ctx || !this.router) return;
     const system = this.ctx.state.galaxy?.systems.find((entry) => entry.id === systemId);
     const body = this.ctx.state.systems.find((entry) => entry.id === systemId)?.bodies.find((entry) => entry.id === bodyId);
@@ -928,7 +967,7 @@ class DeckShell implements Shell {
     const sameSystem = (current?.name === "system" || current?.name === "world")
       && (current.params?.systemId ?? current.params?.id) === systemId;
     const world: DeckRoute = { name: "world", params: { systemId: system.id, systemLabel: system.name, bodyId: String(body.id), worldLabel: body.name },
-      query: { ...query, build: "structures" } };
+      query: { ...query, build: mode } };
     // Already on this world: open its builder in place rather than stacking a twin.
     if (current?.name === "world" && sameSystem && current.params?.bodyId === String(body.id)) {
       this.router.replace(world);
@@ -948,8 +987,12 @@ class DeckShell implements Shell {
     const viewMode = this.ctx?.renderer.viewMode;
     // A fleet, battle or shipyard opened from inside the orrery keeps it beneath.
     const routeSystem = route?.name === "shipyard" ? route.params?.id : route?.params?.systemId;
-    const fromThisSystem = (route?.name === "fleet" || route?.name === "battle" || route?.name === "shipyard")
-      && viewMode?.type === "system" && routeSystem === viewMode.systemId;
+    // §merchant (Peter, Nov 4 2026): so does the trader's stall opened from a
+    // world, over that world's planet, at the same zoom; Nov 9, the Shipyard
+    // view too.
+    const overWorld = !!this.popoutWorld(route);
+    const fromThisSystem = ((route?.name === "fleet" || route?.name === "battle" || route?.name === "shipyard")
+      && viewMode?.type === "system" && routeSystem === viewMode.systemId) || overWorld;
     const semanticRoute = route?.name === "system" || route?.name === "world" || route?.name === "build" || fromThisSystem;
     if (!semanticRoute && this.ctx?.renderer.viewMode.type === "system" && !this.ctx.renderer.isSystemScrubbing()) {
       this.ctx.renderer.exitSystemView();
@@ -996,9 +1039,9 @@ class DeckShell implements Shell {
     }
     this.activeCrumbs = this.router.breadcrumbs(route);
     this.workspace.show(route, this.activeCrumbs, stack.length > 1);
-    const focus = this.routeFocus(route);
+    const focus = overWorld ? null : this.routeFocus(route);
     if (focus) requestAnimationFrame(() => this.ctx?.renderer.ensureWorldVisible(focus));
-    const commandHandled = this.command?.render(route, true) ?? false;
+    this.guide?.render(true);
     const empireHandled = this.empire?.render(route, true) ?? false;
     const marketHandled = (this.market?.render(route, true) ?? false) || (this.merchant?.render(route, true) ?? false)
       || (this.shipyard?.render(route, true) ?? false)
@@ -1010,7 +1053,7 @@ class DeckShell implements Shell {
     const rosterHandled = this.roster?.render(route, true) ?? false;
     const logHandled = this.log?.render(route, true) ?? false;
     const strategicHandled = this.strategic?.render(route, true) ?? false;
-    if (!commandHandled && !empireHandled && !marketHandled && !policyHandled && !fleetHandled && !rosterHandled && !logHandled && !strategicHandled) this.renderPlaceholder(route);
+    if (!empireHandled && !marketHandled && !policyHandled && !fleetHandled && !rosterHandled && !logHandled && !strategicHandled) this.renderPlaceholder(route);
     this.renderActiveNav(route.name);
   }
 
@@ -1076,9 +1119,25 @@ class DeckShell implements Shell {
     byId("deck-help").hidden = !open;
   }
 
+  /** §merchant (Peter, Nov 4 2026): the world the trader's stall was opened
+   * from; the stall floats over its planet. Nov 9 2026 ("should not zoom out
+   * of the planetary view"): the world's own Shipyard view does too. */
+  private popoutWorld(route = this.router?.current ?? null): DeckRoute | null {
+    const beneath = this.router?.beneath ?? null;
+    if (beneath?.name !== "world") return null;
+    if (route?.name === "merchant") return beneath;
+    return route?.name === "shipyard" && route.params?.id === beneath.params?.systemId ? beneath : null;
+  }
+
   /** ✕ closes the workspace, but a planet climbs one rung: to its system's
    * orrery (Peter, Oct 21 2026), never out to the galaxy. */
   private closeWorkspace(): void {
+    // §merchant: the trader's stall (or the Shipyard view) over a planet
+    // closes back to it.
+    if (this.popoutWorld()) {
+      this.router?.back();
+      return;
+    }
     const route = this.router?.current;
     const systemId = route?.name === "world" ? route.params?.systemId : undefined;
     const system = systemId ? this.ctx?.state.galaxy?.systems.find((entry) => entry.id === systemId) : undefined;
@@ -1218,7 +1277,7 @@ class DeckShell implements Shell {
         title: event.title,
         message: event.message,
         tone: event.tone ?? "good",
-        destination: { name: "command" },
+        destination: { name: "operations" },
         durationMs: event.tone === "bad" ? 24_000 : 16_000,
       });
     } else if (event.kind === "EstimateReady") {

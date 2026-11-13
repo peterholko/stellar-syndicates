@@ -46,6 +46,23 @@ export function operationTitle(o: import("../../protocol").OperationView): strin
 }
 
 
+/** §den-contract: time left on a contract; null when it never lapses (the
+ * den's contract: the sim's `f64::MAX`). */
+export function operationLeft(o: import("../../protocol").OperationView, now: number): number | null {
+  const left = o.expires_at - now;
+  return left > 1e12 ? null : Math.max(0, left);
+}
+
+/** §den-contract, §privateer-contract: the charter's own contracts, on the
+ * privateer and his den. They never lapse and can't be dropped. */
+export const isFounderContract = (o: Pick<import("../../protocol").OperationView, "briefing">): boolean =>
+  o.briefing?.follow_up === "founder_den" || o.briefing?.follow_up === "founder_privateer";
+
+/** The charter's own contracts can't be dropped; a megaproject isn't held to
+ * be dropped either. */
+export const operationAbandonable = (o: import("../../protocol").OperationView): boolean =>
+  o.kind.kind !== "syndicate_megaproject" && !isFounderContract(o);
+
 export function operationIcon(o: import("../../protocol").OperationView): string {
   switch (o.kind.kind) {
     case "freight_escort":
@@ -109,7 +126,7 @@ export function operationCopy(o: import("../../protocol").OperationView): string
 export function operationReward(o: import("../../protocol").OperationView): string {
   const bits: string[] = [];
   if (o.kind.kind === "prize_recovery") bits.push(o.kind.prize === "breacher_cache"
-    ? "4 module crates · Cruiser Hull dossier" : "8 module crates · Battleship dossier");
+    ? "4 modules · Cruiser Hull dossier" : "8 modules · Battleship dossier");
   if (o.reward.credits) bits.push(`${Math.round(o.reward.credits).toLocaleString()} cr`);
   if (o.reward.authority_standing) bits.push(`+${o.reward.authority_standing} standing`);
   if (o.reward.captain_xp) bits.push(`${o.reward.captain_xp} Captain XP`);

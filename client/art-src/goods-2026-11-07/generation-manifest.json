@@ -1,0 +1,692 @@
+{
+  "mode": "built-in image_gen",
+  "generatedAt": "2026-11-07",
+  "brief": "docs/shipbuilding-art-prompts.md",
+  "assets": [
+    {
+      "key": "fission_core",
+      "name": "Fission Core",
+      "master": "client/art-src/goods-2026-11-07/fission_core.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "cb5173c830e4fc448407846cb7e0dfea2f490f4307404fa9b2d910670c707068",
+      "transparent": true,
+      "bounds": {
+        "left": 101,
+        "top": 235,
+        "width": 1055,
+        "height": 802
+      },
+      "fill": 0.8413078149920256,
+      "clearShare": 0.6318485789651743,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A compact warp core: a short steel cylinder wrapped in three copper conduit bands, with a thick emitter ring at one end glowing amber-orange and a dark fuel port at the other. Squat and heavy, the colony's first engine.\nReference image 1 is the approved ore-icon family for STYLE ONLY: match its three-quarter camera, upper-left studio light, clean broad forms and material finish. Do not copy its objects, layout or backdrop. Reference image 2 is a single copper-metal icon for material finish only. Produce exactly ONE icon for the subject above, not a sheet.\nDelivery: square 1254 × 1254 PNG with real RGBA transparency and completely clear outer corners. Keep the complete object inside the canvas at about 80–90% fill, centred. Emission stays on the object, with no halo or glow outside its silhouette.",
+          "references": [
+            {
+              "file": "client/art-src/ores-2026-09-16/preview.webp",
+              "sha256": "de984f30daa17111c1a4667a1735b5126e06ac8a12c5448ff82ff97a60f65caa"
+            },
+            {
+              "file": "client/art-src/ores-2026-09-16/conductive_metals.png",
+              "sha256": "902f0e2d916aea3f58d694ea805f1ee79ba995caae78ef9c5cd1465ba2a98f99"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-fe19f380-5e2f-4dee-865a-ecaa4e5b1eeb.png",
+          "sourceSha256": "af372944a13018f66d2e295fcbf213b95f711b3e302da8e2ad23a468dcf1aa36"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Image 1 is the edit target, the approved Fission Core icon. Change ONLY its size on the transparent canvas. Keep the exact same core geometry, three copper conduit bands, silver steel, amber-orange emitter, dark rear fuel port, three-quarter pose, lighting, material finish, internal details and colours. Uniformly reduce the entire object so its longest silhouette extent is 1050 pixels (84% of a 1254 x 1254 canvas), leaving roughly 100 pixels of transparent space at the horizontal extremes. Keep its visual centre at (627,627). Do not crop the object, stretch it, add a shadow or change any part. Deliver one sharp 1254 x 1254 RGBA PNG with real transparent background and clear corners. No text, labels, border, scene, ground, added props or glow haze.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-fe19f380-5e2f-4dee-865a-ecaa4e5b1eeb.png",
+              "sha256": "af372944a13018f66d2e295fcbf213b95f711b3e302da8e2ad23a468dcf1aa36"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-a5019f36-cdb8-4bd0-b2c9-e70126fffef5.png",
+          "sourceSha256": "cb5173c830e4fc448407846cb7e0dfea2f490f4307404fa9b2d910670c707068"
+        }
+      ]
+    },
+    {
+      "key": "fusion_core",
+      "name": "Fusion Core",
+      "master": "client/art-src/goods-2026-11-07/fusion_core.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "8fd6c4433f11379b34fe7901ddf54981501868ccff77a5118a3c37e77cabb262",
+      "transparent": true,
+      "bounds": {
+        "left": 100,
+        "top": 234,
+        "width": 1058,
+        "height": 804
+      },
+      "fill": 0.8437001594896332,
+      "clearShare": 0.6272832836041096,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. The same warp core body, its emitter ring and the seams between its copper bands glowing pale blue-white; a thin frost line along the fuel port.\nInput image 1 is the EDIT TARGET: the approved Fission Core. Make its Fusion Core variant. Preserve the EXACT steel cylinder, three copper conduit bands, emitter housing, proportions, overall silhouette, pose, camera, centring, canvas margins and upper-left light. The colour of the emitter and conduit emission and the small surface details in the subject line are the only changes. Keep the copper metallic; do not recolour the entire body. The frost line is a thin surface detail on the fuel port, with no mist or outside halo. The pale blue-white light stays inside the ring and the narrow conduit seams.\nDeliver exactly one 1254 x 1254 RGBA PNG with the same transparency and 84% fill as the target. No text, labels, backdrop, ground, extra props or light outside the object's silhouette.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/fission_core.png",
+              "sha256": "cb5173c830e4fc448407846cb7e0dfea2f490f4307404fa9b2d910670c707068"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8e862b1f-fa85-4f03-88da-0c487ccfe471.png",
+          "sourceSha256": "8fd6c4433f11379b34fe7901ddf54981501868ccff77a5118a3c37e77cabb262"
+        }
+      ]
+    },
+    {
+      "key": "helium_core",
+      "name": "Helium Core",
+      "master": "client/art-src/goods-2026-11-07/helium_core.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "6489fce5721bfcdba86ba52817e79e4257b66faa01449a32707e93d194194844",
+      "transparent": true,
+      "bounds": {
+        "left": 100,
+        "top": 234,
+        "width": 1056,
+        "height": 804
+      },
+      "fill": 0.8421052631578947,
+      "clearShare": 0.6295681570171623,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. The same warp core body, its emitter ring glowing warm gold and a second, thinner gold ring behind it; the copper bands a shade brighter.\nInput image 1 is the EDIT TARGET: the approved Fission Core. Make its Helium Core variant. Preserve the EXACT steel cylinder, three copper conduit bands, emitter housing, proportions, overall silhouette, pose, camera, centring, canvas margins and upper-left light. The colour of the emitter and conduit emission and the small surface details in the subject line are the only changes. Keep the copper metallic; do not recolour the entire body. Render the thinner gold ring as an inset light line behind the emitter on the existing housing; do not add a larger component. Make the gold distinctly yellow-gold, separate from the Fission Core's orange.\nDeliver exactly one 1254 x 1254 RGBA PNG with the same transparency and 84% fill as the target. No text, labels, backdrop, ground, extra props or light outside the object's silhouette.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/fission_core.png",
+              "sha256": "cb5173c830e4fc448407846cb7e0dfea2f490f4307404fa9b2d910670c707068"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-2e7f5752-d2f3-40c7-8751-76b62d91d167.png",
+          "sourceSha256": "6489fce5721bfcdba86ba52817e79e4257b66faa01449a32707e93d194194844"
+        }
+      ]
+    },
+    {
+      "key": "fold_core",
+      "name": "Fold Core",
+      "master": "client/art-src/goods-2026-11-07/fold_core.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "3f7f968a91d52389631ec702c01ee9abc93d7f1e4794ab944a67043cab4d241d",
+      "transparent": true,
+      "bounds": {
+        "left": 100,
+        "top": 233,
+        "width": 1058,
+        "height": 805
+      },
+      "fill": 0.8437001594896332,
+      "clearShare": 0.6291834232529272,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. The same warp core body, its emitter ring glowing deep violet with a faint violet corona inside the ring, and the fuel port sealed with a black magnetic cap.\nInput image 1 is the EDIT TARGET: the approved Fission Core. Make its Fold Core variant. Preserve the EXACT steel cylinder, three copper conduit bands, emitter housing, proportions, overall silhouette, pose, camera, centring, canvas margins and upper-left light. The colour of the emitter and conduit emission and the small surface details in the subject line are the only changes. Keep the copper metallic; do not recolour the entire body. The black magnetic cap fits inside the existing rear fuel port, preserving its outline. Keep the faint violet corona strictly inside the emitter ring.\nDeliver exactly one 1254 x 1254 RGBA PNG with the same transparency and 84% fill as the target. No text, labels, backdrop, ground, extra props or light outside the object's silhouette.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/fission_core.png",
+              "sha256": "cb5173c830e4fc448407846cb7e0dfea2f490f4307404fa9b2d910670c707068"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-fc084293-184a-4557-b2b9-6678bc2e28d2.png",
+          "sourceSha256": "3f7f968a91d52389631ec702c01ee9abc93d7f1e4794ab944a67043cab4d241d"
+        }
+      ]
+    },
+    {
+      "key": "fusion_reactor",
+      "name": "Fusion Reactor",
+      "master": "client/art-src/goods-2026-11-07/fusion_reactor.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "ea29c67b50ce44c3c414f06b8cb228e64d390dbd7261760d282b04f2126a1c56",
+      "transparent": true,
+      "bounds": {
+        "left": 86,
+        "top": 242,
+        "width": 1082,
+        "height": 801
+      },
+      "fill": 0.8628389154704944,
+      "clearShare": 0.5164933138995088,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A planet-side fusion reactor core: a stout toroidal steel vessel with a blue-white plasma ring glimpsed through four small viewports, heavy mounting lugs at the base. Wider than tall; nothing like the slim warp core.\nReference image 1 is the approved ore-icon family for STYLE ONLY: match its three-quarter camera, upper-left studio light, clean broad forms and material finish. Do not copy its objects, layout or backdrop. Reference image 2 is a single copper-metal icon for material finish only. Produce exactly ONE icon for the subject above, not a sheet.\nDelivery: square 1254 × 1254 PNG with real RGBA transparency and completely clear outer corners. Keep the complete object inside the canvas at about 80–90% fill, centred. Emission stays on the object, with no halo or glow outside its silhouette.\nFraming takes precedence over the reference images' margins: leave clear transparent margins around the whole icon. Target a longest silhouette extent of 1050 pixels (84% of the 1254-pixel canvas), centred at (627, 627), with no part clipped.",
+          "references": [
+            {
+              "file": "client/art-src/ores-2026-09-16/preview.webp",
+              "sha256": "de984f30daa17111c1a4667a1735b5126e06ac8a12c5448ff82ff97a60f65caa"
+            },
+            {
+              "file": "client/art-src/ores-2026-09-16/conductive_metals.png",
+              "sha256": "902f0e2d916aea3f58d694ea805f1ee79ba995caae78ef9c5cd1465ba2a98f99"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-27fb280b-cdc0-41bc-93ca-aafd9a1ac17c.png",
+          "sourceSha256": "ea29c67b50ce44c3c414f06b8cb228e64d390dbd7261760d282b04f2126a1c56"
+        }
+      ]
+    },
+    {
+      "key": "advanced_fusion_reactor",
+      "name": "Advanced Fusion Reactor",
+      "master": "client/art-src/goods-2026-11-07/advanced_fusion_reactor.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "e3c5926f7c9f045ce283829bd15a7aff3754e209522749d64881b8db9b47369d",
+      "transparent": true,
+      "bounds": {
+        "left": 82,
+        "top": 183,
+        "width": 1092,
+        "height": 862
+      },
+      "fill": 0.8708133971291866,
+      "clearShare": 0.49095398711364463,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. The same toroidal reactor vessel with a second outer ring of gold field coils and gold plasma in its viewports; a small iridium-white badge plate on the front lug.\nInput image 1 is the EDIT TARGET: the approved Fusion Reactor. Preserve its exact toroidal steel vessel, viewports, mounting lugs, camera, pose, centring and broad silhouette. Add the specified gold field coils as a second outer ring closely fitted to the existing rim, within the current icon's bounds. Change the visible plasma from blue-white to warm gold and add the small blank iridium-white plate on the front lug. Keep all other structural geometry and steel finish unchanged. No text or insignia on the plate.\nDeliver one 1254 x 1254 RGBA PNG with real transparency and the same 80–90% fill as the target. No floor, shadow, external glow or background.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/fusion_reactor.png",
+              "sha256": "ea29c67b50ce44c3c414f06b8cb228e64d390dbd7261760d282b04f2126a1c56"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-297b9cac-08c3-4b89-9b66-62c5a8284430.png",
+          "sourceSha256": "e3c5926f7c9f045ce283829bd15a7aff3754e209522749d64881b8db9b47369d"
+        }
+      ]
+    },
+    {
+      "key": "nav_computer",
+      "name": "Nav Computer",
+      "master": "client/art-src/goods-2026-11-07/nav_computer.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "d45416dbb7c3e179d0625681a3b341929ae859664444b33e9e79eb00ed2bd11d",
+      "transparent": true,
+      "bounds": {
+        "left": 80,
+        "top": 138,
+        "width": 1113,
+        "height": 970
+      },
+      "fill": 0.8875598086124402,
+      "clearShare": 0.47700563937028306,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A ruggedised navigation computer: a dark slate-grey flight box with a single inset screen showing a faint cyan star-plot, two latched side handles and a short gold data-port strip along the bottom edge.\nReference image 1 is the approved ore-icon family for STYLE ONLY: match its three-quarter camera, upper-left studio light, clean broad forms and material finish. Do not copy its objects, layout or backdrop. Reference image 2 is a single copper-metal icon for material finish only. Produce exactly ONE icon for the subject above, not a sheet.\nDelivery: square 1254 × 1254 PNG with real RGBA transparency and completely clear outer corners. Keep the complete object inside the canvas at about 80–90% fill, centred. Emission stays on the object, with no halo or glow outside its silhouette.\nFraming takes precedence over the reference images' margins: leave clear transparent margins around the whole icon. Target a longest silhouette extent of 1050 pixels (84% of the 1254-pixel canvas), centred at (627, 627), with no part clipped.",
+          "references": [
+            {
+              "file": "client/art-src/ores-2026-09-16/preview.webp",
+              "sha256": "de984f30daa17111c1a4667a1735b5126e06ac8a12c5448ff82ff97a60f65caa"
+            },
+            {
+              "file": "client/art-src/ores-2026-09-16/conductive_metals.png",
+              "sha256": "902f0e2d916aea3f58d694ea805f1ee79ba995caae78ef9c5cd1465ba2a98f99"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-0ea12c1a-6a32-4505-b9a4-4c15d7a7ad41.png",
+          "sourceSha256": "d45416dbb7c3e179d0625681a3b341929ae859664444b33e9e79eb00ed2bd11d"
+        }
+      ]
+    },
+    {
+      "key": "cargo_bay",
+      "name": "Cargo Bay",
+      "master": "client/art-src/goods-2026-11-07/cargo_bay.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "6c9d3f07e211f58d12175ff741766fbb4dbda1813eda60bc281a1419e8d0237b",
+      "transparent": true,
+      "bounds": {
+        "left": 101,
+        "top": 127,
+        "width": 1092,
+        "height": 980
+      },
+      "fill": 0.8708133971291866,
+      "clearShare": 0.4635952829732734,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A prefabricated cargo bay module: an open-fronted grey steel hold section with ribbed walls, a hinged loading ramp folded up, and one orange strap-down point inside. Reads as a room for cargo, not a crate.\nReference image 1 is the approved ore-icon family for STYLE ONLY: match its three-quarter camera, upper-left studio light, clean broad forms and material finish. Do not copy its objects, layout or backdrop. Reference image 2 is a single copper-metal icon for material finish only. Produce exactly ONE icon for the subject above, not a sheet.\nDelivery: square 1254 × 1254 PNG with real RGBA transparency and completely clear outer corners. Keep the complete object inside the canvas at about 80–90% fill, centred. Emission stays on the object, with no halo or glow outside its silhouette.\nFraming takes precedence over the reference images' margins: leave clear transparent margins around the whole icon. Target a longest silhouette extent of 1050 pixels (84% of the 1254-pixel canvas), centred at (627, 627), with no part clipped.",
+          "references": [
+            {
+              "file": "client/art-src/ores-2026-09-16/preview.webp",
+              "sha256": "de984f30daa17111c1a4667a1735b5126e06ac8a12c5448ff82ff97a60f65caa"
+            },
+            {
+              "file": "client/art-src/ores-2026-09-16/conductive_metals.png",
+              "sha256": "902f0e2d916aea3f58d694ea805f1ee79ba995caae78ef9c5cd1465ba2a98f99"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8c376de7-f73f-4912-b0a6-2996d33ccfa5.png",
+          "sourceSha256": "6c9d3f07e211f58d12175ff741766fbb4dbda1813eda60bc281a1419e8d0237b"
+        }
+      ]
+    },
+    {
+      "key": "pulse_laser",
+      "name": "Pulse Laser",
+      "master": "client/art-src/goods-2026-11-07/pulse_laser.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "3d468b2fdc00496a97aac10ec5519a0fc8150819d6e191fa6f0309c35cfc31ac",
+      "transparent": true,
+      "bounds": {
+        "left": 115,
+        "top": 189,
+        "width": 1023,
+        "height": 873
+      },
+      "fill": 0.8157894736842105,
+      "clearShare": 0.6337372719896014,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A light ship-mounted pulse laser: a short grey gun housing on a small round turret base with a stubby barrel ending in a red-tinted emitter lens; one heat vane along the top. Small and quick-looking.\nReference image 1 is the approved ore-icon family for STYLE ONLY: match its three-quarter camera, upper-left studio light, clean broad forms and material finish. Do not copy its objects, layout or backdrop. Reference image 2 is a single copper-metal icon for material finish only. Produce exactly ONE icon for the subject above, not a sheet.\nDelivery: square 1254 × 1254 PNG with real RGBA transparency and completely clear outer corners. Keep the complete object inside the canvas at about 80–90% fill, centred. Emission stays on the object, with no halo or glow outside its silhouette.\nFraming takes precedence over the reference images' margins: leave clear transparent margins around the whole icon. Target a longest silhouette extent of 1050 pixels (84% of the 1254-pixel canvas), centred at (627, 627), with no part clipped.",
+          "references": [
+            {
+              "file": "client/art-src/ores-2026-09-16/preview.webp",
+              "sha256": "de984f30daa17111c1a4667a1735b5126e06ac8a12c5448ff82ff97a60f65caa"
+            },
+            {
+              "file": "client/art-src/ores-2026-09-16/conductive_metals.png",
+              "sha256": "902f0e2d916aea3f58d694ea805f1ee79ba995caae78ef9c5cd1465ba2a98f99"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-7a03b548-e4c7-4f96-8035-8ba8d60d79dc.png",
+          "sourceSha256": "3d468b2fdc00496a97aac10ec5519a0fc8150819d6e191fa6f0309c35cfc31ac"
+        }
+      ]
+    },
+    {
+      "key": "beam_battery",
+      "name": "Beam Battery",
+      "master": "client/art-src/goods-2026-11-07/beam_battery.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "71822d94da489221a54cb2d77b24cfd3d50f6bdebdb64d973c8f1dbd1db8c85e",
+      "transparent": true,
+      "bounds": {
+        "left": 107,
+        "top": 198,
+        "width": 1045,
+        "height": 866
+      },
+      "fill": 0.8333333333333334,
+      "clearShare": 0.6468182199735965,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A heavy line beam battery: a long twin-barrel beam mount on an armoured turret base, both barrels ending in red emitter lenses, with a coolant block and three heat vanes behind. Twice the Pulse Laser's length.\nReference image 1 is the approved ore-icon family for STYLE ONLY: match its three-quarter camera, upper-left studio light, clean broad forms and material finish. Do not copy its objects, layout or backdrop. Reference image 2 is a single copper-metal icon for material finish only. Produce exactly ONE icon for the subject above, not a sheet.\nDelivery: square 1254 × 1254 PNG with real RGBA transparency and completely clear outer corners. Keep the complete object inside the canvas at about 80–90% fill, centred. Emission stays on the object, with no halo or glow outside its silhouette.\nFraming takes precedence over the reference images' margins: leave clear transparent margins around the whole icon. Target a longest silhouette extent of 1050 pixels (84% of the 1254-pixel canvas), centred at (627, 627), with no part clipped.\nReference image 3 is the light Pulse Laser, for the related weapon-design language and proportional comparison only. Create the distinct heavy Beam Battery from the subject line: exactly TWO long parallel barrels and TWO red emitter lenses, with exactly THREE heat vanes behind. Its barrels are roughly twice the light weapon's length relative to the turret base. Keep the complete heavier icon inside the same square canvas and margin; do not copy the single stubby barrel.",
+          "references": [
+            {
+              "file": "client/art-src/ores-2026-09-16/preview.webp",
+              "sha256": "de984f30daa17111c1a4667a1735b5126e06ac8a12c5448ff82ff97a60f65caa"
+            },
+            {
+              "file": "client/art-src/ores-2026-09-16/conductive_metals.png",
+              "sha256": "902f0e2d916aea3f58d694ea805f1ee79ba995caae78ef9c5cd1465ba2a98f99"
+            },
+            {
+              "file": "client/art-src/goods-2026-11-07/pulse_laser.png",
+              "sha256": "3d468b2fdc00496a97aac10ec5519a0fc8150819d6e191fa6f0309c35cfc31ac"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-0e5b6685-d004-4953-8cae-79f70339909c.png",
+          "sourceSha256": "7166fcd8375907a45b18a206be978dd4318a52c1a6787e3076d4cf36e38a1f6b"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Image 1 is the edit target, the finished heavy Beam Battery inventory icon. Change ONLY the object's size on its transparent canvas. Keep the exact twin long barrels, two red emitter lenses, coolant block, three rear heat vanes, armoured turret base, grey steel materials, three-quarter pose, upper-left studio light and every internal detail. Uniformly reduce the entire object to a longest silhouette extent of 1050 pixels (84% of the 1254 x 1254 canvas) and centre it at (627,627). Do not crop, stretch, rotate, redesign or add anything. Deliver one sharp 1254 x 1254 RGBA PNG with genuine transparency and clear corners. No text, labels, scene, background, ground, shadow or external glow.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-0e5b6685-d004-4953-8cae-79f70339909c.png",
+              "sha256": "7166fcd8375907a45b18a206be978dd4318a52c1a6787e3076d4cf36e38a1f6b"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-5fd5e045-1d87-4a4b-8449-abde8f13ea8a.png",
+          "sourceSha256": "71822d94da489221a54cb2d77b24cfd3d50f6bdebdb64d973c8f1dbd1db8c85e"
+        }
+      ]
+    },
+    {
+      "key": "armaments",
+      "name": "Weapon Mounts",
+      "master": "client/art-src/goods-2026-11-07/armaments.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "7743cd175768ac8fb049ad04b7e5aea429741934904436cf155b0a357dd53d05",
+      "transparent": true,
+      "bounds": {
+        "left": 101,
+        "top": 107,
+        "width": 1047,
+        "height": 1036
+      },
+      "fill": 0.8349282296650717,
+      "clearShare": 0.5434997163780846,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. Weapon-mount hardware: a grey steel turret ring with its pivot and two empty gun cradles, a coiled fire-control cable and a short magazine feed block beside it. No missiles: the mount, not the munition.\nReference image 1 is the approved ore-icon family for STYLE ONLY: match its three-quarter camera, upper-left studio light, clean broad forms and material finish. Do not copy its objects, layout or backdrop. Reference image 2 is a single copper-metal icon for material finish only. Produce exactly ONE icon for the subject above, not a sheet.\nDelivery: square 1254 × 1254 PNG with real RGBA transparency and completely clear outer corners. Keep the complete object inside the canvas at about 80–90% fill, centred. Emission stays on the object, with no halo or glow outside its silhouette.\nFraming takes precedence over the reference images' margins: leave clear transparent margins around the whole icon. Target a longest silhouette extent of 1050 pixels (84% of the 1254-pixel canvas), centred at (627, 627), with no part clipped.",
+          "references": [
+            {
+              "file": "client/art-src/ores-2026-09-16/preview.webp",
+              "sha256": "de984f30daa17111c1a4667a1735b5126e06ac8a12c5448ff82ff97a60f65caa"
+            },
+            {
+              "file": "client/art-src/ores-2026-09-16/conductive_metals.png",
+              "sha256": "902f0e2d916aea3f58d694ea805f1ee79ba995caae78ef9c5cd1465ba2a98f99"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-7cad6330-0b4d-4bf4-be12-34bcfbd7f039.png",
+          "sourceSha256": "7743cd175768ac8fb049ad04b7e5aea429741934904436cf155b0a357dd53d05"
+        }
+      ]
+    },
+    {
+      "key": "torpedoes",
+      "name": "Torpedoes",
+      "master": "client/art-src/goods-2026-11-07/torpedoes.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "3b3b106e7c8f9be595547d8a5035557b12e4ab409960422736b7fc692578b5e0",
+      "transparent": true,
+      "bounds": {
+        "left": 119,
+        "top": 226,
+        "width": 1049,
+        "height": 855
+      },
+      "fill": 0.8365231259968102,
+      "clearShare": 0.6477562072500376,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A rack of three dark-grey ship torpedoes with red nose bands and small fin clusters, lying on a steel loading cradle. Longer and slimmer than the old missiles.\nReference image 1 is the approved ore-icon family for STYLE ONLY: match its three-quarter camera, upper-left studio light, clean broad forms and material finish. Do not copy its objects, layout or backdrop. Reference image 2 is a single copper-metal icon for material finish only. Produce exactly ONE icon for the subject above, not a sheet.\nDelivery: square 1254 × 1254 PNG with real RGBA transparency and completely clear outer corners. Keep the complete object inside the canvas at about 80–90% fill, centred. Emission stays on the object, with no halo or glow outside its silhouette.\nFraming takes precedence over the reference images' margins: leave clear transparent margins around the whole icon. Target a longest silhouette extent of 1050 pixels (84% of the 1254-pixel canvas), centred at (627, 627), with no part clipped.\nExactly three complete torpedoes in one loading rack; their long slim bodies and small fin clusters stay entirely inside the square.",
+          "references": [
+            {
+              "file": "client/art-src/ores-2026-09-16/preview.webp",
+              "sha256": "de984f30daa17111c1a4667a1735b5126e06ac8a12c5448ff82ff97a60f65caa"
+            },
+            {
+              "file": "client/art-src/ores-2026-09-16/conductive_metals.png",
+              "sha256": "902f0e2d916aea3f58d694ea805f1ee79ba995caae78ef9c5cd1465ba2a98f99"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-cb5ba60f-0235-49b5-b3be-f3ed36758357.png",
+          "sourceSha256": "016df87a7d9214fa1ea797a1e0812d1bf01504b216cb57e9385ed0388d243d66"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Image 1 is the edit target: the finished Torpedoes inventory icon. Change ONLY its size on the transparent canvas. Uniformly reduce the complete resource assembly to a longest silhouette extent of 1050 pixels (84% of the 1254 x 1254 canvas), centred at (627,627). Preserve its exact object count, arrangement, three-quarter pose, geometry, material finish, colours, upper-left lighting and every detail. Keep exactly THREE long grey torpedoes with red nose bands, small fins and their single steel loading rack. Do not crop, stretch, rotate, redesign or add anything. Deliver one sharp 1254 x 1254 RGBA PNG with genuine transparent background and clear corners. No text, labels, floor, backdrop, cast shadow or external glow.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-cb5ba60f-0235-49b5-b3be-f3ed36758357.png",
+              "sha256": "016df87a7d9214fa1ea797a1e0812d1bf01504b216cb57e9385ed0388d243d66"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-c9b7c600-3463-4b14-92f9-6578eb131a40.png",
+          "sourceSha256": "3b3b106e7c8f9be595547d8a5035557b12e4ab409960422736b7fc692578b5e0"
+        }
+      ]
+    },
+    {
+      "key": "slugs",
+      "name": "Slugs",
+      "master": "client/art-src/goods-2026-11-07/slugs.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "a69c758948f17a0c024812f9b7e9f12403295620906ccc28e7618fcfe2a62f2d",
+      "transparent": true,
+      "bounds": {
+        "left": 103,
+        "top": 189,
+        "width": 1054,
+        "height": 927
+      },
+      "fill": 0.8405103668261563,
+      "clearShare": 0.5926019194717256,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A neat pyramid of six dull tungsten-grey mass-driver slugs, each a short dense cylinder with a bevelled tip, on a steel tray. Heavy and plain.\nReference image 1 is the approved ore-icon family for STYLE ONLY: match its three-quarter camera, upper-left studio light, clean broad forms and material finish. Do not copy its objects, layout or backdrop. Reference image 2 is a single copper-metal icon for material finish only. Produce exactly ONE icon for the subject above, not a sheet.\nDelivery: square 1254 × 1254 PNG with real RGBA transparency and completely clear outer corners. Keep the complete object inside the canvas at about 80–90% fill, centred. Emission stays on the object, with no halo or glow outside its silhouette.\nFraming takes precedence over the reference images' margins: leave clear transparent margins around the whole icon. Target a longest silhouette extent of 1050 pixels (84% of the 1254-pixel canvas), centred at (627, 627), with no part clipped.\nExactly six slugs in a 3-2-1 stack: three on the bottom row, two on the middle row, one on top, their bevelled tips visible. Keep them plain tungsten-grey and heavy.",
+          "references": [
+            {
+              "file": "client/art-src/ores-2026-09-16/preview.webp",
+              "sha256": "de984f30daa17111c1a4667a1735b5126e06ac8a12c5448ff82ff97a60f65caa"
+            },
+            {
+              "file": "client/art-src/ores-2026-09-16/conductive_metals.png",
+              "sha256": "902f0e2d916aea3f58d694ea805f1ee79ba995caae78ef9c5cd1465ba2a98f99"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-9e1a1217-1be1-4ae5-93ad-58edc70ab24d.png",
+          "sourceSha256": "2efb80fa8a1205702d479450f2f75978270f3e0a450fe5169b11e91665879aec"
+        },
+        {
+          "prompt": "Use case: precise-object-edit. Image 1 is the edit target: the finished Slugs inventory icon. Change ONLY its size on the transparent canvas. Uniformly reduce the complete resource assembly to a longest silhouette extent of 1050 pixels (84% of the 1254 x 1254 canvas), centred at (627,627). Preserve its exact object count, arrangement, three-quarter pose, geometry, material finish, colours, upper-left lighting and every detail. Keep exactly SIX tungsten-grey slugs in the existing 3-2-1 pyramid and their single steel tray. Do not crop, stretch, rotate, redesign or add anything. Deliver one sharp 1254 x 1254 RGBA PNG with genuine transparent background and clear corners. No text, labels, floor, backdrop, cast shadow or external glow.",
+          "references": [
+            {
+              "file": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-9e1a1217-1be1-4ae5-93ad-58edc70ab24d.png",
+              "sha256": "2efb80fa8a1205702d479450f2f75978270f3e0a450fe5169b11e91665879aec"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-c9957136-5bcd-41bc-83a8-afaa01891adf.png",
+          "sourceSha256": "a69c758948f17a0c024812f9b7e9f12403295620906ccc28e7618fcfe2a62f2d"
+        }
+      ]
+    },
+    {
+      "key": "beam_crystals",
+      "name": "Beam Crystals",
+      "master": "client/art-src/goods-2026-11-07/beam_crystals.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "c54e189d5a4521104e455c144a59097e41f483693d1b92a8aea1f220ee5b17f6",
+      "transparent": true,
+      "bounds": {
+        "left": 123,
+        "top": 95,
+        "width": 1017,
+        "height": 1088
+      },
+      "fill": 0.8676236044657097,
+      "clearShare": 0.45838198148699283,
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. The goods builder trims and recentres UI derivatives at 90% fill.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. Three faceted focusing crystals for beam weapons, pale rose-clear, held upright in a padded steel case with the lid open; one crystal has a faint internal glow.\nReference image 1 is the approved ore-icon family for STYLE ONLY: match its three-quarter camera, upper-left studio light, clean broad forms and material finish. Do not copy its objects, layout or backdrop. Reference image 2 is a single copper-metal icon for material finish only. Produce exactly ONE icon for the subject above, not a sheet.\nDelivery: square 1254 × 1254 PNG with real RGBA transparency and completely clear outer corners. Keep the complete object inside the canvas at about 80–90% fill, centred. Emission stays on the object, with no halo or glow outside its silhouette.\nFraming takes precedence over the reference images' margins: leave clear transparent margins around the whole icon. Target a longest silhouette extent of 1050 pixels (84% of the 1254-pixel canvas), centred at (627, 627), with no part clipped.\nExactly three rose-clear faceted crystals, all three visibly separate in the open padded case. Only one crystal has a very faint internal glow; no light escapes into the transparent background.",
+          "references": [
+            {
+              "file": "client/art-src/ores-2026-09-16/preview.webp",
+              "sha256": "de984f30daa17111c1a4667a1735b5126e06ac8a12c5448ff82ff97a60f65caa"
+            },
+            {
+              "file": "client/art-src/ores-2026-09-16/conductive_metals.png",
+              "sha256": "902f0e2d916aea3f58d694ea805f1ee79ba995caae78ef9c5cd1465ba2a98f99"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-7647ad64-ecb7-468a-9a65-cd87cc4f2e53.png",
+          "sourceSha256": "c54e189d5a4521104e455c144a59097e41f483693d1b92a8aea1f220ee5b17f6"
+        }
+      ]
+    },
+    {
+      "key": "zephyr_drive",
+      "name": "Zephyr Drive",
+      "generatedAt": "2026-11-08",
+      "master": "client/art-src/goods-2026-11-07/zephyr_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "29742708cd59217e2680b212666a28edca44c7dc3184cede06120082880bd130",
+      "transparent": true,
+      "bounds": {
+        "left": 82,
+        "top": 144,
+        "width": 1075,
+        "height": 1007
+      },
+      "fill": 0.8572567783094099,
+      "clearShare": 0.5242363193760826,
+      "replacedPlaceholderSha256": "93a060c4d0be0fd922adc2f4cce098ef06608ae8ac4717a2ffc41e0a21d0f167",
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game derivative build left for the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. A compact warp drive: a dark steel thruster bell seen from the rear quarter, three copper conduit bands around its throat, and a single wide emitter ring at its mouth glowing amber-orange. Squat and plain, the colony's first drive.\nDelivery: exactly one 1254 × 1254 RGBA PNG. Centre the complete drive on the transparent canvas, with its longest silhouette dimension approximately 1000 pixels (80% fill) and generous clear margins on all sides. Preserve true transparent alpha, including inside any open gaps. The rear-quarter view clearly shows the broad circular open bell mouth and its one amber-orange emitter ring, as well as the three copper bands around the narrower throat. Keep the bell's dark metal interior visible; the glow is confined to the ring with no exhaust plume or outside halo. Match a polished game inventory render with clean steel edges and warm copper, using broad simple surfaces that hold up at 32 px.",
+          "references": [],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-7a59953e-eed0-4406-941b-8e794b6fe400.png",
+          "sourceSha256": "29742708cd59217e2680b212666a28edca44c7dc3184cede06120082880bd130"
+        }
+      ]
+    },
+    {
+      "key": "gale_drive",
+      "name": "Gale Drive",
+      "generatedAt": "2026-11-08",
+      "master": "client/art-src/goods-2026-11-07/gale_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "3db6d8f6dbdd14dbfe784121f7c7d71a2f689c1fe83835c4ed5552b10e99d650",
+      "transparent": true,
+      "bounds": {
+        "left": 77,
+        "top": 142,
+        "width": 1099,
+        "height": 1013
+      },
+      "fill": 0.8763955342902712,
+      "clearShare": 0.5102301025871915,
+      "replacedPlaceholderSha256": "8752f6e1e6cdb123e311a5061f4f38db2e8fe46c4ee9e9a03282665e659bf90f",
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game derivative build left for the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. The same drive body, its emitter ring glowing pale blue-white, a second thin ring just inside the first; the bell a shade longer.\nInput image 1 is the EDIT TARGET: Zephyr Drive. Make this variant by editing that exact image. Change the amber-orange emitter to pale blue-white. Add the requested second thin blue-white ring immediately inside the first, within the existing mouth. Make the bell only a shade longer (a subtle increase in axial length), keeping the throat and three copper bands exactly the same. No other additions.\nPreserve the same dark steel body, all other mechanical details, broad plain surfaces, three copper conduit bands, relative mouth and throat placement, rear-quarter camera, upper-left lighting, polished material finish, centring and generous transparent margins. Keep the object scale and framing aligned with the reference. Change only the colours and the specific details named above. Deliver exactly one 1254 × 1254 RGBA PNG with genuine transparent background and clear corners. Preserve the original alpha around the object except for the named geometry changes; all light must remain on or inside the object. No text, labels, framing, scene, ground, props or glow haze.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/zephyr_drive.png",
+              "sha256": "29742708cd59217e2680b212666a28edca44c7dc3184cede06120082880bd130"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-ce58d891-bb8a-46f1-9ca7-0e3f02b210b1.png",
+          "sourceSha256": "3db6d8f6dbdd14dbfe784121f7c7d71a2f689c1fe83835c4ed5552b10e99d650"
+        }
+      ]
+    },
+    {
+      "key": "tempest_drive",
+      "name": "Tempest Drive",
+      "generatedAt": "2026-11-08",
+      "master": "client/art-src/goods-2026-11-07/tempest_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "517c343e2d15508d79ee8264bfa39048f25daa5dbc6bc6f4a584f5d3b07d6115",
+      "transparent": true,
+      "bounds": {
+        "left": 83,
+        "top": 141,
+        "width": 1076,
+        "height": 1011
+      },
+      "fill": 0.8580542264752791,
+      "clearShare": 0.5221218734817324,
+      "replacedPlaceholderSha256": "d26ecc194a4e8a352b89327071d5549d8efed36ec5002cacc996b6d2fb511eee",
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game derivative build left for the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. The same drive body, its emitter ring glowing warm gold with three short gold vanes set into the bell; the copper bands brighter.\nInput image 1 is the EDIT TARGET: Zephyr Drive. Make this variant by editing that exact image. Change the amber-orange emitter to a distinctly yellow warm gold. Set exactly three short gold vanes into the bell interior, evenly spaced and clearly distinct; keep them short and integrated in the existing bell rather than projecting outside its silhouette. Make the existing three copper bands slightly brighter but keep their metallic copper hue and exact shape. No other additions.\nPreserve the same dark steel body, all other mechanical details, broad plain surfaces, three copper conduit bands, relative mouth and throat placement, rear-quarter camera, upper-left lighting, polished material finish, centring and generous transparent margins. Keep the object scale and framing aligned with the reference. Change only the colours and the specific details named above. Deliver exactly one 1254 × 1254 RGBA PNG with genuine transparent background and clear corners. Preserve the original alpha around the object except for the named geometry changes; all light must remain on or inside the object. No text, labels, framing, scene, ground, props or glow haze.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/zephyr_drive.png",
+              "sha256": "29742708cd59217e2680b212666a28edca44c7dc3184cede06120082880bd130"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8bf42a39-b091-4a03-a2e9-ee3fec407b10.png",
+          "sourceSha256": "517c343e2d15508d79ee8264bfa39048f25daa5dbc6bc6f4a584f5d3b07d6115"
+        }
+      ]
+    },
+    {
+      "key": "maelstrom_drive",
+      "name": "Maelstrom Drive",
+      "generatedAt": "2026-11-08",
+      "master": "client/art-src/goods-2026-11-07/maelstrom_drive.png",
+      "nativeSize": [
+        1254,
+        1254
+      ],
+      "sha256": "7890ede1ba42430952f30a750669a8db6512c1919c652dfeaff80a2f70ab968a",
+      "transparent": true,
+      "bounds": {
+        "left": 83,
+        "top": 142,
+        "width": 1075,
+        "height": 1010
+      },
+      "fill": 0.8572567783094099,
+      "clearShare": 0.521062424802037,
+      "replacedPlaceholderSha256": "d44e6b6fe06a3ad5082280aa49f721c8f818204dfef4682436fb74b2d8f5788b",
+      "processing": "Original generated PNG bytes retained; no crop, resize or alpha changes. Game derivative build left for the user.",
+      "history": [
+        {
+          "prompt": "Use case: stylized-concept. Asset type: sci-fi strategy game inventory resource icon for Stellar Syndicates. A single centered resource object, polished hard-surface 3D game icon, crisp broad forms readable at 32–64 px, 3/4 view, restrained texture, strong silhouette, studio light from upper left. Object occupies 80% of square canvas. Genuine transparent RGBA background; no scene, ground, border, frame, text, labels, watermark, glow haze, UI or extra props. The same drive body, its emitter ring glowing deep violet with a faint spiral of violet light inside the mouth, and a black magnetic collar at the throat.\nInput image 1 is the EDIT TARGET: Zephyr Drive. Make this variant by editing that exact image. Change the amber-orange emitter to deep violet. Add a faint, restrained spiral of violet light only inside the dark bell mouth, leaving the metal interior visible. Fit a black magnetic collar at the throat, within the existing throat structure, without changing the copper bands or the overall outline. Keep the spiral subtle: no plume, portal scene or haze. No other additions.\nPreserve the same dark steel body, all other mechanical details, broad plain surfaces, three copper conduit bands, relative mouth and throat placement, rear-quarter camera, upper-left lighting, polished material finish, centring and generous transparent margins. Keep the object scale and framing aligned with the reference. Change only the colours and the specific details named above. Deliver exactly one 1254 × 1254 RGBA PNG with genuine transparent background and clear corners. Preserve the original alpha around the object except for the named geometry changes; all light must remain on or inside the object. No text, labels, framing, scene, ground, props or glow haze.",
+          "references": [
+            {
+              "file": "client/art-src/goods-2026-11-07/zephyr_drive.png",
+              "sha256": "29742708cd59217e2680b212666a28edca44c7dc3184cede06120082880bd130"
+            }
+          ],
+          "generatedSource": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-c7e6423a-a54c-4fb2-a314-d3bdc7f9a05d.png",
+          "sourceSha256": "7890ede1ba42430952f30a750669a8db6512c1919c652dfeaff80a2f70ab968a"
+        }
+      ]
+    }
+  ]
+}

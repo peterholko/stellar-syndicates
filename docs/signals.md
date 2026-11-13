@@ -19,8 +19,8 @@ Code: `crates/sim/src/signals.rs` (types, curve, first ten, reward tables),
 
 ## When they appear
 
-- **Opening:** with "Export your ore" (charter step 12, the step after the
-  den), or at once for a corporation outside the charter. The first two
+- **Opening:** with "Export your ore" (charter step 16 since §stash, after the
+  den's loot is home), or at once for a corporation outside the charter. The first two
   arrive together (`SIGNAL_OPENING`).
 - **Curve:** Travian's x1 adventure rate, by days since a corporation's
   signals opened (`signal_interval_s`): every 8 h for 3 days, every 12 h to
@@ -132,6 +132,45 @@ I left; a blueprint to the first of its list not yet licensed.
 - **News:** "New signal · Ghost ship · Hazardous." and "First find 3/10 ·
   Drifting wreck · Recon Suite blueprint · +45 XP." or "Report in · …",
   toasted.
+
+## The report panel (Nov 11 2026)
+
+Peter: "when the player is visiting/completing a signal operation, an event
+panel with some art is needed to explain what happen in the operation."
+
+- **When:** a View that brings a signal's report (`signal.report` new since
+  the last View) raises `StoryEvent` `signal` (`core/session.ts`); boot opens
+  the panel once (`signal_{id}` in `storyTold`), queued like every pop-up. A
+  report already in at a page's first View stays old news.
+- **What** (`signalReportEvent`, `story-events.ts`): the signal's
+  aftermath painting (`signalAftermathArt`; the card painting stands in
+  until its master lands), its name, what happened in a line or two
+  (`SIGNAL_OUTCOME` in `core/derive/signals.ts`: `found` when it brought
+  something home or left a cache, `empty` when not, `hurt` after either; the
+  captain named once, the ship and the founder's trader filled in), what came
+  home as crate tiles (goods, credits as "8k", a module crate, a blueprint, a
+  dossier, a captain or specialist), then notes: "+45 XP · captain", standing,
+  "120 Titanium Ore wait at the site for a Freighter", and an injury in
+  amber ("Mara Vosk is hurt · out 4h").
+- **Buttons:** Continue, and Show the cache beside it when one was left
+  (`StoryEvent.also`: frames the cache on the map and selects it).
+- The Signals pop-out keeps its report card as the record; the log keeps
+  its line. Since Nov 12 the report raises no toast (the panel tells it; a
+  "New signal" still toasts), and the first ten's tally moved into the
+  panel's notes ("First find 3/10").
+- Preview: `story-event-fixture.html?story=signal-wreck` (also
+  `signal-ore`, `signal-stash-hurt`, `signal-beacon`, `signal-courier`,
+  `signal-ghost-empty`). Tests: `test-story-events.mjs`.
+- **Aftermath paintings** (Peter, Nov 12 2026: yes to "a second painting per
+  type showing the aftermath"): 13 prompts in
+  `client/art-src/signals-aftermath-v1/` (README and prompts.json), each
+  generated from its own card painting so the pair reads as before and
+  after, the visiting Interceptor small and heading home, the work done shown
+  rather than the loot. Masters go there under their slugs; `npm run
+  assets:derive` writes `public/art/derived/signals/aftermath-v1/` (768 and
+  1280 frames). All thirteen generated Nov 12 2026 (records in that folder's
+  `generation-records.json`); the panel shows them, the card painting
+  standing in only if one fails to load.
 
 ## Not built
 

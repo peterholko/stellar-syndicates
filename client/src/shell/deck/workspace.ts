@@ -3,8 +3,10 @@ import type { Rect } from "../types";
 import { DECK_ROUTES, type DeckCrumb, type DeckRoute, type DeckWidth } from "./router";
 
 const WIDTH_KEY = "stellarSyndicates.deck.width.";
-/** Routes that float over the map as a centred panel instead of a right rail. */
-const POPOUTS: ReadonlySet<DeckRoute["name"]> = new Set(["market", "logistics", "merchant", "signals", "shipyard"]);
+/** Routes that float over the map as a centred panel instead of a right rail.
+ * §research-panel: Research spreads across the whole map area (its own CSS
+ * rule); like the others it never pans or squeezes the map. */
+const POPOUTS: ReadonlySet<DeckRoute["name"]> = new Set(["market", "logistics", "merchant", "signals", "shipyard", "research"]);
 export const isPopoutRoute = (route: DeckRoute | null): boolean => !!route && POPOUTS.has(route.name);
 
 export class DeckWorkspace {

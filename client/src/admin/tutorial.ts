@@ -4,10 +4,12 @@
 export const STAGE_KEYS = [
   "signed_up", "entered",
   "founded",
-  "bioharvester", "habitat", "agroplex", "mine",
-  "raid", "gun_platform", "sell_ore", "power", "shipyard",
-  "interceptor", "privateer", "den", "shipment",
-  "research", "smelter", "expansion", "survey",
+  // §habitat-first (Nov 8 2026): the Habitat, the Solar Array, then the farms; §charter-v6 the
+  // mine and the Smelter before the raid.
+  "habitat", "power", "bioharvester", "agroplex",
+  "mine", "smelter", "raid", "gun_platform", "sell_ore", "shipyard",
+  "interceptor", "privateer", "den", "repair", "freighter", "full_speed", "loot", "shipment",
+  "research", "signal", "small_freighter", "expansion", "survey",
   "barge", "prospect", "belt_mining", "haul", "stores",
   "vendetta",
 ] as const;

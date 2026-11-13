@@ -161,8 +161,7 @@ fn dispatch_chevron_targets(msg: &ClientMsg) -> Vec<DispatchChevronTarget> {
         | ClientMsg::CancelLimitOrder { .. }
         | ClientMsg::StockSystem { .. }
         | ClientMsg::HireSpecialist { .. }
-        | ClientMsg::BuyModule { .. }
-        | ClientMsg::SellModule { .. } => vec![MarketHub],
+        | ClientMsg::BuyLicence { .. } | ClientMsg::BuyClaim { .. } => vec![MarketHub],
         _ => Vec::new(),
     }
 }
@@ -318,6 +317,27 @@ pub(crate) fn trade_report_origin(world: &World, trade: &sim::TradeEvent) -> sim
     trade.physical_origin(world)
 }
 
+/// §charter-advisor (docs/charter-advisor.md): which of the three Authority
+/// officers guides this charter, 0–2. Dealt like the home world, never chosen
+/// and never stored: a hash of the galaxy instance, its seed and the player,
+/// under its own domain tag so it draws independently of the home world. The
+/// same corporation keeps its officer across reconnects and restarts; a new
+/// galaxy draws again, and the same officer may come up.
+pub(crate) fn charter_advisor(galaxy_instance: &str, seed: u64, player: PlayerId) -> u8 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in format!("charter-advisor:{galaxy_instance}:{seed}:{}", player.0).bytes() {
+        h ^= byte as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    // FNV-1a's low bits mix poorly: finish with SplitMix64's avalanche.
+    h ^= h >> 30;
+    h = h.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    h ^= h >> 27;
+    h = h.wrapping_mul(0x94d0_49bb_1331_11eb);
+    h ^= h >> 31;
+    (h % 3) as u8
+}
+
 impl ConcludedBattle {
     /// Should a command center at `cc` still see this battle's IN-PROGRESS icon at
     /// wall-time `now`? True on the half-open window `[started_at + delay,
@@ -418,6 +438,44 @@ struct GameLoop {
     /// the in-flight flag (the estimate itself is sent to the client directly
     /// from the blocking task, never routed back through the loop).
     estimate_done_tx: mpsc::UnboundedSender<ConnId>,
+    /// Test-only: Hub trade per corporation since the harness last took it
+    /// (docs/scarcity-staples-plan.md step 0).
+    #[cfg(test)]
+    trade_tally: BTreeMap<PlayerId, TradeTally>,
+}
+
+/// Test-only: one corporation's Hub trade over a stretch of ticks.
+#[cfg(test)]
+#[derive(Debug, Default, Clone, Copy)]
+struct TradeTally {
+    /// Sold to and bought from the Authority's book, in credits.
+    hub_sold: f64,
+    hub_bought: f64,
+    /// Exchange fills between corporations, in credits.
+    exchange: f64,
+    /// Units refused because the Authority's book had run dry.
+    refused_units: u64,
+}
+
+#[cfg(test)]
+impl GameLoop {
+    fn tally_trade(&mut self, events: &[sim::Event]) {
+        use sim::{EventPayload, TradeEvent};
+        for event in events {
+            let EventPayload::Trade(trade) = &event.payload else { continue };
+            match trade {
+                TradeEvent::Sold { player, units, unit_price, .. } =>
+                    self.trade_tally.entry(*player).or_default().hub_sold += *units as f64 * unit_price,
+                TradeEvent::Bought { player, units, unit_price, .. } =>
+                    self.trade_tally.entry(*player).or_default().hub_bought += *units as f64 * unit_price,
+                TradeEvent::LimitFilled { player, units, unit_price, .. } =>
+                    self.trade_tally.entry(*player).or_default().exchange += *units as f64 * unit_price,
+                TradeEvent::Rejected { player, units, reason: sim::TradeRejectReason::MarketLiquidity { .. }, .. } =>
+                    self.trade_tally.entry(*player).or_default().refused_units += *units as u64,
+                _ => {}
+            }
+        }
+    }
 }
 
 impl GameLoop {
@@ -485,6 +543,8 @@ impl GameLoop {
             status_tx,
             estimate_inflight: HashSet::new(),
             estimate_done_tx,
+            #[cfg(test)]
+            trade_tally: BTreeMap::new(),
         };
         if let Some(saved) = restored {
             game.history = saved.history;
@@ -1176,8 +1236,8 @@ impl GameLoop {
                         self.pending.push(Command::SetFleetMission { player_id, fleet_id, mission });
                     }
                 }
-                ClientMsg::SetFreightRoute { fleet_id, route } => {
-                    if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::SetFreightRoute { player_id, fleet_id, route }); }
+                ClientMsg::SetFreightRoute { fleet_id, route, revise } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::SetFreightRoute { player_id, fleet_id, route, revise }); }
                 }
                 ClientMsg::SetRefiningReserve { system_id, ore, fuel } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) { self.pending.push(Command::SetRefiningReserve { player_id, system_id, ore, fuel }); }
@@ -1595,6 +1655,16 @@ impl GameLoop {
                             .push(Command::PayReinstatement { player_id, points });
                     }
                 }
+                ClientMsg::BuyLicence { hull } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::BuyLicence { player_id, hull });
+                    }
+                }
+                ClientMsg::BuyClaim { system } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::BuyClaim { player_id, system_id: system });
+                    }
+                }
                 ClientMsg::AnswerLevy { accept } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::AnswerLevy { player_id, accept });
@@ -1759,6 +1829,8 @@ impl GameLoop {
                     ship_kind,
                     join,
                     loadout,
+                    reactor,
+                    drive,
                 } => {
                     if let Some(player_id) = self.sessions.player_of(conn_id) {
                         self.pending.push(Command::BuildShip {
@@ -1767,7 +1839,14 @@ impl GameLoop {
                             ship_kind,
                             join,
                             loadout,
+                            reactor,
+                            drive,
                         });
+                    }
+                }
+                ClientMsg::RefitEngines { fleet_id, ship, reactor, drive, n } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::RefitEngines { player_id, fleet_id, ship, reactor, drive, n });
                     }
                 }
                 ClientMsg::BuildModule { system_id, module } => {
@@ -1794,44 +1873,6 @@ impl GameLoop {
                             from,
                             to,
                             n,
-                        });
-                    }
-                }
-                ClientMsg::TransferModules { from, to, manifest } => {
-                    if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::TransferModules {
-                            player_id,
-                            from,
-                            to,
-                            manifest,
-                        });
-                    }
-                }
-                ClientMsg::BuyModule {
-                    module,
-                    n,
-                    dest_system,
-                } => {
-                    if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::BuyModule {
-                            player_id,
-                            module,
-                            n,
-                            dest_system,
-                        });
-                    }
-                }
-                ClientMsg::SellModule {
-                    module,
-                    n,
-                    from_system,
-                } => {
-                    if let Some(player_id) = self.sessions.player_of(conn_id) {
-                        self.pending.push(Command::SellModule {
-                            player_id,
-                            module,
-                            n,
-                            from_system,
                         });
                     }
                 }
@@ -1891,6 +1932,11 @@ impl GameLoop {
                             body_id,
                             policy,
                         });
+                    }
+                }
+                ClientMsg::SetVeilPolicy { system_id, raise } => {
+                    if let Some(player_id) = self.sessions.player_of(conn_id) {
+                        self.pending.push(Command::SetVeilPolicy { player_id, system_id, raise });
                     }
                 }
                 ClientMsg::RelocateMigrants {
@@ -2042,6 +2088,8 @@ impl GameLoop {
             .collect();
         let systems_before = self.world.systems.len();
         let events = self.world.step(&commands);
+        #[cfg(test)]
+        self.tally_trade(&events);
         // A comet is emitted only after the sim has validated and scheduled the
         // command, so its id is the authoritative queue identity allocated at
         // `schedule_for_owner`. Do this before recording the post-step sample:
@@ -2505,10 +2553,45 @@ impl GameLoop {
                 &corp.surveyed,
                 &charted,
             );
+            // §migration-status: each own world's housing and liner status —
+            // the allocation pass's own gates over the arrived reports (the
+            // panel's picture), the corporation's research, and the Hub's
+            // timetable for its liners.
+            let migration_mods = self.world.migration_mods(player_id);
+            let migration_pick = self.world.migration_pick(player_id, &known_systems)
+                .map(|pick| (pick.system, pick.body));
+            let migration_due = self.world.migration_due_at(player_id);
+            let mut liners: BTreeMap<(sim::EntityId, u32), (u32, Option<f64>)> = BTreeMap::new();
+            for run in self.world.migrant_runs.values()
+                .filter(|run| run.owner == player_id && run.leg == sim::MigrantLeg::Outbound)
+            {
+                let (count, first) = liners.entry((run.dest, run.body)).or_default();
+                *count += 1;
+                // Whole seconds: a steady timetable keeps the panel's
+                // fingerprint steady between Views.
+                if let Some(at) = self.world.migrant_lands_at(run.fleet).map(f64::round) {
+                    *first = Some(first.map_or(at, |old| old.min(at)));
+                }
+            }
             // §syndicates Part 1: friendly ALLY tint on systems whose (light-gated
             // known) owner is a syndicate member as THIS viewer knows it. Composes
             // both light-gates; grants no owner-only data (Part 1 is tint only).
             for sv in systems.iter_mut() {
+                if sv.owner == Some(player_id)
+                    && let Some(report) = known_systems.iter().find(|s| s.id == sv.id)
+                {
+                    for body in sv.bodies.iter_mut() {
+                        let Some(b) = report.bodies.iter().find(|b| b.id == body.id) else { continue };
+                        let (count, lands_at) = liners.get(&(sv.id, body.id)).copied().unwrap_or_default();
+                        body.migration = Some(crate::protocol::MigrationView {
+                            housing: b.population_capacity() * migration_mods.housing,
+                            liners: count,
+                            lands_at,
+                            hold: sim::migration::candidate(report, b, migration_mods).err(),
+                            next_at: (migration_pick == Some((sv.id, body.id))).then_some(migration_due).flatten(),
+                        });
+                    }
+                }
                 if sv.owner == Some(player_id)
                     && let Some(report) = self.world.information.site(sv.id, cc, c, now)
                 {
@@ -2561,10 +2644,21 @@ impl GameLoop {
                     && let Some(sys) = known_systems.iter().find(|s| s.id == sv.id)
                     && sys.blockade.is_some_and(|b| b.by == player_id)
                 {
-                    let marines: u32 = ghosts.iter()
-                        .filter(|g| g.own && g.pos.distance(sys.pos) <= sim::transit::HYPERLIMIT)
-                        .map(|g| self.history.own_marines_at(player_id, g.id, now - g.age))
-                        .sum();
+                    // §veil: under a raised Veil only the Transports get down,
+                    // less the descent. Their own fleets are the viewer's own
+                    // knowledge, so the live count discloses nothing.
+                    let marines: u32 = if sys.veil_up {
+                        let level = sys.veil_level();
+                        self.world.fleets.values()
+                            .filter(|f| f.owner == player_id && f.pos.distance(sys.pos) <= sim::transit::HYPERLIMIT)
+                            .map(|f| sim::ground::through_veil(f.transport_marines(), level))
+                            .sum()
+                    } else {
+                        ghosts.iter()
+                            .filter(|g| g.own && g.pos.distance(sys.pos) <= sim::transit::HYPERLIMIT)
+                            .map(|g| self.history.own_marines_at(player_id, g.id, now - g.age))
+                            .sum()
+                    };
                     if marines > 0 {
                         let o = sim::ground::project_landing(
                             marines,
@@ -2884,6 +2978,8 @@ impl GameLoop {
                 shipment_cap: self.world.shipment_cap(player_id),
                 levy_frac: self.world.levy_frac(player_id),
                 squeeze: crate::protocol::SqueezeView::heard(&self.world, player_id, corp.command_center),
+                licences: crate::protocol::LicenceView::heard(&self.world, player_id, standing, now),
+                claims: crate::protocol::ClaimsView::heard(&self.world, player_id, standing, now),
             };
             // The programme may know an encounter has been assigned before the
             // privateer's own light reaches the CC. Do not put its true entity id
@@ -2898,11 +2994,11 @@ impl GameLoop {
                 recovery_site: corp.founding.recovery_site.filter(|id| self.world.exploration.sites.get(id).is_some_and(|s| s.known.contains_key(&player_id))),
                 recovered: corp.founding.recovery_report_at.is_some_and(|at| at <= now),
                 export_dispatched: corp.founding.export_dispatched_at.is_some_and(|at| at <= now),
+                export_departed_at: corp.founding.export_departed_at,
                 protected: corp.founding.protected(now),
                 protection_min_until: corp.founding.started_at
                     + sim::founding::FOUNDER_PROTECTION_MIN_S,
-                // When safety ends on its own (a day after completing the
-                // programme, within the ceiling), not merely the ceiling.
+                // When safety ends on its own: a flat day from founding.
                 protection_max_until: corp.founding.protection_until(),
                 expansion_unlocked: corp.founding.expansion_unlocked(),
                 interceptor: corp.founding.interceptor,
@@ -2939,12 +3035,17 @@ impl GameLoop {
                     .map(|(system, body)| crate::protocol::BeltTargetView { system, body }),
                 raid_seen: corp.founding.raid_seen_at.is_some_and(|at| at <= now),
                 raided: corp.founding.raid_report_at.is_some_and(|at| at <= now),
+                raid_over: crate::protocol::raid_over_heard(&self.world, player_id, now),
+                raid_lost: corp.founding.raid_lost_at.is_some_and(|at| at <= now),
                 land_grant_open: corp.founding.land_grant_open(),
                 charter_gates: sim::StructureKind::ALL.into_iter()
                     .filter(|kind| !corp.founding.allows(*kind))
                     .filter_map(|kind| Some((kind.slug(), sim::founding::charter_step(kind)?)))
                     .collect(),
-                den: corp.founding.den.filter(|_| corp.founding.privateer_report_at.is_some_and(|at| at <= now)),
+                // §den-retreat (Nov 12 2026): known as the hunt begins (he went
+                // home to it), or from his log if he died first.
+                den: corp.founding.den.filter(|_| corp.founding.stage.step() >= sim::FoundingStage::DefeatPrivateer.step()
+                    || corp.founding.privateer_report_at.is_some_and(|at| at <= now)),
                 den_cleared: corp.founding.den_report_at.is_some_and(|at| at <= now),
                 pirates: self.world.pirate_family(player_id).filter(|_| corp.founding.local_opening)
                     .map(|f| crate::protocol::PirateFamilyView {
@@ -2955,7 +3056,14 @@ impl GameLoop {
                         brother: f.brother_name(),
                     }),
                 trader: self.world.free_trader(player_id).slug,
+                advisor: charter_advisor(&self.galaxy_instance_id, self.world.config.seed, player_id),
                 privateer_last_seen: view::privateer_last_seen(&self.world, player_id, now),
+                stash: Some(self.world.founding_stash(player_id))
+                    .filter(|goods| !goods.is_empty() && corp.founding.local_opening
+                        && corp.founding.raid_report_at.is_some_and(|at| at <= now))
+                    .map(|goods| crate::protocol::StashView { goods, left: self.world.founding_stash_at_den(player_id),
+                        fleet: corp.founding.stash_fleet, home: corp.founding.stash_home_at.is_some_and(|at| at <= now) }),
+                den_wounded: corp.founding.den_wounded.iter().copied().collect(),
                 vendetta: corp.founding.vendetta.as_ref().filter(|v| v.sworn_at <= now).map(|v| {
                     crate::protocol::VendettaView {
                         depart_at: v.depart_at,
@@ -3800,6 +3908,7 @@ fn system_infos(world: &sim::World) -> Vec<SystemInfo> {
             name: s.name.clone(),
             band: world.band_of(s).slug(),
             claim_cost: s.claim_cost,
+            reserved: s.owner.is_none() && world.home_slots.iter().any(|h| h.system == Some(s.id)),
             exotic: world.exotic_bonus(s.id).is_some(),
         })
         .collect()
@@ -4077,11 +4186,12 @@ fn build_options() -> Vec<BuildOptionView> {
                         .map(|r| crate::protocol::ConversionRecipeView {
                             output: r.output, rate: r.rate, inputs: r.inputs.to_vec(), byproducts: r.byproducts().to_vec(),
                         }).collect(),
-                    // §fuel-overhaul: a Drive Works line makes Warp Cores or Fusion Cores,
-                    // picked by product with the same per-line field as the Smelter's ore.
-                    BuildKind::Upgrade { upgrade: sim::build::StructureKind::DriveWorks } => sim::production::CONVERTERS.iter()
-                        .filter(|c| c.structure == sim::build::StructureKind::DriveWorks)
-                        .chain(std::iter::once(&sim::production::FUSION_CORE_CONVERTER))
+                    // §shipbuilding-overhaul: a works with several products (the
+                    // Drive Works' cores and reactors, the Hull Fabricator's Cargo
+                    // Bays, the Semiconductor Fab's Nav Computers, the Armaments
+                    // Complex's guns) picks one per line with the Smelter's field.
+                    BuildKind::Upgrade { upgrade } if sim::production::products_of(upgrade).len() > 1 =>
+                        sim::production::products_of(upgrade).iter()
                         .map(|r| crate::protocol::ConversionRecipeView {
                             output: r.output, rate: r.rate, inputs: r.inputs.to_vec(), byproducts: r.byproducts().to_vec(),
                         }).collect(),
@@ -4091,6 +4201,7 @@ fn build_options() -> Vec<BuildOptionView> {
                     BuildKind::Upgrade { upgrade: StructureKind::AsteroidQuarry } => sim::build::QUARRY_UPKEEP_PER_TIER.to_vec(),
                     _ => Vec::new(),
                 },
+                earns: matches!(what, BuildKind::Upgrade { upgrade } if sim::build::earns(upgrade)),
             }
         })
         .collect()
@@ -4352,6 +4463,39 @@ mod tests {
     }
     use sim::Vec2;
 
+    /// §claims (v90): a claim shows at home once the Hub's grant has had time
+    /// to come back; the next price climbs ×1.6 for it. Home sites held for new
+    /// charters are marked, so no claim is offered on them.
+    #[test]
+    fn claims_are_heard_at_home_and_reserved_home_sites_are_marked() {
+        let mut world = World::new(sim::SimConfig::for_players(321, 4));
+        let me = PlayerId(1);
+        world.step(&[sim::Command::AddPlayer { id: me, name: "Claimant".into() }]);
+        let target = world.systems.iter()
+            .find(|s| s.owner.is_none() && !world.home_slots.iter().any(|h| h.system == Some(s.id)))
+            .unwrap().id;
+        let now = world.time;
+        world.players.get_mut(&me).unwrap().claims.insert(target,
+            sim::claims::Claim { bought_at: now, lapses_at: now + sim::claims::CLAIM_LAPSE_S });
+        let corp = &world.players[&me];
+        let receipt = sim::transit::delay(world.hub, corp.command_center, world.config.c);
+        let standing = corp.tca_standing;
+        let early = crate::protocol::ClaimsView::heard(&world, me, standing, now + receipt * 0.5);
+        assert!(early.held.is_empty(), "the grant's news is still on its way");
+        let heard = crate::protocol::ClaimsView::heard(&world, me, standing, now + receipt + 1.0);
+        assert_eq!(heard.held.iter().map(|c| c.system).collect::<Vec<_>>(), [target]);
+        assert!((heard.mult / early.mult - sim::claims::CLAIM_ESCALATION).abs() < 1e-9, "the next claim is ×1.6");
+        assert!(!heard.at_war && !heard.closed);
+        let infos = system_infos(&world);
+        let home = world.players[&me].home_system.unwrap();
+        assert!(!infos.iter().find(|s| s.id == home).unwrap().reserved, "an owned home is just owned");
+        let free_site = world.home_slots.iter().filter_map(|h| h.system)
+            .find(|id| world.systems.iter().any(|s| s.id == *id && s.owner.is_none()))
+            .expect("a free home site");
+        assert!(infos.iter().find(|s| s.id == free_site).unwrap().reserved, "a free home site is held for a new charter");
+        assert!(!infos.iter().find(|s| s.id == target).unwrap().reserved);
+    }
+
     #[test]
     fn command_centers_publish_three_exact_level_recipes_and_no_slot_requirement() {
         let options = build_options();
@@ -4393,7 +4537,8 @@ mod tests {
         let smelter = options.iter().find(|o| o.key == "smelter").unwrap();
         assert_eq!(smelter.refining_recipes.len(), sim::production::ORE_REFINING.len());
         assert_eq!(smelter.refining_recipes.len(), 11, "five planet ores, three belt ores and three pocket ores");
-        assert_eq!(smelter.research_prerequisite, Some("mat_enrichment"));
+        // §smelt-from-landing (Nov 6 2026): the colony smelts from the start.
+        assert_eq!(smelter.research_prerequisite, None);
         for (served, recipe) in smelter.refining_recipes.iter().zip(sim::production::ORE_REFINING) {
             assert_eq!(served.inputs, recipe.inputs);
             assert_eq!(served.byproducts, recipe.byproducts());
@@ -4401,8 +4546,15 @@ mod tests {
         }
         let drive = options.iter().find(|o| o.key == "drive_works").unwrap();
         assert_eq!(drive.refining_recipes.iter().map(|r| r.output).collect::<Vec<_>>(),
-            vec![sim::Commodity::WarpCore, sim::Commodity::FusionCore], "the Drive Works picks a core by product");
-        assert!(options.iter().filter(|o| o.key != "smelter" && o.key != "drive_works").all(|o| o.refining_recipes.is_empty()));
+            sim::production::DRIVE_WORKS_PRODUCTS.iter().map(|c| c.output).collect::<Vec<_>>(),
+            "the Drive Works picks a core or reactor by product");
+        let guns = options.iter().find(|o| o.key == "armaments_complex").unwrap();
+        assert_eq!(guns.refining_recipes.iter().map(|r| r.output).collect::<Vec<_>>(),
+            vec![sim::Commodity::Armaments, sim::Commodity::PulseLaser, sim::Commodity::BeamBattery,
+                sim::Commodity::Torpedoes, sim::Commodity::Slugs, sim::Commodity::BeamCrystals],
+            "§shipbuilding-overhaul Phase 5: the munitions join the Armaments Complex's lines");
+        let pickers = ["smelter", "drive_works", "hull_fabricator", "electronics_fabricator", "armaments_complex"];
+        assert!(options.iter().filter(|o| !pickers.contains(&o.key.as_str())).all(|o| o.refining_recipes.is_empty()));
     }
 
     #[test]
@@ -4470,6 +4622,54 @@ mod tests {
         assert_eq!(wallet.credits, treasury - paid, "and the wallet shows it at once");
     }
 
+    /// §migration-status: the home world's Population tab reads its housing
+    /// and why no liner is coming, then the liner's timetable once one is.
+    #[tokio::test]
+    async fn the_home_world_serves_its_housing_and_liner_status() {
+        let mut game = reporting_game(World::new(sim::SimConfig::for_players(804, 2)));
+        let name = "Settlers".to_string();
+        let owner = crate::protocol::player_id_from_name(&name);
+        let (outbound, _rx) = mpsc::channel(256);
+        let (view_tx, mut view_rx) = watch::channel(None);
+        let (replace_tx, _) = watch::channel(false);
+        game.handle_input(GameInput::Connect { conn_id: 1, player_id: owner, name, outbound, view_tx, replace_tx, view_divisor: 1 });
+        game.handle_input(GameInput::Intent { conn_id: 1, msg: ClientMsg::FoundColony });
+        for _ in 0..3 { game.tick(); }
+        let home = game.world.players[&owner].home_system.unwrap();
+        let body = game.world.systems.iter().find(|s| s.id == home).unwrap()
+            .bodies.iter().find(|b| b.population > 0.0).unwrap().id;
+        let mut served = |game: &mut GameLoop| {
+            for _ in 0..3 { game.tick(); }
+            game.broadcast();
+            let Some(ServerMsg::View { systems, .. }) = view_rx.borrow_and_update().clone() else { panic!("a view") };
+            systems.into_iter().find(|s| s.id == home).unwrap()
+                .bodies.into_iter().find(|b| b.id == body).unwrap().migration.expect("own world: a status")
+        };
+        // Landed with seven crews and no Habitat yet: no room.
+        let status = served(&mut game);
+        assert_eq!(status.hold, Some(sim::migration::MigrationHold::Housing));
+        assert_eq!((status.liners, status.lands_at), (0, None));
+
+        // A Habitat and Open immigration: the next liner is due here.
+        let sys = game.world.systems.iter_mut().find(|s| s.id == home).unwrap();
+        let b = sys.bodies.iter_mut().find(|b| b.id == body).unwrap();
+        b.set_tier(sim::StructureKind::Habitat, 1);
+        b.migration_policy = sim::MigrationPolicy::Open;
+        let housing = b.population_capacity();
+        let status = served(&mut game);
+        assert_eq!(status.housing, housing, "Habitat I, as the allocation reads it");
+        if status.liners == 0 {
+            assert_eq!(status.hold, None);
+            assert!(status.next_at.is_some(), "this world gets the next liner");
+        }
+        // Once allocated, the liner's timetable is served in whole seconds.
+        while game.world.migrant_runs.is_empty() { game.tick(); }
+        let status = served(&mut game);
+        assert_eq!(status.liners, 1);
+        let lands = status.lands_at.expect("a timetable");
+        assert!(lands > game.world.time && lands.fract() == 0.0, "{lands}");
+    }
+
     fn reporting_game(world: World) -> GameLoop {
         let (status, _) = watch::channel(ServerStatus::default());
         let (estimate, _) = mpsc::unbounded_channel();
@@ -4533,9 +4733,36 @@ mod tests {
         let tiers = research_view(&game.world, owner).structure_tiers;
         assert_eq!(tiers.len(), sim::StructureKind::ALL.len());
         assert_eq!(tiers["habitat"], 4, "levels V and VI wait for research");
-        assert_eq!(tiers["orbital_defense"], 1, "the Gun Platform is free; the Defense Platform waits for Fire Control");
-        assert_eq!(tiers["smelter"], 0, "the Smelter waits for Enrichment");
+        assert_eq!(tiers["orbital_defense"], 1, "the Laser Battery is free; the Defense Platform waits for Fire Control");
+        // §smelt-from-landing (Nov 6 2026): the Smelter needs no research.
+        assert_eq!(tiers["smelter"], 4, "the colony smelts from the start");
+        assert_eq!(tiers["chemical_works"], 0, "Chemical Works wait for Enrichment");
         assert_eq!(tiers["command_center"], 2);
+    }
+
+    #[test]
+    fn charter_advisors_are_dealt_stably_and_apart_from_the_home_world() {
+        use sim::settlement::FoundingProfile as P;
+        let game = reporting_game(World::new(sim::SimConfig::for_players(973, 2)));
+        let seed = game.world.config.seed;
+        let galaxy = game.galaxy_instance_id.clone();
+        let dealt: Vec<u8> = (1..=300).map(|id| charter_advisor(&galaxy, seed, PlayerId(id))).collect();
+        for officer in 0..3u8 {
+            let n = dealt.iter().filter(|&&a| a == officer).count();
+            assert!((60..=140).contains(&n), "officer {officer} dealt {n} times in 300: roughly a third each");
+        }
+        assert!(dealt.iter().all(|&a| a < 3));
+        assert_eq!(charter_advisor(&galaxy, seed, PlayerId(7)), charter_advisor(&galaxy, seed, PlayerId(7)),
+            "the same officer on reconnect and restart");
+        // Independent of the home world: every pairing of the two draws occurs.
+        let profile = |p: P| [P::MineralHighlands, P::VerdantLowlands, P::CoastalPlains].iter().position(|q| *q == p).unwrap();
+        let pairs: std::collections::BTreeSet<(usize, u8)> = (1..=300)
+            .map(|id| (profile(game.dealt_profile(PlayerId(id))), dealt[id as usize - 1])).collect();
+        assert_eq!(pairs.len(), 9, "the officer doesn't follow from the home world");
+        // A new galaxy instance or seed draws again.
+        let reset = format!("{galaxy}-reset");
+        assert!((1..=60).any(|id| charter_advisor(&reset, seed, PlayerId(id)) != dealt[id as usize - 1]));
+        assert!((1..=60).any(|id| charter_advisor(&galaxy, seed + 1, PlayerId(id)) != dealt[id as usize - 1]));
     }
 
     #[test]

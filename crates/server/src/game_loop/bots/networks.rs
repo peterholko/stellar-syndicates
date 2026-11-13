@@ -127,9 +127,10 @@ impl Bot {
                 let escort = p.own().find(|f| f.guard_target == Some(fleet.id));
                 let have = store(&economy);
                 if have < outbound + p.arrival_reserve(fleet)
-                    || dest.system.free_stock(regime_fuel(&economy)) < return_burn && have < outbound + return_burn + p.arrival_reserve(fleet)
+                    || dest.system.free_stock(regime_fuel(&economy)) * primary_grade(&economy).energy_per_unit() < return_burn
+                        && have < outbound + return_burn + p.arrival_reserve(fleet)
                     || escort.is_some_and(|g| {
-                        let (fuel, mult) = p.escort_burn(g, on_uranium(&economy));
+                        let (fuel, mult) = p.escort_burn(g, flies_slow(&economy));
                         fuel < p.fuel_per_mass(source.system.pos, dest.system.pos) * hull_mass(g) * mult * 2.0 + p.arrival_reserve(g)
                     }) { continue; }
                 let value = manifest.iter().map(|(&c, &n)| p.price(c) * n as f64).sum::<f64>()
@@ -144,7 +145,7 @@ impl Bot {
                 self.supply_dispatches.insert(fleet.id, SupplyDispatch { from: source.system.id, to: dest.system.id,
                     goods: manifest.clone(), until: p.now + p.round_trip(fleet.pos) });
                 self.status = "hauling a specialized colony's surplus to an actual shortage".into();
-                return Some(Command::SetFreightRoute { player_id: p.owner, fleet_id: fleet.id,
+                return Some(Command::SetFreightRoute { player_id: p.owner, fleet_id: fleet.id, revise: false,
                     route: Some(FreightRoute { name: "Inter-colony supply".into(), repeat: false,
                         shopping_budget: None,
                         transit: p.freight_transit(), fuel_reserve: p.arrival_reserve(fleet),
@@ -198,7 +199,7 @@ impl Bot {
                     self.economy_turn = index + 1;
                     return Some(match project.what {
                         BuildKind::Upgrade { upgrade } => Command::DevelopSystem { player_id: p.owner, system_id: site.system.id, upgrade, body_id: Some(project.body) },
-                        BuildKind::Ship { ship } => Command::BuildShip { player_id: p.owner, system_id: site.system.id, ship_kind: ship, join: None, loadout: Default::default() },
+                        BuildKind::Ship { ship } => Command::BuildShip { reactor: Default::default(), drive: Default::default(), player_id: p.owner, system_id: site.system.id, ship_kind: ship, join: None, loadout: Default::default() },
                         _ => continue,
                     });
                 }

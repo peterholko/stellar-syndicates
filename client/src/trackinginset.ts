@@ -47,6 +47,16 @@ export interface TrackingTarget {
   color: number;
 }
 
+/** §charter-advisor (Peter, Nov 9 2026: "During the pirate raid warning, can
+ * we add the advisor's portrait much larger integrated into the Pirate
+ * Warning with some text"): the Charter Advisor in a column of the raid's
+ * window, their face over their name and their line. */
+export interface TrackingVoice {
+  portrait: string;
+  name: string;
+  line: string;
+}
+
 /** The scene the inset draws: the tracking System View scene's camera. */
 export interface TrackingCamera {
   trackCamera(viewW: number, viewH: number, scale: number, focus: { x: number; y: number }, cut: boolean): void;
@@ -87,6 +97,13 @@ export const TRACKING_SCALE = 330;
 const BACKDROP = 0x05070d;
 /** How far the starfield drifts for the fleet's move (a share of the scene's). */
 const STAR_DRIFT = 0.25;
+/** §charter-advisor: the advisor's column on the raid window's left (px), its
+ * margin, and the Authority's gold for the face's frame and the name. */
+const VOICE_W = 176;
+const VOICE_PAD = 10;
+const VOICE_GOLD = 0xd4b46a;
+const VOICE_NAME = 0xe2c886;
+const VOICE_TEXT = 0xdce0e8;
 
 /** A tile of faint stars, seeded, so every session draws the same sky. */
 function starTile(): Texture | null {
@@ -142,6 +159,22 @@ export class TrackingInset {
   private readonly rocks = new Container();
   private readonly beam = new Graphics();
   private readonly rockTex = new Map<string, Texture | null>();
+  /// §charter-advisor: who speaks beside the raid's window, if anyone, and
+  /// their column: backdrop and face frame, face, name and line.
+  private voice: TrackingVoice | null = null;
+  private readonly voicePanel = new Graphics();
+  private readonly voiceFace = new Sprite();
+  private readonly voiceName = new Text({
+    text: "",
+    style: new TextStyle({ fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: "700", letterSpacing: 1,
+      fill: VOICE_NAME, wordWrap: true, wordWrapWidth: VOICE_W - 2 * VOICE_PAD }),
+  });
+  private readonly voiceLine = new Text({
+    text: "",
+    style: new TextStyle({ fontFamily: "ui-monospace, monospace", fontSize: 12, lineHeight: 16,
+      fill: VOICE_TEXT, wordWrap: true, wordWrapWidth: VOICE_W - 2 * VOICE_PAD }),
+  });
+  private readonly faceTex = new Map<string, Texture | null>();
 
   constructor() {
     this.root.eventMode = "none";
@@ -149,13 +182,22 @@ export class TrackingInset {
     this.pane.addChild(this.backdrop, this.rocks, this.view, this.beam, this.band);
     this.pane.mask = this.mask;
     this.note.visible = false;
-    this.root.addChild(this.pane, this.mask, this.frame, this.caption, this.note);
+    this.voicePanel.visible = this.voiceFace.visible = this.voiceName.visible = this.voiceLine.visible = false;
+    this.root.addChild(this.pane, this.mask, this.voicePanel, this.voiceFace, this.voiceName, this.voiceLine,
+      this.frame, this.caption, this.note);
   }
 
-  /** Whether a screen point lies on the inset while it is shown. */
+  /** Whether a screen point lies on the inset (and its advisor's column)
+   * while it is shown. */
   contains(x: number, y: number): boolean {
     const b = this.root.visible ? this.box : null;
-    return !!b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+    const left = b && this.voice ? b.x - VOICE_W : b?.x ?? 0;
+    return !!b && x >= left && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+  }
+
+  /** §charter-advisor: the advisor is on screen beside the raid's window. */
+  voiced(): boolean {
+    return this.root.visible && !!this.voice;
   }
 
   /** The inset's centre on screen (where its live 3D hull counts as drawn). */
@@ -167,14 +209,18 @@ export class TrackingInset {
   hide(): void {
     this.root.visible = false;
     this.id = null;
+    this.voice = null;
   }
 
   /** Before the tracking scene updates: frame its camera on the fleet. `seen`
    * is the fleet as last drawn (its hull length sets the magnification; a new
    * fleet starts from its place there). False when the map is too small to
-   * spare the inset. */
-  prepare(scene: TrackingCamera, id: string, seen: TrackingTarget, area: Rect, where: TrackingPlace = "corner"): boolean {
-    const box = this.place(area, where);
+   * spare the inset. A centred (raid) window can carry `voice` in a column on
+   * its left, the two centred together. */
+  prepare(scene: TrackingCamera, id: string, seen: TrackingTarget, area: Rect, where: TrackingPlace = "corner",
+    voice: TrackingVoice | null = null): boolean {
+    this.voice = where === "center" ? voice : null;
+    const box = this.place(area, where, !!this.voice);
     if (!box) {
       this.hide();
       return false;
@@ -235,8 +281,13 @@ export class TrackingInset {
       this.note.position.set(box.x + (box.w - this.note.width) / 2, box.y + box.h - NOTE_H + (NOTE_H - this.note.height) / 2);
     }
     this.mask.clear().roundRect(box.x, box.y, box.w, box.h, 6).fill(0xffffff);
-    this.frame.clear().roundRect(box.x + 0.5, box.y + 0.5, box.w - 1, box.h - 1, 6)
+    this.drawVoice(box);
+    // One frame round the window and the advisor's column, a rule between.
+    const left = this.voice ? box.x - VOICE_W : box.x;
+    this.frame.clear().roundRect(left + 0.5, box.y + 0.5, box.x + box.w - left - 1, box.h - 1, 6)
       .stroke({ width: 1, color: target.color, alpha: 0.75 });
+    if (this.voice) this.frame.moveTo(box.x + 0.5, box.y + 6).lineTo(box.x + 0.5, box.y + box.h - 6)
+      .stroke({ width: 1, color: target.color, alpha: 0.35 });
     const text = `◉ TRACKING · ${target.title}`;
     if (this.caption.text !== text) this.caption.text = text;
     this.caption.style.fill = target.color;
@@ -292,6 +343,51 @@ export class TrackingInset {
     }
   }
 
+  /** §charter-advisor: the advisor's column on the window's left: the face
+   * as large as the column allows, framed in gold, over their name and line. */
+  private drawVoice(box: Rect): void {
+    const v = this.voice;
+    this.voicePanel.clear();
+    this.voicePanel.visible = this.voiceName.visible = this.voiceLine.visible = !!v;
+    if (!v) {
+      this.voiceFace.visible = false;
+      return;
+    }
+    const x = box.x - VOICE_W;
+    const name = v.name.toUpperCase();
+    if (this.voiceName.text !== name) this.voiceName.text = name;
+    if (this.voiceLine.text !== v.line) this.voiceLine.text = v.line;
+    const words = this.voiceName.height + 4 + this.voiceLine.height;
+    const face = Math.round(Math.max(48, Math.min(VOICE_W - 2 * VOICE_PAD, box.h - 3 * VOICE_PAD - words)));
+    const fx = x + (VOICE_W - face) / 2;
+    const fy = box.y + VOICE_PAD;
+    this.voicePanel.roundRect(x, box.y, VOICE_W, box.h, 6).fill({ color: BACKDROP, alpha: 0.94 })
+      .roundRect(fx - 1.5, fy - 1.5, face + 3, face + 3, 6).stroke({ width: 1.5, color: VOICE_GOLD });
+    const tex = this.faceTexture(v.portrait);
+    this.voiceFace.visible = !!tex;
+    if (tex) {
+      this.voiceFace.texture = tex;
+      this.voiceFace.position.set(fx, fy);
+      this.voiceFace.width = this.voiceFace.height = face;
+    }
+    this.voiceName.position.set(x + VOICE_PAD, fy + face + VOICE_PAD);
+    this.voiceLine.position.set(x + VOICE_PAD, fy + face + VOICE_PAD + this.voiceName.height + 4);
+  }
+
+  /** §charter-advisor: start loading a face before its raid, so the
+   * warning never opens on an empty frame. */
+  preloadFace(url: string): void {
+    this.faceTexture(url);
+  }
+
+  private faceTexture(url: string): Texture | null {
+    if (!this.faceTex.has(url)) {
+      this.faceTex.set(url, null);
+      void Assets.load<Texture>(url).then((texture) => this.faceTex.set(url, texture)).catch(() => undefined);
+    }
+    return this.faceTex.get(url) ?? null;
+  }
+
   private rockTexture(url: string): Texture | null {
     if (!this.rockTex.has(url)) {
       this.rockTex.set(url, null);
@@ -301,13 +397,15 @@ export class TrackingInset {
   }
 
   /** The inset's place in a map area: its top-left corner, or centred just
-   * above the middle; nowhere when the map is too small to spare it. */
-  place(area: Rect, where: TrackingPlace): Rect | null {
+   * above the middle (with an advisor's column, the two centred together);
+   * nowhere when the map is too small to spare it. */
+  place(area: Rect, where: TrackingPlace, voiced = false): Rect | null {
     if (area.w < MIN_AREA_W || area.h < MIN_AREA_H) return null;
     const w = Math.round(Math.min(INSET_W, area.w * INSET_SHARE));
     const h = Math.round(w * INSET_ASPECT);
     if (where === "corner") return { x: Math.round(area.x + MARGIN), y: Math.round(area.y + MARGIN), w, h };
     const y = Math.max(area.y + MARGIN, area.y + area.h / 2 - CENTER_GAP - h);
-    return { x: Math.round(area.x + (area.w - w) / 2), y: Math.round(y), w, h };
+    const side = voiced ? VOICE_W : 0;
+    return { x: Math.round(area.x + (area.w - w - side) / 2 + side), y: Math.round(y), w, h };
   }
 }

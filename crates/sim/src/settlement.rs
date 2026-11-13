@@ -6,7 +6,11 @@ const HZ: u64 = crate::config::TICK_HZ as u64;
 /// Seconds of colony demand a camp keeps in Provisions + Biomass before its
 /// Bioharvesters pause. The 250-unit camp warehouse used to fill with food in
 /// about two minutes, which starved the mine and blocked the recovered cache.
-pub const CAMP_FOOD_RESERVE_S: f64 = 600.0;
+/// §progression (Nov 11 2026): people eat at `production::OUTPUT_SCALE`, so
+/// the reserve counts ten minutes at the tuned rate and keeps its units: at
+/// 600 s of today's demand it fell to the 40-unit floor, under the landing
+/// crate's 100 Provisions, and held the first Bioharvester from landing.
+pub const CAMP_FOOD_RESERVE_S: f64 = 600.0 / crate::production::OUTPUT_SCALE;
 /// Floor for the reserve, so a tiny population still keeps a real buffer.
 pub const CAMP_FOOD_RESERVE_MIN: f64 = 40.0;
 /// A held food line resumes once the reserve falls below this fraction.
@@ -27,11 +31,12 @@ pub enum FoundingProfile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// §habitat-rebase (Peter, Nov 1 2026): the camp's Permanent Quarters project
+/// is gone. Its Habitat I is a plain Habitat I, housing 8,000 a level.
 pub enum SettlementProject {
     Prospect,
     SurfaceWorkings,
     Storehouse,
-    Quarters,
 }
 
 impl SettlementProject {
@@ -40,7 +45,6 @@ impl SettlementProject {
             Self::Prospect => "camp_prospect",
             Self::SurfaceWorkings => "camp_workings",
             Self::Storehouse => "camp_storehouse",
-            Self::Quarters => "camp_quarters",
         }
     }
     pub fn recipe(self) -> &'static Recipe {
@@ -57,10 +61,6 @@ impl SettlementProject {
             Self::Storehouse => &Recipe {
                 costs: &[(Alloys, 7.0), (Machinery, 1.0)],
                 build_ticks: 90 * HZ,
-            },
-            Self::Quarters => &Recipe {
-                costs: &[(Alloys, 5.0), (Machinery, 1.0)],
-                build_ticks: 120 * HZ,
             },
         }
     }

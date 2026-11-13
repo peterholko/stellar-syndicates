@@ -1,0 +1,242 @@
+//! §balance (Peter, Nov 11 2026): the progression sheet. Income and costs,
+//! stage by stage from the charter's end to the season's end, from the sim's
+//! own numbers: recipes, base prices, the throughput ladder, a generated
+//! galaxy's deposits, claims, licences and research baskets. Rerun after any
+//! tuning:
+//!
+//! `PROGRESSION_SHEET_OUT=docs/balance/progression-sheet.md cargo test -p sim --lib progression_sheet -- --ignored --nocapture`
+//!
+//! Values are base prices. Income is extraction only (refining roughly
+//! doubles a metal's value). The stage assumptions are the `STAGES` table.
+use super::*;
+use crate::build::{recipe_for, recipe_for_tier, BuildKind, StructureKind as K};
+use crate::cargo::Commodity as C;
+use crate::market::base_price;
+use crate::production::tier_throughput as tt;
+use crate::research::{basket, tier_cost_secs, Field};
+use std::fmt::Write as _;
+
+/// One stage of the season: the empire a corporation growing colonies and
+/// research evenly has when the galaxy's maturity reaches it (`season::development`:
+/// half colonies of 8, half research of 50).
+struct Stage {
+    name: &'static str,
+    /// The time floor's latest day for it (`season::MATURITY_FLOOR_S`).
+    by_day: &'static str,
+    colonies: usize,
+    research: usize,
+    /// Extractor level on every working world (I–IV need no research; V–VI do).
+    mine_tier: u32,
+    /// A representative warship of the stage.
+    warship: ShipKind,
+    /// The research tier the stage works at (its next programme's cost).
+    research_tier: u8,
+}
+
+const STAGES: [Stage; 5] = [
+    Stage { name: "Charter end", by_day: "0", colonies: 0, research: 2, mine_tier: 1, warship: ShipKind::Raider, research_tier: 1 },
+    Stage { name: "Grip II · Levies (25%)", by_day: "17.5", colonies: 2, research: 12, mine_tier: 4, warship: ShipKind::Corvette, research_tier: 2 },
+    Stage { name: "Grip III · Inspections (45%)", by_day: "31.5", colonies: 4, research: 22, mine_tier: 4, warship: ShipKind::Destroyer, research_tier: 3 },
+    Stage { name: "Grip IV · Martial (65%)", by_day: "45.5", colonies: 5, research: 32, mine_tier: 5, warship: ShipKind::Cruiser, research_tier: 4 },
+    Stage { name: "Full maturity", by_day: "70", colonies: 8, research: 50, mine_tier: 6, warship: ShipKind::Battleship, research_tier: 5 },
+];
+
+fn value(costs: &[(C, f64)]) -> f64 {
+    costs.iter().map(|(c, n)| n * base_price(*c)).sum()
+}
+
+fn level_cost(kind: K, tier: u32) -> f64 {
+    value(&recipe_for_tier(BuildKind::Upgrade { upgrade: kind }, tier).costs)
+}
+
+fn ship_cost(kind: ShipKind) -> f64 {
+    value(recipe_for(BuildKind::Ship { ship: kind }).costs)
+}
+
+/// A research programme's goods at base prices, the field average.
+fn programme_cost(tier: u8) -> f64 {
+    let fields = [Field::Propulsion, Field::Materials, Field::Computation, Field::Weapons, Field::Hulls, Field::Life];
+    fields.iter().map(|&f| value(&basket(f, tier))).sum::<f64>() / fields.len() as f64 * tier_cost_secs(tier)
+}
+
+/// Programmes per tier (research.rs ladder), and the cheapest goods to finish
+/// `count` of them, lowest tiers first.
+const PROGRAMMES_PER_TIER: [usize; 8] = [23, 20, 24, 25, 25, 2, 1, 1];
+fn research_cost(count: usize) -> f64 {
+    let mut left = count;
+    let mut total = 0.0;
+    for (i, &n) in PROGRAMMES_PER_TIER.iter().enumerate() {
+        let take = left.min(n);
+        total += take as f64 * programme_cost(i as u8 + 1);
+        left -= take;
+        if left == 0 { break; }
+    }
+    total
+}
+
+/// A system's worked deposits: (value-rate Cr/s at level I, worlds that need an extractor).
+fn system_value(sys: &crate::galaxy::StarSystem) -> (f64, usize) {
+    let mut rate = 0.0;
+    let mut worlds = 0;
+    for b in &sys.bodies {
+        let r: f64 = b.deposits.iter().map(crate::galaxy::deposit_value_rate).sum::<f64>()
+            * crate::production::OUTPUT_SCALE;
+        if r > 0.0 {
+            rate += r;
+            worlds += 1;
+        }
+    }
+    (rate, worlds)
+}
+
+fn median(mut v: Vec<f64>) -> f64 {
+    if v.is_empty() { return 0.0; }
+    v.sort_by(|a, b| a.total_cmp(b));
+    v[v.len() / 2]
+}
+
+fn fmt(n: f64) -> String {
+    let r = n.round() as i64;
+    let s = r.abs().to_string();
+    let mut out = String::new();
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 { out.push(','); }
+        out.push(ch);
+    }
+    if r < 0 { format!("-{out}") } else { out }
+}
+
+fn hours(cost: f64, per_hour: f64) -> String {
+    if per_hour <= 0.0 { return "—".into(); }
+    let h = cost / per_hour;
+    if h < 1.0 { format!("{:.0} min", h * 60.0) } else if h < 48.0 { format!("{h:.1} h") } else { format!("{:.1} d", h / 24.0) }
+}
+
+#[test]
+#[ignore = "balance tool: prints the progression sheet"]
+fn progression_sheet() {
+    let mut out = String::new();
+    let standing = crate::tca::TCA_STANDING_START;
+    writeln!(out, "# Progression sheet\n").unwrap();
+    writeln!(out, "Generated by `crates/sim/src/world/progression_sheet.rs` from the sim's own numbers. Base prices; income is extraction only.\n").unwrap();
+
+    // ── 1. Payback per level ────────────────────────────────────────────────
+    writeln!(out, "## 1. What a level costs and what it returns\n").unwrap();
+    writeln!(out, "A Mining Complex works every deposit on its world. Reference: the home ore world's Ferrite (richness 0.45), {:.4} a second at level I ({:.2} Cr/s). A fed Smelter turns it into Alloys.\n",
+        0.45 * crate::production::OUTPUT_SCALE, 0.45 * crate::production::OUTPUT_SCALE * base_price(C::MetallicOre)).unwrap();
+    writeln!(out, "| Level | Mining Complex level cost | Ore Cr/h | Payback on the added ore | Smelter level cost | Alloys margin Cr/h (fed) | Payback |").unwrap();
+    writeln!(out, "|---|---|---|---|---|---|---|").unwrap();
+    let ferrite = 0.45 * crate::production::ore_bulk_ratio(C::MetallicOre) * base_price(C::MetallicOre)
+        * crate::production::OUTPUT_SCALE;
+    let smelt = &crate::production::ORE_REFINING[0];
+    let smelt_margin = smelt.rate * (base_price(smelt.output) - value(smelt.inputs));
+    for t in 1..=6u32 {
+        let added = tt(t) - tt(t - 1);
+        let mc = level_cost(K::MiningComplex, t);
+        let sm = level_cost(K::Smelter, t);
+        writeln!(out, "| {} | {} | {} | {} | {} | {} | {} |", ["I", "II", "III", "IV", "V", "VI"][t as usize - 1],
+            fmt(mc), fmt(ferrite * tt(t) * 3600.0), hours(mc, ferrite * added * 3600.0),
+            fmt(sm), fmt(smelt_margin * tt(t) * 3600.0), hours(sm, smelt_margin * added * 3600.0)).unwrap();
+    }
+
+    // ── 2. What colonies are worth ──────────────────────────────────────────
+    let w = World::new(SimConfig::for_players(12_648_430, 8));
+    let home_ids: Vec<EntityId> = w.home_slots.iter().filter_map(|h| h.system).collect();
+    let mut home_rates = Vec::new();
+    let mut home_worlds = Vec::new();
+    let mut ranked: Vec<Vec<(f64, usize, f64)>> = Vec::new(); // per home: (rate, worlds, claim cost), best first
+    for slot in &w.home_slots {
+        let Some(home) = slot.system.and_then(|id| w.systems.iter().find(|s| s.id == id)) else { continue };
+        let (r, n) = system_value(home);
+        home_rates.push(r);
+        home_worlds.push(n as f64);
+        let mut near: Vec<&crate::galaxy::StarSystem> = w.systems.iter()
+            .filter(|s| !home_ids.contains(&s.id) && s.bodies.iter().any(|b| b.habitable))
+            .collect();
+        near.sort_by(|a, b| a.pos.distance(slot.pos).total_cmp(&b.pos.distance(slot.pos)));
+        let mut picks: Vec<(f64, usize, f64)> = near.iter().take(12).map(|s| {
+            let (r, n) = system_value(s);
+            let deposits: Vec<crate::galaxy::Deposit> = s.bodies.iter().flat_map(|b| b.deposits.iter().cloned()).collect();
+            (r, n, crate::galaxy::claim_cost_for(&deposits))
+        }).collect();
+        picks.sort_by(|a, b| b.0.total_cmp(&a.0));
+        ranked.push(picks);
+    }
+    let colony_rate = |k: usize| median(ranked.iter().filter_map(|p| p.get(k).map(|x| x.0)).collect());
+    let colony_worlds = |k: usize| median(ranked.iter().filter_map(|p| p.get(k).map(|x| x.1 as f64)).collect());
+    let colony_claim = |k: usize| median(ranked.iter().filter_map(|p| p.get(k).map(|x| x.2)).collect());
+    let home_rate = median(home_rates);
+    let home_n = median(home_worlds);
+    writeln!(out, "\n## 2. What a system is worth\n").unwrap();
+    writeln!(out, "Median over the 8 homes of a generated galaxy (seed 12648430). A colony is the k-th best of the 12 nearest systems with a habitable world. Value-rate is Cr/s at level I, all deposits worked.\n").unwrap();
+    writeln!(out, "| System | Value-rate Cr/s | Ore Cr/h at level I | at IV | at VI | Worlds to work | Claim base Cr |").unwrap();
+    writeln!(out, "|---|---|---|---|---|---|---|").unwrap();
+    writeln!(out, "| Home | {:.1} | {} | {} | {} | {} | — |", home_rate, fmt(home_rate * 3600.0), fmt(home_rate * tt(4) * 3600.0), fmt(home_rate * tt(6) * 3600.0), home_n).unwrap();
+    for k in 0..8 {
+        let r = colony_rate(k);
+        writeln!(out, "| Colony {} | {:.1} | {} | {} | {} | {} | {} |", k + 1, r, fmt(r * 3600.0), fmt(r * tt(4) * 3600.0), fmt(r * tt(6) * 3600.0), colony_worlds(k), fmt(colony_claim(k))).unwrap();
+    }
+
+    // ── 3. Stage by stage ───────────────────────────────────────────────────
+    writeln!(out, "\n## 3. Stage by stage\n").unwrap();
+    writeln!(out, "Each stage's empire: home plus its best colonies, every working world's extractor at the stage's level, staffed, powered and fed. Upkeep is the Provisions its crews eat (one crew of 1,000 people a level).\n").unwrap();
+    writeln!(out, "| Stage | By day | Colonies | Research | Extractor level | People to crew it | Ore Cr/h | Crew food Cr/h | Net Cr/h |").unwrap();
+    writeln!(out, "|---|---|---|---|---|---|---|---|---|").unwrap();
+    let mut nets = Vec::new();
+    for s in &STAGES {
+        let rate = home_rate + (0..s.colonies).map(colony_rate).sum::<f64>();
+        let worlds = home_n + (0..s.colonies).map(colony_worlds).sum::<f64>();
+        let ore = rate * tt(s.mine_tier) * 3600.0;
+        let people = worlds * s.mine_tier as f64 * 1000.0;
+        let food = people * crate::colony::PROVISIONS_PER_PERSON_PER_S * base_price(C::Provisions) * 3600.0;
+        let net = ore - food;
+        nets.push(net);
+        writeln!(out, "| {} | {} | {} | {} | {} | {} | {} | {} | {} |", s.name, s.by_day, s.colonies, s.research,
+            ["I", "II", "III", "IV", "V", "VI"][s.mine_tier as usize - 1], fmt(people), fmt(ore), fmt(food), fmt(net)).unwrap();
+    }
+
+    writeln!(out, "\n### Hours of that stage's income to afford\n").unwrap();
+    writeln!(out, "| Stage | Next level on every working world | Next colony (claim + Colony Ship + start) | A programme at the stage's tier | All research to reach the stage | Stage warship (+ licence) | Interceptor |").unwrap();
+    writeln!(out, "|---|---|---|---|---|---|---|").unwrap();
+    for (i, s) in STAGES.iter().enumerate() {
+        let net = nets[i];
+        let worlds = home_n + (0..s.colonies).map(colony_worlds).sum::<f64>();
+        let next_level = if s.mine_tier < 6 { level_cost(K::MiningComplex, s.mine_tier + 1) * worlds } else { 0.0 };
+        let k = s.colonies;
+        let beyond = k;
+        let claim = crate::claims::price(colony_claim(k.min(7)), beyond, 0, standing);
+        let start = level_cost(K::PowerPlant, 1) + level_cost(K::MiningComplex, 1) + level_cost(K::Habitat, 1);
+        let colony = claim + ship_cost(ShipKind::Colony) + start;
+        let tier_of_next = s.research_tier;
+        let licence = if crate::licence::needs_licence(s.warship) { crate::licence::price(s.warship, standing) } else { 0.0 };
+        let warship = ship_cost(s.warship) + licence;
+        writeln!(out, "| {} | {} | {} | {} (tier {}) | {} | {} {} | {} |", s.name,
+            if s.mine_tier < 6 { format!("{} Cr · {}", fmt(next_level), hours(next_level, net)) } else { "—".into() },
+            format!("{} Cr · {}", fmt(colony), hours(colony, net)),
+            format!("{} Cr · {}", fmt(programme_cost(tier_of_next)), hours(programme_cost(tier_of_next), net)), tier_of_next,
+            format!("{} Cr · {}", fmt(research_cost(s.research)), hours(research_cost(s.research), net)),
+            format!("{:?} {} Cr ·", s.warship, fmt(warship)), hours(warship, net),
+            hours(ship_cost(ShipKind::Raider), net)).unwrap();
+    }
+
+    // ── 4. The cost ladders ─────────────────────────────────────────────────
+    writeln!(out, "\n## 4. The cost ladders\n").unwrap();
+    writeln!(out, "| Research tier | Programme goods Cr | Base time |").unwrap();
+    writeln!(out, "|---|---|---|").unwrap();
+    for t in 1..=8u8 {
+        writeln!(out, "| {} | {} | {:.0} h |", t, fmt(programme_cost(t)), tier_cost_secs(t) / 3600.0).unwrap();
+    }
+    writeln!(out, "\n| Hull | Goods Cr | Licence Cr |").unwrap();
+    writeln!(out, "|---|---|---|").unwrap();
+    for kind in [ShipKind::Raider, ShipKind::TinyFreighter, ShipKind::Corvette, ShipKind::SmallFreighter, ShipKind::Colony,
+        ShipKind::Convoy, ShipKind::Destroyer, ShipKind::LargeFreighter, ShipKind::Cruiser, ShipKind::HeavyFreighter,
+        ShipKind::Battleship, ShipKind::BulkFreighter, ShipKind::Dreadnought, ShipKind::Titan] {
+        let licence = if crate::licence::needs_licence(kind) { fmt(crate::licence::price(kind, standing)) } else { "—".into() };
+        writeln!(out, "| {:?} | {} | {} |", kind, fmt(ship_cost(kind)), licence).unwrap();
+    }
+
+    if let Ok(path) = std::env::var("PROGRESSION_SHEET_OUT") {
+        std::fs::write(&path, &out).expect("write the sheet");
+    }
+    println!("{out}");
+}

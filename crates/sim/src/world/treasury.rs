@@ -36,7 +36,6 @@ impl World {
             }
             Command::PlaceLimitOrder { side: Side::Buy, units, limit_price, .. } =>
                 *units as f64 * limit_price.max(0.0),
-            Command::BuyModule { module, n, .. } => self.module_buy_price(*module) * *n as f64 * margin,
             Command::HireSpecialist { .. } => crate::specialist::SPECIALIST_HIRE_COST,
             Command::PayReinstatement { player_id, points } => {
                 let standing = self.players.get(player_id)?.tca_standing;
@@ -45,6 +44,18 @@ impl World {
             }
             Command::RequestFuelRescue { fleet_id, .. } =>
                 self.fuel_rescue_cost(*fleet_id).map_or(0.0, |cost| cost * margin),
+            // §licences: the price at today's standing, with the margin for a
+            // standing that moves on the way; the change comes back.
+            Command::BuyLicence { player_id, hull } =>
+                crate::licence::price(*hull, self.standing_of(*player_id)) * margin,
+            // §claims: the price as reckoned at home (nothing about rivals'
+            // claims), with the margin; the change comes back.
+            Command::BuyClaim { player_id, system_id } => {
+                let corp = self.players.get(player_id)?;
+                let sys = self.systems.iter().find(|s| s.id == *system_id)?;
+                crate::claims::price(sys.claim_cost, self.colonies_beyond_home(*player_id), corp.claims.len(),
+                    self.standing_of(*player_id)) * margin
+            }
             // §season: arrears and credit requisitions leave with their payment.
             Command::PayArrears { player_id, commodity } => self.season.squeeze.get(player_id)?
                 .embargoes.get(commodity)?.arrears,
@@ -84,8 +95,11 @@ impl World {
             Command::RequestFuelRescue { fleet_id, .. } => events.push(Event::new(self.time, EventPayload::FuelRescueRejected {
                 owner, fleet: *fleet_id, reason: crate::tca::RescueRejectReason::CannotAfford { needed: payment, have },
             })),
-            Command::BuyModule { module, n, .. } => events.push(Event::new(self.time, EventPayload::PaymentRefused {
-                owner, what: format!("{n} {}", module.label()), cost: payment,
+            Command::BuyLicence { hull, .. } => events.push(Event::new(self.time, EventPayload::LicenceRefused {
+                owner, hull: *hull, reason: crate::licence::LicenceRefusal::CantAfford { cost: payment },
+            })),
+            Command::BuyClaim { system_id, .. } => events.push(Event::new(self.time, EventPayload::ClaimRefused {
+                owner, system: *system_id, reason: crate::claims::ClaimRefusal::CantAfford { cost: payment },
             })),
             _ => events.push(Event::new(self.time, EventPayload::PaymentRefused {
                 owner, what: "a specialist".into(), cost: payment,
@@ -174,7 +188,7 @@ impl World {
     pub(super) fn fuel_rescue_cost(&self, fleet_id: EntityId) -> Option<f64> {
         let fleet = self.fleets.get(&fleet_id)?;
         let fuel = self.fuel_rescue_package(fleet_id)?;
-        let commodity = if fleet.burns_uranium() { crate::fuel::FISSION_FUEL } else { crate::fuel::MOVEMENT_FUEL };
+        let commodity = fleet.thirstiest().map_or(crate::fuel::MOVEMENT_FUEL, |(c, _)| c);
         Some(crate::tca::TCA_RESCUE_SERVICE_FEE
             + fuel * self.market.price(commodity) * crate::tca::TCA_RESCUE_FUEL_PRICE_MULT)
     }
@@ -289,18 +303,5 @@ mod tests {
         spend(&mut w, 250.0);
         assert!(w.players[&owner].wires.is_empty());
         assert!((w.players[&owner].credits - (treasury - 50.0)).abs() < 1e-9, "the rest from the treasury");
-    }
-
-    #[test]
-    fn a_module_the_treasury_cannot_cover_is_refused_at_home_by_name() {
-        let (mut w, owner) = founder();
-        w.players.get_mut(&owner).unwrap().credits = 1.0;
-        let home = w.players[&owner].home_system.unwrap();
-        let events = w.step(&[Command::BuyModule {
-            player_id: owner, module: crate::module::ModuleKind::MassDriver, n: 2, dest_system: home,
-        }]);
-        assert!(events.iter().any(|e| matches!(&e.payload, EventPayload::PaymentRefused { what, .. } if what.starts_with("2 "))),
-            "a module purchase it can't pay for says so (it used to vanish at the Hub)");
-        assert_eq!(w.players[&owner].credits, 1.0);
     }
 }

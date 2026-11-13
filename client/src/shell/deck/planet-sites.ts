@@ -5,6 +5,9 @@ export const SITE_POOLS: readonly Pool[] = ["resource", "industrial", "infrastru
 export const isSitePool = (value: unknown): value is Pool => SITE_POOLS.includes(value as Pool);
 export interface PlanetSite { slot: number; pool: Pool; key?: string }
 type Layout = { sites: PlanetSite[]; preferred: Record<string, number> };
+/** Ground buildings that take no building slot: each keeps a footprint of its
+ * own without using up its pool's sites. */
+const SLOT_FREE: ReadonlySet<string> = new Set(["command_center", "power_plant", "orbital_defense"]);
 
 /** Cosmetic addresses only, never a construction ledger. The arrived report alone
  * decides occupancy and capacity. Save the layout like a panel preference so new
@@ -50,9 +53,12 @@ export class PlanetSites {
     if (!model.mine) return { occupied: [], free: [] };
     const layout = this.load(model), before = JSON.stringify(layout);
     const order = Object.keys(model.descriptions);
-    // An attachment, the underground Vault (§vault) and the Assembly Hall
-    // inside the Command Center (§season) take no ground site.
-    const offSite = (key: string) => key === "service_berth" || key === "vault" || key === "assembly_hall";
+    // An attachment, the underground Vault (§vault), the Assembly Hall
+    // inside the Command Center (§season) and a defense station in orbit
+    // (level 2 up; §laser-battery: level 1 stands on the ground) take no
+    // ground site.
+    const offSite = (key: string) => key === "service_berth" || key === "vault" || key === "assembly_hall" || key === "veil_projector"
+      || (key === "orbital_defense" && (model.body.structures.orbital_defense ?? 0) >= 2);
     const jobs = model.report.builds.filter(job => job.body_id === model.body.id && !offSite(job.key) && isSitePool(POOL_OF[job.key]));
     const known = new Set([...Object.keys(model.body.structures).filter(key => !offSite(key) && model.body.structures[key] > 0), ...jobs.map(job => job.key)]);
     // Orbital yards still consume their real industrial capacity, but must not
@@ -96,8 +102,9 @@ export class PlanetSites {
     for (const pool of SITE_POOLS) {
       // Growth reveals additional sites, never repositions old ones. Contraction
       // hides surplus empty sites without forgetting their addresses.
-      // Slot-free kinds (Command Center, §power plant) keep their own footprint.
-      while (layout.sites.filter(s => s.pool === pool && s.key !== "command_center" && s.key !== "power_plant").length < surfaceCapacity(pool)) {
+      // Slot-free kinds (Command Center, §power plant, §laser-battery) keep
+      // their own footprint.
+      while (layout.sites.filter(s => s.pool === pool && !SLOT_FREE.has(s.key ?? "")).length < surfaceCapacity(pool)) {
         if (!allocate(pool)) break;
       }
       free.push(...layout.sites.filter(s => s.pool === pool && !s.key).slice(0, Math.max(0, usage[pool].total - usage[pool].used)));

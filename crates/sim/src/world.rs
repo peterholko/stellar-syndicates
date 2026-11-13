@@ -29,6 +29,8 @@ use crate::syndicate::{Syndicate, syndicate_cap};
 use crate::tca::{FreightRun, FuelRescueRun, RescueLeg, RunLeg, Shipment, ShipmentDir, ShipmentId};
 
 mod followups;
+mod licences;
+mod claims;
 mod pirate_progression;
 mod pirate_prizes;
 mod exploration_sites;
@@ -64,6 +66,8 @@ mod merchants;
 mod treasury;
 mod settlement;
 mod charter_ledger;
+#[cfg(test)]
+mod progression_sheet;
 #[cfg(test)]
 mod warehouses;
 #[cfg(test)]
@@ -288,6 +292,15 @@ pub struct Corporation {
     /// charter.
     #[serde(default)]
     pub hideouts: PersonalHideouts,
+    /// §licences (docs/blueprint-licences.md): the hulls the Authority has
+    /// licensed this corporation to build, with when it sold each (the view
+    /// waits for the receipt's light). Every Orbital Shipyard and Capital
+    /// Slipway hull needs one; bought once, kept for good.
+    #[serde(default)]
+    pub licences: BTreeMap<ShipKind, f64>,
+    /// §claims: the Authority's claims held, by system (docs/scarcity-staples-plan.md).
+    #[serde(default)]
+    pub claims: BTreeMap<EntityId, crate::claims::Claim>,
 }
 
 /// §research-wiring Boarding Parties: a prize's hull and tank, as a share of
@@ -853,6 +866,13 @@ pub fn raid_exposed(sys: &crate::galaxy::StarSystem,
 {
     (sys.stockpile.get(&good).copied().unwrap_or(0.0) - reserve.get(&good).copied().unwrap_or(0.0)).max(0.0)
 }
+
+/// §hold-room: the goods raiders can reach here. A raider's hold is full when
+/// none of them fits (half a room unit is full for ore, not for Alloys).
+fn raid_goods(sys: &crate::galaxy::StarSystem) -> Vec<crate::cargo::Commodity> {
+    let reserve = raid_reserve(sys);
+    sys.stockpile.keys().copied().filter(|c| raid_exposed(sys, &reserve, *c) > 1e-9).collect()
+}
 /// §holds (Peter, Oct 27 2026: "force the player to bring along a freighter to
 /// loot"): goods only ride in holds. A warship has none, so a blockade carries
 /// off what its freighters hold. Pirate raiders are rigged for plunder and
@@ -878,7 +898,7 @@ const GARRISON_SIEGE_MULT: f64 = 0.30;
 /// stockpile. Troops eat. An UNFED garrison suspends — it stops stretching the
 /// clock and stops resisting a landing — but nothing is destroyed and it
 /// recovers the tick food returns (§5.1). Tunable.
-const GARRISON_UPKEEP_PER_TIER: f64 = 0.20;
+const GARRISON_UPKEEP_PER_TIER: f64 = 0.20 * crate::production::OUTPUT_SCALE;
 
 // --- §ground M6: BOMBARDMENT ---------------------------------------------------
 // Orbital supremacy cannot TAKE a colony in this design — population never
@@ -3210,6 +3230,7 @@ impl World {
         //     after raids so a colony ship killed at the doorstep never claims.
         //     Also where a besieging colony ship CAPTURES a strangled system (§Part 2).
         self.resolve_colony_arrivals(&mut events);
+        self.tick_claims(&mut events);
 
         // 4b'. §explore Part 2: run the SURVEY dwell clocks (after movement so
         //      positions are this tick's truth; after the combat passes so the
@@ -3236,7 +3257,6 @@ impl World {
 
         // 5. Resolve trade convoys that survived to their destination (§9).
         self.resolve_trade_arrivals(&mut events);
-        self.land_recovered_modules(&mut events);
 
         // 4a'''. §TCA Phase 2: the Authority's ENFORCEMENT brain — dispatch,
         //        station-keep, recall and stand down expeditions against proscribed
@@ -3395,6 +3415,12 @@ impl World {
         // attached to a fleet id that no longer exists.
         self.resolve_captain_lifecycle(&events);
 
+        // §stores-flows: what this tick's economy made and used, into each
+        // system's smoothed rates (the Stores panel's in, out and net).
+        for sys in &mut self.systems {
+            sys.fold_flows(DT);
+        }
+
         // 6. Advance the clock; drift the market on a slow cadence so the price
         //    information lag is visible, and clear the limit-order book on the
         //    batch cadence (the uniform-price call auction, §9).
@@ -3538,7 +3564,7 @@ impl World {
         let slow_snapshot: std::collections::BTreeSet<EntityId> = self
             .fleets
             .iter()
-            .filter(|(_, f)| f.burns_uranium())
+            .filter(|(_, f)| f.flies_slow())
             .map(|(id, _)| *id)
             .collect();
         // A direct Guard assignment follows its charge into a berth instead of
@@ -3591,7 +3617,9 @@ impl World {
         let env = crate::transit::TransitEnv { wells: &wells };
         let mut lost_target: Vec<(EntityId, bool)> = Vec::new(); // (fleet, was Guard)
         let mut ran_dry: Vec<(EntityId, PlayerId, f64)> = Vec::new();
-        let mut switched: Vec<(EntityId, PlayerId, crate::ship::TransitMode)> = Vec::new();
+        // §shipbuilding-overhaul: a dry tank holds the formation; nothing
+        // switches regime any more, so this stays empty.
+        let switched: Vec<(EntityId, PlayerId, crate::ship::TransitMode)> = Vec::new();
         let mut captain_fuel_mult = BTreeMap::new();
         for (owner, corp) in &self.players {
             for captain in corp.captains.values() {
@@ -3721,58 +3749,33 @@ impl World {
             if pirate_dens::pays_fuel(ship.owner)
                 && !matches!(ship.order, FleetOrder::Idle | FleetOrder::Jump { .. })
             {
-                let (fuel_speed, uranium, mult) = match formation_motion {
+                let (fuel_speed, slow) = match formation_motion {
                     Some((target_vel, target_drive, charge_slow)) => {
                         let factor = match target_drive.regime() {
                             crate::transit::Regime::Thrusters => 1.0,
                             crate::transit::Regime::Warp => crate::transit::WARP_FACTOR,
                         };
-                        let (uranium, mult) = ship.formation_burn(charge_slow);
-                        (target_vel.length() / factor, uranium, mult)
+                        (target_vel.length() / factor, ship.formation_burn(charge_slow).0)
                     }
-                    None => (ship.transit_speed(), ship.burns_uranium(), ship.propulsion_fuel_mult()),
+                    None => (ship.transit_speed(), ship.flies_slow()),
                 };
-                let tick = crate::fuel::fuel_tick(ship.mass(), fuel_speed, DT)
+                let base = crate::fuel::fuel_tick(ship.mass(), fuel_speed, DT)
                     * captain_fuel_mult.get(id).copied().unwrap_or(1.0);
-                let cost = tick * mult;
-                let store = if uranium { ship.uranium } else { ship.fuel };
-                if store + 1e-9 < cost {
-                    // Switch to the other store before stalling. A fleet under
-                    // its own orders changes regime (and speed) with a notice;
-                    // an escort keeps formation and pays from the other store.
-                    let other = if uranium {
-                        (ship.fuel > 1e-9).then(|| ship.formation_burn(false).1)
-                    } else {
-                        (ship.can_slow() && ship.uranium > 1e-9)
-                            .then(|| crate::fuel::SLOW_FUEL_MULT * ship.fuel_research.consumption)
-                    };
-                    match (other, formation_motion.is_some()) {
-                        (Some(_), false) => {
-                            let to = if uranium {
-                                crate::ship::TransitMode::Full
-                            } else {
-                                crate::ship::TransitMode::Slow
-                            };
-                            ship.transit = to;
-                            switched.push((*id, ship.owner, to));
-                            continue; // pays from the new store next tick
-                        }
-                        (Some(alt), true) if (if uranium { ship.fuel } else { ship.uranium }) + 1e-9 >= tick * alt => {
-                            if uranium { ship.burn_fusion(tick * alt) } else { ship.uranium -= tick * alt }
-                            ship.stalled = false;
-                        }
-                        _ => {
-                            ship.vel = Vec2::ZERO;
-                            if !ship.stalled {
-                                ship.stalled = true;
-                                ran_dry.push((*id, ship.owner, cost));
-                            }
-                            continue; // dry: holds position, keeps its guns, waits for a tanker
-                        }
-                    }
-                } else {
-                    if uranium { ship.uranium -= cost } else { ship.burn_fusion(cost) }
+                // §shipbuilding-overhaul: every hull pays its mass share of the
+                // tick from its own core's fuel, and the fleet moves only when
+                // every tank aboard can pay. A dry tank holds the whole formation.
+                let units = ship.burn_units(base, slow);
+                if ship.can_pay(&units) {
+                    ship.pay(&units);
                     ship.stalled = false;
+                } else {
+                    ship.vel = Vec2::ZERO;
+                    if !ship.stalled {
+                        ship.stalled = true;
+                        let cost: f64 = units.iter().map(|(_, u)| u).sum();
+                        ran_dry.push((*id, ship.owner, cost));
+                    }
+                    continue; // dry: holds position, keeps its guns, waits for a tanker
                 }
             }
             // Intercept (raid-commit), Attack (destroy), and Guard all solve a
@@ -3990,10 +3993,14 @@ impl World {
                 .get(&id)
                 .and_then(|s| self.players.get(&s.owner))
                 .map(|c| c.home);
+            // §return-home (Peter, Nov 5 2026: "a step for the player to click
+            // Return to Home ... instead of automatically after defeating the
+            // Pirate Den"): a founder's den won, its victor holds there.
+            let at_den = self.fleets.get(&id).is_some_and(|s| self.at_founder_den(s.pos));
             if let Some(ship) = self.fleets.get_mut(&id) {
                 if let Some(def) = ship.defense.take() {
                     ship.order = resume_defense(def);
-                } else if was_guard {
+                } else if was_guard || at_den {
                     // The named friendly fleet no longer exists. A standing
                     // guard has no substitute target; hold here for reassignment
                     // instead of silently choosing another fleet or going home.
@@ -4878,17 +4885,6 @@ impl World {
                         },
                     ));
                 }
-                // §modules Part B3: crates aboard go down with the ship, same rule.
-                if !f.modules.is_empty() {
-                    lost.push(Event::new(
-                        self.time,
-                        EventPayload::ModulesLost {
-                            owner: f.owner,
-                            manifest: f.modules.clone(),
-                            pos: f.pos,
-                        },
-                    ));
-                }
                 wrecked.push((*id, f.pos));
                 false
             } else {
@@ -5717,6 +5713,14 @@ impl World {
             let missions = attackers.iter().chain(defenders.iter()).filter_map(|id|
                 self.fleets.get(id).map(|f| (*id, f.mission_profile))).collect();
             self.battle_records.get_mut(eid).unwrap().sync_missions(self.tick, &mut tac, missions);
+            // §shipbuilding-overhaul Phase 5: each player fleet's magazines as
+            // they stand this tick (rules v17); NPC fleets carry none.
+            let magazines: BTreeMap<EntityId, crate::munitions::Magazine> = attackers.iter().chain(defenders.iter())
+                .filter_map(|id| self.fleets.get(id)
+                    .filter(|f| pirate_dens::pays_fuel(f.owner) && f.has_magazines())
+                    .map(|f| (*id, f.magazine())))
+                .collect();
+            self.battle_records.get_mut(eid).unwrap().sync_magazines(self.tick, &mut tac, magazines);
             let mut la = crate::combat::Losses::default();
             let mut lb = crate::combat::Losses::default();
             if scouts[0] > 0 {
@@ -5902,6 +5906,13 @@ impl World {
                     && let Some(sh) = f.ships.iter_mut().find(|s| s.id == ship_id)
                 {
                     sh.hp = hp;
+                }
+            }
+            // §shipbuilding-overhaul Phase 5: what the magazines hold after the
+            // round goes home with the damage.
+            for (fleet, magazine) in tac.magazines().clone() {
+                if let Some(f) = self.fleets.get_mut(&fleet) {
+                    f.apply_magazine(&magazine);
                 }
             }
             for (side, site) in [attacker_platform_system, platform_system].into_iter().enumerate() {
@@ -6234,8 +6245,8 @@ impl World {
             outcome, pos: e.pos, attacker_losses, target_losses,
         }));
         // §research-wiring Salvage Rigs: a side still on the field hauls a
-        // quarter of the enemy's wrecked modules into its freighters' crate
-        // berths; what finds no berth stays in the wrecks.
+        // quarter of the enemy's wrecked modules into its holds (§modules-as-
+        // goods: cargo like any other); what finds no room stays in the wrecks.
         for (side, owner, members, here) in [(0usize, e.a_owner, &e.attackers, !a_now.is_empty()),
             (1, e.d_owner, &e.defenders, !d_now.is_empty())]
         {
@@ -6252,15 +6263,13 @@ impl World {
             let mut hauled: BTreeMap<EntityId, Vec<(crate::module::ModuleKind, u32)>> = BTreeMap::new();
             for id in members.iter() {
                 let Some(f) = self.fleets.get_mut(id) else { continue };
-                let mut room = (f.freighter_count() * crate::module::MODULE_CONVOY_BERTHS)
-                    .saturating_sub(f.modules.values().sum::<u32>());
+                let mut room = f.cargo_room();
                 for (m, n) in salvage.iter_mut() {
-                    let take = (*n).min(room);
+                    let take = room.take(m.good(), *n);
                     if take > 0 {
-                        *f.modules.entry(*m).or_insert(0) += take;
+                        f.add_cargo(m.good(), take);
                         hauled.entry(*id).or_default().push((*m, take));
                         *n -= take;
-                        room -= take;
                     }
                 }
             }
@@ -6268,7 +6277,7 @@ impl World {
             for (fleet, modules) in hauled {
                 events.push(Event::new(now, EventPayload::WrecksSalvaged { owner, fleet, modules, left, pos: e.pos }));
             }
-            if left > 0 && !members.iter().any(|id| self.fleets.get(id).is_some_and(|f| f.freighter_count() > 0)) {
+            if left > 0 && !members.iter().any(|id| self.fleets.get(id).is_some_and(|f| f.cargo_capacity() > 0)) {
                 events.push(Event::new(now, EventPayload::WrecksSalvaged {
                     owner, fleet: members[0], modules: Vec::new(), left, pos: e.pos,
                 }));
@@ -6354,6 +6363,18 @@ impl World {
                     }
                     continue;
                 }
+                // §return-home (Peter, Nov 5 2026: "a step for the player to
+                // click Return to Home ... instead of automatically after
+                // defeating the Pirate Den"): a founder's den won, its victor
+                // holds there until ordered home.
+                if !e.a_fled && !d_alive && e.platform_system
+                    .and_then(|sid| self.enclaves.get(&sid)).is_some_and(|den| den.founder_den)
+                {
+                    if let Some(f) = self.fleets.get_mut(aid) {
+                        f.order = FleetOrder::Idle;
+                    }
+                    continue;
+                }
                 self.send_ship_home(*aid, e.a_owner);
             }
         }
@@ -6433,7 +6454,9 @@ impl World {
             let FleetOrder::Blockade { system, raid: true, .. } = f.order else { continue };
             let Some(sys) = self.systems.iter().find(|s| s.id == system) else { continue };
             let held = held_systems.contains(&system) && sys.blockade.is_some_and(|b| b.by == f.owner);
-            let full = plunder_capacity(f) <= f.cargo_units();
+            let room = f.room_under(plunder_capacity(f));
+            let goods = raid_goods(sys);
+            let full = room.is_full() || (!goods.is_empty() && !room.fits_any(goods));
             let contested = f.raid_looted && !held;
             let emptied = held && {
                 let reserve = raid_reserve(sys);
@@ -7091,7 +7114,7 @@ impl World {
         let hub = self.hub;
         // Owned defense platforms — pirates AVOID these (enclaves are excluded: their
         // defense_tier sits on an UNOWNED system). §gun-platform: a station
-        // with a hardpoint firing counts, from the charter's Gun Platform up.
+        // with a hardpoint firing counts, from the charter's Laser Battery up.
         let platforms: Vec<(Vec2, f64)> = self
             .systems
             .iter()
@@ -7134,14 +7157,17 @@ impl World {
             })
             .map(|(id, f)| (*id, f.pos))
             .collect();
+        // §den-in-belt: a base is where its pack holds (a belt's den, a
+        // world's base), so its assault is fought there; the star only while
+        // the pack is away or gone.
         let epos: BTreeMap<EntityId, Vec2> = self
             .enclaves
-            .keys()
-            .filter_map(|sid| {
-                self.systems
-                    .iter()
-                    .find(|s| s.id == *sid)
-                    .map(|s| (*sid, s.pos))
+            .iter()
+            .filter_map(|(sid, e)| {
+                let star = self.systems.iter().find(|s| s.id == *sid)?.pos;
+                let held = e.pack.and_then(|pack| self.fleets.get(&pack)).map(|f| f.pos)
+                    .filter(|p| p.distance(star) <= crate::transit::HYPERLIMIT);
+                Some((*sid, held.unwrap_or(star)))
             })
             .collect();
         let contested: std::collections::BTreeSet<EntityId> = self
@@ -7207,7 +7233,17 @@ impl World {
                         pirate::base_defense_tiers(tier) * pirate::HIDEOUT_WRECK_ALLOYS_PER_TIER;
                 }
                 if let Some(v) = victor {
-                    self.offer_site_plunder(v, sid, base_pos, &plunder, events);
+                    // §stash (Nov 2 2026): the founder's own den keeps what the
+                    // raid took for the charter's first Tiny Freighter, not
+                    // for a salvage contract.
+                    let stash = self.enclaves[&sid].founder_den && self.players.get(&v).is_some_and(|c|
+                        c.founding.enabled && c.founding.local_opening && c.founding.den == Some(sid));
+                    if stash {
+                        self.players.get_mut(&v).unwrap().founding.stash =
+                            plunder.iter().filter(|(_, n)| **n > 0).map(|(c, n)| (*c, *n)).collect();
+                    } else {
+                        self.offer_site_plunder(v, sid, base_pos, &plunder, events);
+                    }
                     self.offer_pirate_prize(v, sid, tier, base_pos, events);
                     // §captain-gear (R14): a cleared site's cache holds gear:
                     // a relic at a depot or stronghold, often field kit at a
@@ -7995,6 +8031,7 @@ impl World {
                 let fed = have + 1e-12 >= upkeep;
                 if fed {
                     *sys.stockpile.entry(prov).or_insert(0.0) -= upkeep;
+                    sys.tally_used(prov, upkeep);
                 }
                 fed
             };
@@ -8245,6 +8282,10 @@ impl World {
             })
             .collect();
         let mut raid_aggressions: Vec<(PlayerId, PlayerId, Vec2)> = Vec::new();
+        // §veil: HELD war blockades — the only thing a Veil rises against. A
+        // raid (the Raid order, a pirate home raid) is theft, not a siege; the
+        // Veil takes time to ionise and a raid is gone before it would matter.
+        let mut veil_candidates: std::collections::BTreeSet<EntityId> = std::collections::BTreeSet::new();
         for sys in &mut self.systems {
             let Some(st) = stations.get(&sys.id) else {
                 // No blockader on station: lift whatever stood here.
@@ -8277,6 +8318,10 @@ impl World {
             // §raid-order: a raid is theft, not conquest — it never runs the
             // capture clock.
             let raiding = crew.iter().filter(|(_, o, _, _)| *o == by).all(|(_, _, _, raid)| *raid);
+            let home_raid = crew.iter().any(|(f, o, _, _)| *o == by && self.pirate_home_raids.contains_key(f));
+            if held && !raiding && !home_raid {
+                veil_candidates.insert(sys.id);
+            }
             let siege_ok = held && !st.home && !raiding;
             let (owner, system, pos) = (st.owner, sys.id, sys.pos);
             match sys.blockade {
@@ -8340,6 +8385,11 @@ impl World {
             self.record_neutral_aggression(by, owner, pos, events);
         }
 
+        // --- 2a. §veil: raise or drop each system's Veil against this tick's
+        //         held blockades, burning the reactor fuel it takes. Before
+        //         plunder, which a raised Veil stops.
+        self.resolve_veil(&veil_candidates, events);
+
         // --- 2b. §plunder: an established blockade STRIPS the stockpile it is
         //         strangling. The goods go into the blockader's own hold, so they
         //         still have to be carried home across contested space — the
@@ -8350,8 +8400,11 @@ impl World {
         let plunder_targets: Vec<(EntityId, EntityId)> = on_station
             .iter()
             .filter(|(sid, _)| held_systems.contains(sid))
+            // §veil: nothing loads through a raised Veil.
+            .filter(|(sid, _)| !self.systems.iter().any(|s| s.id == **sid && s.veil_up))
             .filter_map(|(sid, bs)| {
-                let by = self.systems.iter().find(|s| s.id == *sid)?.blockade?.by;
+                let sys = self.systems.iter().find(|s| s.id == *sid)?;
+                let by = sys.blockade?.by;
                 if by.is_tca() {
                     return None;
                 }
@@ -8367,8 +8420,10 @@ impl World {
                 if self.pirate_home_raids.contains_key(&first) {
                     return Some((*sid, first));
                 }
+                // §hold-room: until no good in reach fits.
+                let goods = raid_goods(sys);
                 mine.into_iter()
-                    .find(|b| self.fleets.get(b).is_some_and(|f| plunder_capacity(f) > f.cargo_units()))
+                    .find(|b| self.fleets.get(b).is_some_and(|f| f.room_under(plunder_capacity(f)).fits_any(goods.iter().copied())))
                     .map(|b| (*sid, b))
             })
             .collect();
@@ -8386,21 +8441,22 @@ impl World {
             };
             // §research-wiring Prize Holds: a prize crew strips faster.
             let steal = self.research_mod(f.owner, crate::research::ModKey::RaidSteal);
-            let room = plunder_capacity(f).saturating_sub(f.cargo_units());
+            let hold = f.room_under(plunder_capacity(f));
             // §player-styles: corporations' takings count against the
             // victim's daily cap; pirates keep their own limits.
             let corporate = !f.owner.is_pirate() && !f.owner.is_tca();
-            if room == 0 {
+            if hold.is_full() {
                 continue; // full — the prize crew has all it can carry
             }
             // Take the MOST VALUABLE good raiders can reach (deterministic:
             // price desc, then the wire slug). §vault: the rations and the
-            // Vaults' goods are out of reach.
+            // Vaults' goods are out of reach. §hold-room: of the goods that
+            // still fit.
             let reserve = raid_reserve(sys);
             let pick = sys
                 .stockpile
                 .iter()
-                .filter(|(c, _)| raid_exposed(sys, &reserve, **c) > 1e-9)
+                .filter(|(c, _)| raid_exposed(sys, &reserve, **c) > 1e-9 && hold.fits(**c) > 0)
                 .max_by(|a, b| {
                     crate::market::base_price(*a.0)
                         .partial_cmp(&crate::market::base_price(*b.0))
@@ -8414,6 +8470,7 @@ impl World {
             // Bounded four ways: the tick's rate, the hold's room, what lies
             // out of the Vault's reach, and the victim's daily loot cap
             // (§player-styles).
+            let room = hold.fits(commodity);
             let take = (PLUNDER_UNITS_PER_SEC * steal * DT)
                 .min(room as f64)
                 .min(stock - reserve.get(&commodity).copied().unwrap_or(0.0))
@@ -8561,17 +8618,16 @@ impl World {
             return;
         }
         let (added, removed) = crate::station::fit_delta(&from, fit);
-        if added.iter().any(|(k, n)| sys.modules.get(k).copied().unwrap_or(0) < *n) {
+        if added.iter().any(|(k, n)| sys.module_stock(*k) < *n) {
             events.push(Event::new(now, EventPayload::IndustryRejected { owner: player_id, system: system_id,
-                reason: "not enough module crates at the system for that fit".into() }));
+                reason: "not enough modules at the system for that fit".into() }));
             return;
         }
         for (k, n) in added {
-            let left = sys.modules.get(&k).copied().unwrap_or(0) - n;
-            if left == 0 { sys.modules.remove(&k); } else { sys.modules.insert(k, left); }
+            sys.take_modules(k, n);
         }
         for (k, n) in removed {
-            *sys.modules.entry(k).or_insert(0) += n;
+            sys.put_modules(k, n);
         }
         sys.mounts[usize::from(mount)].fit = fit.key();
         events.push(Event::new(now, EventPayload::StationRefitted { owner: player_id, system: system_id, mount, fit: fit.key() }));
@@ -9306,13 +9362,12 @@ impl World {
             | FitStation { player_id, system_id, .. }
             | SetAssignment { player_id, system_id, .. }
             | SetMigrationPolicy { player_id, system_id, .. }
+            | SetVeilPolicy { player_id, system_id, .. }
             | TrainSpecialist { player_id, system_id, .. }
             | RecruitCaptain { player_id, system_id }
             | ShipProduction { player_id, system_id } => system(*player_id, *system_id),
-            TransferModules { player_id, from, .. }
-            | TransferSpecialists { player_id, from, .. } => system(*player_id, *from),
-            SellModule { player_id, from_system, .. }
-            | RelocateMigrants { player_id, from_system, .. } => system(*player_id, *from_system),
+            TransferSpecialists { player_id, from, .. } => system(*player_id, *from),
+            RelocateMigrants { player_id, from_system, .. } => system(*player_id, *from_system),
             BookFreightIn { player_id, system: id, .. } => system(*player_id, *id),
             MerchantTrade { player_id, .. } => self.merchants.values()
                 .find(|v| v.customer == *player_id).and_then(|v| system(*player_id, v.system)),
@@ -9324,9 +9379,10 @@ impl World {
             | PlaceLimitOrder { player_id, .. } | CancelLimitOrder { player_id, .. }
             | BookFreightOut { player_id, .. } | StockSystem { player_id, .. }
             | SetDepotRule { player_id, .. }
-            | BuyModule { player_id, .. } | HireSpecialist { player_id, .. }
+            | HireSpecialist { player_id, .. }
             | PayReinstatement { player_id, .. } | RequestFuelRescue { player_id, .. }
             | AnswerLevy { player_id, .. } | PayArrears { player_id, .. } | AnswerRequisition { player_id, .. }
+            | BuyLicence { player_id, .. } | BuyClaim { player_id, .. }
                 => Some((*player_id, self.hub)),
             FeedKeystone { player_id, system_id, .. } => system(*player_id, *system_id),
             _ => None,
@@ -9384,7 +9440,8 @@ impl World {
                     s.industry.refining_reserve.insert(crate::Commodity::Deuterium, *fuel);
                 }
             }
-            Command::SetFreightRoute { player_id, fleet_id, route } => self.set_freight_route(*player_id, *fleet_id, route.clone(), events),
+            Command::SetFreightRoute { player_id, fleet_id, route, revise } =>
+                self.assign_freight_route(*player_id, *fleet_id, route.clone(), *revise, events),
             Command::DeployOutpost { player_id, fleet_id, system_id, body_id, outpost, commodity } =>
                 self.deploy_outpost(*player_id, *fleet_id, *system_id, *body_id, *outpost, *commodity, events),
             Command::SkimFuel { player_id, fleet_id, system_id } => self.start_skimming(*player_id, *fleet_id, *system_id, events),
@@ -9955,6 +10012,12 @@ impl World {
                     );
                     return;
                 }
+                // §reactors-drives: the Hub sells no reactor, drive or fuel
+                // the corporation has not researched (the client hides them).
+                if !self.good_known(*player_id, *commodity) {
+                    self.reject_trade(events, *player_id, *commodity, units, None, TradeRejectReason::ResearchRequired);
+                    return;
+                }
                 let available = self.market.available_to_buy(*commodity);
                 if units > available {
                     self.reject_trade(
@@ -10220,7 +10283,7 @@ impl World {
                 }
                 if let Some(f) = self.fleets.get_mut(fleet_id)
                     && f.owner == *player_id
-                    && (!f.cargo_is_empty() || !f.modules.is_empty())
+                    && !f.cargo_is_empty()
                 {
                     f.mission = Some(TradeMission::DeliverToSystem { system: *system });
                     f.order = FleetOrder::MoveTo { dest };
@@ -10232,6 +10295,8 @@ impl World {
             } => {
                 self.request_fuel_rescue(*player_id, *fleet_id, events);
             }
+            Command::BuyLicence { player_id, hull } => self.buy_licence(*player_id, *hull, events),
+            Command::BuyClaim { player_id, system_id } => self.buy_claim(*player_id, *system_id, events),
             Command::PayReinstatement { player_id, points } => {
                 // §TCA Phase 2: buy standing back. INSTANT, like its `MarketBuy` /
                 // `BookFreightOut` siblings — paying the Market Hub is a
@@ -10600,16 +10665,23 @@ impl World {
                 ship_kind,
                 join,
                 loadout,
+                reactor,
+                drive,
             } => {
-                self.apply_build(
+                self.apply_build_on(
                     *player_id,
                     *system_id,
                     None,
                     crate::build::BuildKind::Ship { ship: *ship_kind },
                     *join,
                     loadout.clone(),
+                    *reactor,
+                    *drive,
                     events,
                 );
+            }
+            Command::RefitEngines { player_id, fleet_id, ship, reactor, drive, n } => {
+                self.apply_engine_refit(*player_id, *fleet_id, *ship, *reactor, *drive, *n, events);
             }
             Command::BuildModule {
                 player_id,
@@ -10643,184 +10715,6 @@ impl World {
                     *n,
                     events,
                 );
-            }
-            Command::TransferModules {
-                player_id,
-                from,
-                to,
-                manifest,
-            } => {
-                // §modules Part B3: a dedicated module-crate convoy between the
-                // player's own ground (or an ally's — coalition resupply). Manifest
-                // clamps to the source ledger and one convoy's module berths; the
-                // ledger is debited at LOADING (crates aboard, not at home).
-                // Soft-reject if nothing valid remains.
-                let allies = self.allies_of(*player_id);
-                let Some(to_pos) = self
-                    .systems
-                    .iter()
-                    .find(|s| {
-                        s.id == *to
-                            && s.owner
-                                .is_some_and(|o| o == *player_id || allies.contains(&o))
-                    })
-                    .map(|s| s.pos)
-                else {
-                    return;
-                };
-                let Some(src) = self
-                    .systems
-                    .iter_mut()
-                    .find(|s| s.id == *from && s.owner == Some(*player_id))
-                else {
-                    return;
-                };
-                let mut berths = crate::module::MODULE_CONVOY_BERTHS;
-                let mut load: BTreeMap<crate::module::ModuleKind, u32> = Default::default();
-                for (&kind, &want) in manifest {
-                    if berths == 0 {
-                        break;
-                    }
-                    let stocked = src.modules.get(&kind).copied().unwrap_or(0);
-                    let take = want.min(stocked).min(berths);
-                    if take > 0 {
-                        load.insert(kind, take);
-                        berths -= take;
-                    }
-                }
-                if load.is_empty() {
-                    return; // nothing to carry — soft reject
-                }
-                for (kind, n) in &load {
-                    let r = src.modules.get_mut(kind).expect("clamped above");
-                    *r -= n;
-                    if *r == 0 {
-                        src.modules.remove(kind);
-                    }
-                }
-                let spawn = src.pos;
-                let cid = self.spawn_trade_convoy(
-                    *player_id,
-                    spawn,
-                    to_pos,
-                    Cargo {
-                        commodity: crate::cargo::Commodity::Provisions,
-                        units: 0,
-                    },
-                    TradeMission::DeliverToSystem { system: *to },
-                );
-                if let Some(f) = self.fleets.get_mut(&cid) {
-                    f.take_cargo();
-                    f.modules = load;
-                }
-            }
-            Command::BuyModule {
-                player_id,
-                module,
-                n,
-                dest_system,
-            } => {
-                // Discovery-only fittings must be manufactured from an arrived
-                // license, not minted from the Authority's unlimited catalogue.
-                if module.blueprint_only() { return; }
-                // §modules Part B3 (Sol hub): price-certain purchase, delivery-risky
-                // — pay Sol now, a crate convoy carries it hub → the player's
-                // system. Mirrors HireSpecialist. Soft-reject on ownership / credits.
-                let n = *n;
-                if n == 0 {
-                    return;
-                }
-                let Some(dest) = self
-                    .systems
-                    .iter()
-                    .find(|s| s.id == *dest_system && s.owner == Some(*player_id))
-                    .map(|s| s.pos)
-                else {
-                    return;
-                };
-                let unit = self.module_buy_price(*module);
-                let cost = unit * n as f64;
-                let Some(corp) = self.players.get_mut(player_id) else {
-                    return;
-                };
-                if corp.credits + 1e-9 < cost {
-                    return; // can't pay — soft reject
-                }
-                corp.credits -= cost;
-                let hub = self.hub;
-                let cid = self.spawn_trade_convoy(
-                    *player_id,
-                    hub,
-                    dest,
-                    Cargo {
-                        commodity: crate::cargo::Commodity::Provisions,
-                        units: 0,
-                    },
-                    TradeMission::DeliverToSystem {
-                        system: *dest_system,
-                    },
-                );
-                if let Some(f) = self.fleets.get_mut(&cid) {
-                    f.take_cargo();
-                    f.modules.insert(*module, n);
-                }
-                events.push(Event::new(
-                    self.time,
-                    EventPayload::ModulesPurchased {
-                        owner: *player_id,
-                        kind: *module,
-                        n,
-                        dest: *dest_system,
-                        unit_price: unit,
-                    },
-                ));
-            }
-            Command::SellModule {
-                player_id,
-                module,
-                n,
-                from_system,
-            } => {
-                // §modules Part B3 (Sol hub): commit the crates to the crossing now
-                // (debit the ledger), a convoy carries them src → hub, and the
-                // buy-back clears on ARRIVAL (price-on-arrival, like MarketSell).
-                let n = *n;
-                if n == 0 {
-                    return;
-                }
-                let Some(src) = self
-                    .systems
-                    .iter_mut()
-                    .find(|s| s.id == *from_system && s.owner == Some(*player_id))
-                else {
-                    return;
-                };
-                let stocked = src.modules.get(module).copied().unwrap_or(0);
-                let take = n.min(stocked);
-                if take == 0 {
-                    return; // ledger doesn't stock it — soft reject
-                }
-                let r = src.modules.get_mut(module).expect("stocked > 0");
-                *r -= take;
-                if *r == 0 {
-                    src.modules.remove(module);
-                }
-                let spawn = src.pos;
-                let hub = self.hub;
-                let cid = self.spawn_trade_convoy(
-                    *player_id,
-                    spawn,
-                    hub,
-                    Cargo {
-                        commodity: crate::cargo::Commodity::Provisions,
-                        units: 0,
-                    },
-                    TradeMission::SellAtHub,
-                );
-                if let Some(f) = self.fleets.get_mut(&cid) {
-                    f.take_cargo();
-                    f.modules.insert(*module, take);
-                }
             }
             Command::BuildEmplacement {
                 player_id,
@@ -10970,11 +10864,16 @@ impl World {
                 // Recipe changes are delivered through the same delayed admin
                 // command as workforce. Never infer them from a client draft.
                 // §fuel-overhaul: the same field picks a Drive Works line's core.
-                if refining_ore.is_some_and(|ore| match *structure {
-                    crate::build::StructureKind::Smelter => !ore.is_smeltable(),
-                    crate::build::StructureKind::DriveWorks => !crate::production::is_drive_works_product(ore),
-                    _ => true,
-                }) {
+                // §shipbuilding-overhaul: a works with several products takes
+                // the one its line is set to; a Drive Works line makes the cores
+                // and reactors its owner has researched (buying is never gated).
+                let researched = |programme: &str| self.players.get(player_id).is_some_and(|c| c.research.completed.contains(programme));
+                if refining_ore.is_some_and(|ore| !crate::production::is_product_of(*structure, ore)
+                    || (*structure == crate::build::StructureKind::DriveWorks
+                        && crate::production::drive_works_gate(ore).1.is_some_and(|programme| !researched(programme)))
+                    // §hull-ladder: a heavy or capital part waits for its size's line.
+                    || crate::production::size_gate(ore).is_some_and(|programme| !researched(programme)))
+                {
                     return;
                 }
                 // §economy Part 3 → §bodies: INSTANT local administration on ONE
@@ -11067,6 +10966,16 @@ impl World {
                     },
                 ));
             }
+            // §veil: the owner's standing order for this world's sky.
+            Command::SetVeilPolicy { player_id, system_id, raise } => {
+                if let Some(sys) = self
+                    .systems
+                    .iter_mut()
+                    .find(|s| s.id == *system_id && s.owner == Some(*player_id))
+                {
+                    sys.veil_never = !*raise;
+                }
+            }
             Command::SetMigrationPolicy {
                 player_id,
                 system_id,
@@ -11152,6 +11061,7 @@ impl World {
                         owner: *player_id,
                         kind: *specialist,
                         dest: *dest_system,
+                        cost,
                     },
                 ));
             }
@@ -11314,10 +11224,13 @@ impl World {
                 fleet_id,
                 mode,
             } => {
-                if *mode == crate::ship::TransitMode::Slow
-                    && self.fleets.get(fleet_id).is_some_and(|f|
-                        f.owner == *player_id && !f.can_slow())
-                {
+                // §shipbuilding-overhaul: Stealth needs fusion-class cores on
+                // every hull; Slow is any formation's.
+                if self.fleets.get(fleet_id).is_some_and(|f| f.owner == *player_id && match *mode {
+                    crate::ship::TransitMode::Slow => !f.can_slow(),
+                    crate::ship::TransitMode::Stealth => !f.can_stealth(),
+                    crate::ship::TransitMode::Full => false,
+                }) {
                     events.push(Event::new(self.time, EventPayload::OrderRejected {
                         owner: *player_id, fleet: *fleet_id, target: None,
                         reason: crate::event::OrderRejectReason::DeliveryConditionsChanged,
@@ -11943,6 +11856,25 @@ impl World {
         loadout: crate::module::Loadout,
         events: &mut Vec<Event>,
     ) {
+        self.apply_build_on(player_id, system_id, body, what, join, loadout, crate::fuel::ReactorGrade::Fission,
+            crate::fuel::Drive::Zephyr, events);
+    }
+
+    /// `apply_build` with the warp-core GRADE a ship is built with
+    /// (§shipbuilding-overhaul): the recipe's Fission Cores become `core`'s.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_build_on(
+        &mut self,
+        player_id: PlayerId,
+        system_id: EntityId,
+        body: Option<u32>,
+        what: crate::build::BuildKind,
+        join: Option<EntityId>,
+        loadout: crate::module::Loadout,
+        reactor: crate::fuel::ReactorGrade,
+        drive: crate::fuel::Drive,
+        events: &mut Vec<Event>,
+    ) {
         // The first Colony Ship unlocks only after the two comparative surveys.
         // The gate lives in the sim (not merely a disabled client button), so
         // stale or custom clients cannot skip the surveys. They finish onboarding;
@@ -11982,6 +11914,37 @@ impl World {
             return;
         }
         let mut recipe = crate::build::TierRecipe::from(crate::build::recipe_for(what));
+        // §reactors-drives: the yard fits the engine the build chose. The
+        // reactor must power the drive, a ship of the line never takes a
+        // Maelstrom Drive, and an unresearched part is refused (the client
+        // never offers one).
+        if let crate::build::BuildKind::Ship { ship } = what {
+            if ship.engines() > 0 {
+                if !ship.can_mount(reactor, drive) {
+                    events.push(Event::new(self.time, EventPayload::BuildRejected {
+                        owner: player_id, system: system_id, what,
+                        reason: crate::event::BuildRejectReason::NotBuildable,
+                    }));
+                    return;
+                }
+                if !(self.good_known(player_id, ship.reactor_good(reactor)) && self.good_known(player_id, ship.drive_good(drive))) {
+                    events.push(Event::new(self.time, EventPayload::BuildRejected {
+                        owner: player_id, system: system_id, what,
+                        reason: crate::event::BuildRejectReason::ResearchRequired,
+                    }));
+                    return;
+                }
+            }
+            // §hull-ladder: the recipe names rung 1 at the hull's size.
+            let size = ship.engine_size();
+            for (c, _) in recipe.costs.iter_mut() {
+                if *c == size.reactor(crate::fuel::ReactorGrade::Fission) {
+                    *c = size.reactor(reactor);
+                } else if *c == size.drive(crate::fuel::Drive::Zephyr) {
+                    *c = size.drive(drive);
+                }
+            }
+        }
         // §research R4a: the build's COST + TIME tuners, by kind (neutral 1.0 until
         // researched). Read here (before any `sys` borrow) so `self` is free.
         use crate::research::ModKey;
@@ -12172,11 +12135,14 @@ impl World {
                 return;
             }
             // §asteroid-quarry: a belt takes its quarry and nothing else.
+            // §veil: a Veil needs a sky.
             if !upgrade.suits(b) {
                 events.push(Event::new(self.time, EventPayload::IndustryRejected {
                     owner: player_id, system: system_id,
                     reason: if upgrade == crate::StructureKind::AsteroidQuarry {
                         "An Asteroid Quarry stands on an asteroid belt".into()
+                    } else if upgrade == crate::StructureKind::VeilProjector {
+                        "A Veil needs an atmosphere to ionise".into()
                     } else {
                         "A belt takes only an Asteroid Quarry".into()
                     },
@@ -12335,6 +12301,15 @@ impl World {
                 ));
                 return;
             }
+            // §licences: research is the skill, the Authority's licence the
+            // right to build. Soft reject: nothing is spent.
+            if crate::licence::needs_licence(ship) && !self.licensed(player_id, ship) {
+                events.push(Event::new(self.time, EventPayload::BuildRejected {
+                    owner: player_id, system: system_id, what,
+                    reason: crate::event::BuildRejectReason::NeedsLicence,
+                }));
+                return;
+            }
             // §ladder B4: the TITAN is a syndicate SINGLETON — fielded + queued
             // must be zero to lay a new keel (rebuild after loss is allowed).
             if ship == ShipKind::Titan && self.titan_fielded_or_queued(player_id) {
@@ -12395,17 +12370,15 @@ impl World {
             }
             // §modules Part B4 + §fitting: validate the loadout — the hull's
             // slots AND its fitting-point budget (`Loadout::validate`), and
-            // every module covered by the system's ledger (soft-reject else;
-            // the ledger + recipe are never eaten on a reject).
+            // every module in the system's stockpile (§modules-as-goods; soft-
+            // reject else: neither the modules nor the recipe are eaten).
             if !loadout.is_empty() {
                 let mut need: BTreeMap<crate::module::ModuleKind, u32> = BTreeMap::new();
                 for m in loadout.modules() {
                     *need.entry(*m).or_insert(0) += 1;
                 }
                 let fits = loadout.validate(ship)
-                    && need
-                        .iter()
-                        .all(|(m, n)| sys.modules.get(m).copied().unwrap_or(0) >= *n);
+                    && need.iter().all(|(m, n)| sys.module_stock(*m) >= *n);
                 if !fits {
                     events.push(Event::new(
                         self.time,
@@ -12495,21 +12468,12 @@ impl World {
             }
         }
         let sys = self.systems.iter_mut().find(|s| s.id == system_id).unwrap();
-        // §modules Part B4: a fitted ship also debits its modules from the ledger
-        // (validated above) — reserved at enqueue, fitted on the completed hull.
+        // §modules Part B4: a fitted ship also takes its modules from the
+        // stockpile (validated above) — taken at enqueue, fitted on the
+        // completed hull.
         if matches!(what, crate::build::BuildKind::Ship { .. }) {
             for m in loadout.modules() {
-                let n = sys
-                    .modules
-                    .get_mut(m)
-                    .map(|c| {
-                        *c = c.saturating_sub(1);
-                        *c
-                    })
-                    .unwrap_or(0);
-                if n == 0 {
-                    sys.modules.remove(m);
-                }
+                sys.take_modules(*m, 1);
             }
         }
         self.next_build_id += 1;
@@ -12553,7 +12517,7 @@ impl World {
         // courses wait the same way for their own line (§research-wiring
         // Broad Curricula: two at once).
         let course = matches!(what, crate::build::BuildKind::Train { .. });
-        let mut structure_work = (course || matches!(what, crate::build::BuildKind::Upgrade { .. })).then(|| {
+        let structure_work = (course || matches!(what, crate::build::BuildKind::Upgrade { .. })).then(|| {
             let slots = if course && self.research_flag(player_id, crate::research::Cap::BroadCurricula) { 2 } else { 1 };
             let ahead = self.build_queue.iter().filter(|job| job.system == system_id
                 && job.body_id == body_id && job.owner == player_id
@@ -12567,16 +12531,6 @@ impl World {
                 rate: if ahead >= slots { 0.0 } else { 1.0 },
             }
         });
-        // §charter-gates: the charter's mine, starting now, sets the raid moving
-        // and is built in the privateer's flight time (a waiting one, when it
-        // starts: `update_structure_queues`).
-        if structure_work.as_ref().is_some_and(|work| work.rate > 0.0)
-            && what == (crate::build::BuildKind::Upgrade { upgrade: crate::StructureKind::MiningComplex })
-            && let Some(secs) = self.raid_on_mine_start(player_id, system_id)
-            && let Some(work) = structure_work.as_mut()
-        {
-            work.required = (secs * crate::config::TICK_HZ as f64).ceil().max(1.0);
-        }
         let waiting = structure_work.as_ref().is_some_and(|work| work.rate == 0.0);
         let complete_tick = ship_work.as_ref().or(structure_work.as_ref()).map_or(self.tick + ticks,
             |work| work.completion_tick().unwrap_or(u64::MAX));
@@ -12604,6 +12558,9 @@ impl World {
             } else {
                 crate::module::Loadout::default()
             },
+            reactor,
+            drive,
+            charged: recipe.costs.iter().map(|(c, n)| (*c, n * cost_mult)).collect(),
         });
         events.push(Event::new(
             self.time,
@@ -12636,6 +12593,11 @@ impl World {
     /// §real-coordinates: are two positions at the same system (inside the
     /// same star's gravity well)? Fleets docked there may be at different
     /// worlds and still meet as one berth.
+    /// §return-home: whether `pos` lies in the well of a founder's den system.
+    fn at_founder_den(&self, pos: Vec2) -> bool {
+        self.well_system(pos).is_some_and(|s| self.enclaves.get(&s.id).is_some_and(|e| e.founder_den))
+    }
+
     fn same_system(&self, a: Vec2, b: Vec2) -> bool {
         self.well_system(a).is_some_and(|s| s.pos.distance(b) <= crate::transit::HYPERLIMIT)
     }
@@ -12700,6 +12662,9 @@ impl World {
         target.helium3 += removed.helium3;
         target.uranium += removed.uranium;
         target.antimatter += removed.antimatter;
+        target.torpedoes += removed.torpedoes;
+        target.slugs += removed.slugs;
+        target.crystals += removed.crystals;
         // Holds merge like hull capacity: both fleets were individually legal,
         // so their combined manifest fits the combined Convoy capacity.
         for cargo in removed_cargo {
@@ -12708,10 +12673,6 @@ impl World {
         // §economy Part 4: passengers walk across the gangway (never deleted).
         for (k, n) in removed.passengers {
             *target.passengers.entry(k).or_insert(0) += n;
-        }
-        // §modules Part B3: crates aboard transfer with the merge (never deleted).
-        for (k, n) in removed.modules {
-            *target.modules.entry(k).or_insert(0) += n;
         }
         // The Captain walks across the same gangway as the absorbed hulls.
         // Keeping the deleted fleet id would strand a physical officer in a
@@ -12759,9 +12720,12 @@ impl World {
         }
         let (pos, owner) = (src.pos, src.owner);
         let fuel_fraction = src.fuel / src.fuel_capacity().max(1e-9);
-        let helium3_share = src.helium3 / src.fuel.max(1e-9);
+        let helium3_fraction = src.helium3 / src.helium3_capacity().max(1e-9);
         let uranium_fraction = src.uranium / src.uranium_capacity().max(1e-9);
         let antimatter_fraction = src.antimatter / src.antimatter_capacity().max(1e-9);
+        // §shipbuilding-overhaul Phase 5: the magazines split in the same shares.
+        let magazine_fractions: Vec<(crate::cargo::Commodity, f64)> = crate::munitions::MUNITIONS.iter()
+            .map(|c| (*c, src.store(*c) / src.magazine_capacity(*c).max(1e-9))).collect();
         // §roster: detach the actual HULLS (fitted first, then by id) — each
         // carries its fit AND its damage onto the new fleet.
         let mut remainder = src.clone();
@@ -12771,7 +12735,7 @@ impl World {
                 taken.extend(remainder.detach_ships(*k, *n));
             }
         }
-        if remainder.cargo_units() > remainder.cargo_capacity() {
+        if !remainder.cargo_fits(remainder.cargo_capacity()) {
             events.push(Event::new(self.time, EventPayload::OrderRejected {
                 owner, fleet: fleet_id, target: None,
                 reason: crate::event::OrderRejectReason::DeliveryConditionsChanged,
@@ -12788,15 +12752,23 @@ impl World {
         fleet.rebuild_cache();
         fleet.absorb_ships(taken);
         fleet.fuel = fleet.fuel_capacity() * fuel_fraction;
-        fleet.helium3 = fleet.fuel * helium3_share;
+        fleet.helium3 = fleet.helium3_capacity() * helium3_fraction;
         fleet.uranium = fleet.uranium_capacity() * uranium_fraction;
         fleet.antimatter = fleet.antimatter_capacity() * antimatter_fraction;
+        for (c, share) in &magazine_fractions {
+            *fleet.store_mut(*c) = fleet.magazine_capacity(*c) * share;
+        }
         {
             let rest = self.fleets.get_mut(&fleet_id).unwrap();
             rest.fuel -= fleet.fuel;
             rest.helium3 = (rest.helium3 - fleet.helium3).max(0.0);
             rest.uranium = (rest.uranium - fleet.uranium).max(0.0);
             rest.antimatter = (rest.antimatter - fleet.antimatter).max(0.0);
+            for (c, _) in &magazine_fractions {
+                let taken = fleet.store(*c);
+                let store = rest.store_mut(*c);
+                *store = (*store - taken).max(0.0);
+            }
         }
         // Report the new fleet's flagship as a spawn (owner-only notice pathway).
         let flagship = fleet.flagship_kind();
@@ -12864,7 +12836,7 @@ impl World {
                     // with the loadout it was laid down under, at full health.
                     let fleet = if let Some(fid) = join_target {
                         let f = self.fleets.get_mut(&fid).unwrap();
-                        f.add_fitted(ship, &job.loadout, 1);
+                        f.add_fitted_on(ship, &job.loadout, (job.reactor, job.drive), 1);
                         events.push(Event::new(
                             self.time,
                             EventPayload::ShipSpawned {
@@ -12889,12 +12861,11 @@ impl World {
                         if !ship.is_combatant() && f.can_slow() && !freight_cut {
                             f.transit = crate::ship::TransitMode::Slow;
                         }
-                        if !job.loadout.is_empty() {
-                            // Replace `single`'s stock hull with the fitted one.
-                            f.ships.clear();
-                            f.next_ship_id = 0;
-                            f.add_fitted(ship, &job.loadout, 1);
-                        }
+                        // Replace `single`'s stock hull with the one laid down:
+                        // its fit and its cores (§shipbuilding-overhaul).
+                        f.ships.clear();
+                        f.next_ship_id = 0;
+                        f.add_fitted_on(ship, &job.loadout, (job.reactor, job.drive), 1);
                         self.fleets.insert(id, f);
                         events.push(Event::new(
                             self.time,
@@ -12987,14 +12958,15 @@ impl World {
                     }
                 }
                 crate::build::BuildKind::Module { module } => {
-                    // §modules: the crate lands in the system's module ledger —
-                    // only if the owner still holds it (resources already spent).
+                    // §modules-as-goods: the module lands in the system's
+                    // stockpile — only if the owner still holds it (resources
+                    // already spent).
                     if let Some(sys) = self
                         .systems
                         .iter_mut()
                         .find(|s| s.id == job.system && s.owner == Some(job.owner))
                     {
-                        *sys.modules.entry(module).or_insert(0) += 1;
+                        sys.put_modules(module, 1);
                         events.push(Event::new(
                             self.time,
                             EventPayload::ModuleBuilt {
@@ -13050,28 +13022,97 @@ impl World {
         self.update_structure_queues(events);
     }
 
-    /// §modules Part B3 (Sol hub): a module's GOODS VALUE — its recipe commodities
-    /// priced at Sol's standing market. The buy/sell prices scale off this, so
-    /// they TRACK the commodity market (a module is worth what its inputs cost).
-    fn module_recipe_value(&self, kind: crate::module::ModuleKind) -> f64 {
-        crate::build::module_recipe(kind)
-            .costs
-            .iter()
-            .map(|(c, n)| n * self.market.price(*c))
-            .sum()
-    }
-    /// Sol's SELL price to a player (buying from Sol): a premium over local build.
-    fn module_buy_price(&self, kind: crate::module::ModuleKind) -> f64 {
-        self.module_recipe_value(kind) * crate::module::MODULE_BUY_MULT
-    }
-    /// Sol's BUY-BACK price from a player (selling to Sol): a steep discount.
-    fn module_sell_price(&self, kind: crate::module::ModuleKind) -> f64 {
-        self.module_recipe_value(kind) * crate::module::MODULE_SELL_MULT
-    }
-
     /// Reserve crates for `n` matching docked hulls and enqueue their new fit.
     /// Military work detaches the hulls; utility work keeps them in place and
     /// cancels if they sortie. Refusals never consume goods, hulls or modules.
+    /// §shipbuilding-overhaul: swap the warp cores of `n` hulls of `ship` to
+    /// grade `to` at a docked Shipyard the player owns or is allied with. New
+    /// cores come out of that system's stockpile, old ones go back in, and fuel
+    /// of a kind no hull burns any more goes ashore. Soft-reject otherwise.
+    /// §reactors-drives: swap the reactors and/or drives of `n` hulls of
+    /// `ship` in a docked fleet at an owned or allied Shipyard.
+    fn apply_engine_refit(
+        &mut self,
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        ship: ShipKind,
+        reactor: Option<crate::fuel::ReactorGrade>,
+        drive: Option<crate::fuel::Drive>,
+        n: u32,
+        events: &mut Vec<Event>,
+    ) {
+        let Some(fleet) = self.fleets.get(&fleet_id) else { return; };
+        if fleet.owner != player_id || !matches!(fleet.order, FleetOrder::Idle) || n == 0
+            || (reactor.is_none() && drive.is_none()) {
+            return;
+        }
+        // An unresearched part is refused; the client never offers one.
+        if reactor.is_some_and(|r| !self.good_known(player_id, ship.reactor_good(r)))
+            || drive.is_some_and(|d| !self.good_known(player_id, ship.drive_good(d))) {
+            return;
+        }
+        if self.refit_queue.iter().any(|job| job.fleet == fleet_id) {
+            return;
+        }
+        let allies = self.allies_of(player_id);
+        let Some(DockSite::System(sys_id)) = self.dock_of(fleet_id) else { return; };
+        let hosts = self.systems.iter().any(|s| s.id == sys_id
+            && s.owner.is_some_and(|o| o == player_id || allies.contains(&o))
+            && s.tier(crate::build::StructureKind::Shipyard) >= 1);
+        if !hosts {
+            return;
+        }
+        // The hulls to change, in the order `Fleet::set_engines` takes them.
+        let target = |h: &crate::ship::Ship| (reactor.unwrap_or(h.reactor), drive.unwrap_or(h.drive));
+        let mut candidates: Vec<&crate::ship::Ship> = fleet.ships.iter()
+            .filter(|h| h.kind == ship && h.engine() != target(h)).collect();
+        candidates.sort_by_key(|h| h.id);
+        candidates.truncate(n as usize);
+        if candidates.is_empty() {
+            return;
+        }
+        // The power rule, and no Maelstrom on a ship of the line.
+        if candidates.iter().any(|h| { let (r, d) = target(h); !ship.can_mount(r, d) }) {
+            return;
+        }
+        let n = candidates.len() as u32;
+        let per = ship.engines() as f64;
+        let mut need: BTreeMap<crate::cargo::Commodity, f64> = BTreeMap::new();
+        for h in &candidates {
+            let (r, d) = target(h);
+            if r != h.reactor { *need.entry(ship.reactor_good(r)).or_insert(0.0) += per; }
+            if d != h.drive { *need.entry(ship.drive_good(d)).or_insert(0.0) += per; }
+        }
+        let sys = self.systems.iter_mut().find(|s| s.id == sys_id).expect("found above");
+        if need.iter().any(|(c, units)| sys.free_stock(*c) + 1e-9 < *units) {
+            return; // the yard's shelf can't cover the parts — soft reject
+        }
+        for (c, units) in &need {
+            *sys.stockpile.entry(*c).or_insert(0.0) -= units;
+        }
+        let fleet = self.fleets.get_mut(&fleet_id).expect("checked above");
+        let old = fleet.set_engines(ship, reactor, drive, n);
+        let mut ashore: Vec<(crate::cargo::Commodity, f64)> = Vec::new();
+        for (old_r, old_d) in old {
+            if reactor.is_some_and(|r| r != old_r) { ashore.push((ship.reactor_good(old_r), per)); }
+            if drive.is_some_and(|d| d != old_d) { ashore.push((ship.drive_good(old_d), per)); }
+        }
+        for c in crate::fuel::ReactorGrade::ALL.map(|g| g.fuel()) {
+            let excess = (fleet.store(c) - fleet.tank_capacity(c)).max(0.0);
+            if excess > 1e-9 {
+                *fleet.store_mut(c) -= excess;
+                ashore.push((c, excess));
+            }
+        }
+        let sys = self.systems.iter_mut().find(|s| s.id == sys_id).expect("found above");
+        for (c, units) in ashore {
+            *sys.stockpile.entry(c).or_insert(0.0) += units;
+        }
+        events.push(Event::new(self.time, EventPayload::EnginesRefitted {
+            owner: player_id, fleet: fleet_id, system: sys_id, ship, reactor, drive, n,
+        }));
+    }
+
     fn apply_refit(
         &mut self,
         player_id: PlayerId,
@@ -13139,8 +13180,13 @@ impl World {
             return; // nothing matching to refit — soft reject
         }
         let old_capacity = fleet.fuel_capacity();
-        let hull_capacity = ship.hull_mass() * crate::fuel::FUEL_PER_HULL_MASS * n as f64
-            * fleet.fuel_research.capacity;
+        // §shipbuilding-overhaul: the Deuterium tank of the hulls going in (a
+        // hull on another core carries none of this tank).
+        let hull_capacity = fleet.ships.iter()
+            .filter(|h| h.kind == ship && h.loadout == from && h.reactor.fuel() == crate::fuel::MOVEMENT_FUEL)
+            .take(n as usize)
+            .map(|h| h.kind.hull_mass() * h.reactor.tank_per_hull_mass())
+            .sum::<f64>() * fleet.fuel_research.capacity;
         let carried_fuel = fleet.fuel * (hull_capacity * from.fuel_capacity_mult() / old_capacity.max(1e-9));
         // Removing full tanks must not delete fuel or leave an over-capacity
         // formation. Burn/refuel deliberately before downsizing; no free fuel
@@ -13150,7 +13196,7 @@ impl World {
         }
         // Recheck at receipt, before reserving crates: fitting estimates are
         // served information, while local cargo may have changed in transit.
-        if fleet.cargo_units() > fleet.cargo_capacity_after_refit(ship, &from, &to, n) {
+        if !fleet.cargo_fits(fleet.cargo_capacity_after_refit(ship, &from, &to, n)) {
             events.push(Event::new(self.time, EventPayload::OrderRejected {
                 owner: player_id, fleet: fleet_id, target: Some(sys_id),
                 reason: crate::event::OrderRejectReason::DeliveryConditionsChanged,
@@ -13179,7 +13225,7 @@ impl World {
                 removed.insert(k, f - t);
             }
         }
-        // The ADDED modules (× n) must be covered by the yard's ledger.
+        // The ADDED modules (× n) must be in the yard's stockpile.
         let sys = self
             .systems
             .iter()
@@ -13187,11 +13233,11 @@ impl World {
             .expect("found above");
         let covered = added
             .iter()
-            .all(|(m, c)| sys.modules.get(m).copied().unwrap_or(0) >= *c * n);
+            .all(|(m, c)| sys.module_stock(*m) >= *c * n);
         if !covered {
-            return; // ledger can't cover the new fit — soft reject (no debit)
+            return; // not enough modules for the new fit — soft reject (no debit)
         }
-        // Commit: pull the hulls out of the fleet, then reconcile the ledger.
+        // Commit: pull the hulls out of the fleet, then reconcile the stockpile.
         let fleet = self.fleets.get_mut(&fleet_id).expect("checked above");
         // §roster: TAKE the actual hulls — they go into the yard and come back
         // out, carrying the health they went in with. A refit changes a ship's
@@ -13211,15 +13257,15 @@ impl World {
         // §fuel-overhaul: Uranium and Antimatter the remaining formation can no
         // longer hold go ashore at the yard rather than vanishing; the hulls
         // fill again at the dock when they come back out.
-        let ashore = if empty {
-            (fleet.uranium, fleet.antimatter)
-        } else {
-            let u = (fleet.uranium - fleet.uranium_capacity()).max(0.0);
-            let a = (fleet.antimatter - fleet.antimatter_capacity()).max(0.0);
-            fleet.uranium -= u;
-            fleet.antimatter -= a;
-            (u, a)
-        };
+        let ashore: Vec<(crate::cargo::Commodity, f64)> = crate::fuel::ReactorGrade::ALL.map(|g| g.fuel()).into_iter()
+            .filter(|c| *c != crate::fuel::MOVEMENT_FUEL)
+            .map(|c| {
+                let excess = if empty { fleet.store(c) } else { (fleet.store(c) - fleet.tank_capacity(c)).max(0.0) };
+                if !empty && excess > 0.0 {
+                    *fleet.store_mut(c) -= excess;
+                }
+                (c, excess)
+            }).collect();
         if empty {
             self.fleets.remove(&fleet_id);
         }
@@ -13228,28 +13274,18 @@ impl World {
             .iter_mut()
             .find(|s| s.id == sys_id)
             .expect("found above");
-        for (c, units) in [(crate::fuel::FISSION_FUEL, ashore.0), (crate::fuel::JUMP_FUEL, ashore.1)] {
+        for (c, units) in ashore {
             if units > 1e-9 {
                 *sys.stockpile.entry(c).or_insert(0.0) += units;
             }
         }
         for (m, c) in &added {
-            let left = sys
-                .modules
-                .get(m)
-                .copied()
-                .unwrap_or(0)
-                .saturating_sub(*c * n);
-            if left == 0 {
-                sys.modules.remove(m);
-            } else {
-                sys.modules.insert(*m, left);
-            }
+            sys.take_modules(*m, *c * n);
         }
         for (m, c) in &removed {
             // In-place fittings remain installed until completion. Returning a
-            // crate here would let another hull use it while it is still aboard.
-            if !utility { *sys.modules.entry(*m).or_insert(0) += *c * n; }
+            // module here would let another hull use it while it is still aboard.
+            if !utility { sys.put_modules(*m, *c * n); }
         }
         if let Some(berth) = &service && let Some((mining_body, previous)) = &berth.borrowed {
             let mut borrowed = previous.clone();
@@ -13324,12 +13360,24 @@ impl World {
             let Some(f) = self.fleets.get(&fid) else {
                 continue;
             };
-            let (owner, pos, marines) = (f.owner, f.pos, f.marines());
+            let (owner, pos) = (f.owner, f.pos);
             // §real-coordinates: at rest at the target world, in its well.
             let Some(sys) = self.well_system(pos) else {
                 continue;
             };
             let (sys_id, spos) = (sys.id, sys.pos);
+            // §veil: through a raised Veil only the Troop Transports get down,
+            // and the Veil takes its share of them on the way. A capital's
+            // boarding party waits aboard until the sky clears.
+            let veil = sys.veil_up.then(|| sys.veil_level()).filter(|l| *l > 0);
+            let (marines, descent_losses) = match veil {
+                Some(level) => {
+                    let aboard = f.transport_marines();
+                    let landed = crate::ground::through_veil(aboard, level);
+                    (landed, aboard - landed)
+                }
+                None => (f.marines(), 0),
+            };
             let Some(holder) = sys
                 .owner
                 .filter(|h| *h != owner && !self.are_allied(owner, *h))
@@ -13365,7 +13413,9 @@ impl World {
             };
             let suppression = sys.garrison_suppression.clamp(0.0, 1.0);
             let need = crate::ground::break_even_marines(tiers as f64, suppression);
-            if (marines as f64) < need {
+            // Under a Veil a landing of nothing is a hold too (`need` may be 0
+            // against an empty garrison, but no one got down to take it).
+            if (marines as f64) < need || marines == 0 {
                 if !self.fleets[&fid].notified_held {
                     if let Some(fl) = self.fleets.get_mut(&fid) {
                         fl.notified_held = true;
@@ -13391,7 +13441,8 @@ impl World {
                 aid, seed, sys_id, spos, owner, holder, fid, marines, tiers, tick, target,
             );
             let defenders = assault.defenders_initial;
-            let rec = crate::ground::GroundRecord::open(&assault, suppression, target);
+            let mut rec = crate::ground::GroundRecord::open(&assault, suppression, target);
+            rec.descent_losses = descent_losses;
             self.ground_records.insert(aid, rec);
             crate::ground::prune_ground_records(&mut self.ground_records, now);
             self.assaults.insert(aid, assault);
@@ -13410,6 +13461,7 @@ impl World {
                     defenders,
                     suppression,
                     pos: spos,
+                    descent_losses,
                 },
             ));
         }
@@ -13547,6 +13599,70 @@ impl World {
         EntityId(0xD000_0000_0000_0000 | self.next_assault_id)
     }
 
+    /// §veil: THE VEIL — raise or drop each system's ionised sky this tick.
+    ///
+    /// A Veil is up when, and only when, all of these hold:
+    ///   1. a HELD war blockade stands over the system (`candidates`: raids and
+    ///      pirate home raids never count — a Veil is a siege device);
+    ///   2. a Veil Projector stands on a world with a sky, and the owner has
+    ///      not forbidden it (`veil_never`);
+    ///   3. that world's Fusion Plant can feed it: the projector takes
+    ///      [`crate::power::veil_mw`] of reactor output, charged to the plant's
+    ///      fuel at its own rate ON TOP of the grid, and the tick's burn comes
+    ///      out of the system's free stock here and now. A siege-anchor
+    ///      battleship overhead makes the projector work harder
+    ///      ([`crate::ship::SIEGE_ANCHOR_MULT`] on the burn): heavy slow slugs
+    ///      partly get through, which is also what speeds the siege clock.
+    ///
+    /// Solar Arrays never carry it (a Veil I would otherwise stand forever on
+    /// free power), so the Veil is mid-game by nature, and it holds exactly as
+    /// long as the fuel does — the besieger's counter is patience, since the
+    /// blockade has already cut the fuel imports. The Veil's effects read
+    /// `veil_up` downstream this same tick: bombardment pins nothing, plunder
+    /// loads nothing, and `begin_assaults` lands Transports only.
+    fn resolve_veil(&mut self, candidates: &std::collections::BTreeSet<EntityId>, events: &mut Vec<Event>) {
+        use crate::build::StructureKind as K;
+        let now = self.time;
+        for sys in self.systems.iter_mut() {
+            let was = sys.veil_up;
+            let (Some(owner), Some(level)) = (sys.owner, Some(sys.veil_level()).filter(|l| *l > 0)) else {
+                sys.veil_up = false;
+                continue;
+            };
+            let by = sys.blockade.map(|b| b.by);
+            let anchored = sys.blockade.is_some_and(|b| b.anchored);
+            let (up, reason) = if !candidates.contains(&sys.id) {
+                (false, crate::event::VeilDown::Relieved)
+            } else if sys.veil_never {
+                (false, crate::event::VeilDown::Forbidden)
+            } else {
+                // The projector's own world feeds it.
+                let plant = sys.veil_body().map_or(0, |b| b.tier(K::PowerPlant));
+                match crate::power::plant_fuel(plant) {
+                    None => (false, crate::event::VeilDown::Dry), // solar only: no reactor
+                    Some(fuel) => {
+                        let mult = if anchored { crate::ship::SIEGE_ANCHOR_MULT } else { 1.0 };
+                        let burn = crate::power::veil_mw(level) * crate::power::burn_per_mw_s(plant) * mult * DT;
+                        if sys.free_stock(fuel) + 1e-9 >= burn {
+                            *sys.stockpile.entry(fuel).or_insert(0.0) -= burn;
+                            (true, crate::event::VeilDown::Relieved)
+                        } else {
+                            (false, crate::event::VeilDown::Dry)
+                        }
+                    }
+                }
+            };
+            sys.veil_up = up;
+            if up && !was {
+                if let Some(by) = by {
+                    events.push(Event::new(now, EventPayload::VeilRaised { owner, by, system: sys.id, pos: sys.pos, level }));
+                }
+            } else if was && !up {
+                events.push(Event::new(now, EventPayload::VeilDropped { owner, by, system: sys.id, pos: sys.pos, reason }));
+            }
+        }
+    }
+
     /// §ground M6: BOMBARDMENT. A blockading fleet's guns pin down the garrison
     /// beneath them — raising `garrison_suppression` while they hold station, and
     /// letting it bleed off the moment they leave.
@@ -13575,7 +13691,8 @@ impl World {
             }
         }
         for sys in self.systems.iter_mut() {
-            let overhead = guns.get(&sys.id).copied().unwrap_or(0.0);
+            // §veil: under a raised Veil the guns reach nothing on the ground.
+            let overhead = if sys.veil_up { 0.0 } else { guns.get(&sys.id).copied().unwrap_or(0.0) };
             let next = if overhead > 0.0 {
                 sys.garrison_suppression + BOMBARD_PER_ATTACK_PER_SEC * overhead * DT
             } else {
@@ -13614,6 +13731,7 @@ impl World {
             let fed = have + 1e-9 >= cost;
             if fed {
                 *sys.stockpile.entry(prov).or_insert(0.0) -= cost;
+                sys.tally_used(prov, cost);
             }
             if sys.garrison_fed != fed {
                 transitions.push((owner, sys.id, fed));
@@ -13691,6 +13809,7 @@ impl World {
                     Some((_, sid)) => {
                         if let Some(s) = self.systems.iter_mut().find(|s| s.id == sid) {
                             *s.stockpile.entry(prov).or_insert(0.0) -= cost;
+                            s.tally_used(prov, cost);
                         }
                         true
                     }
@@ -13738,14 +13857,14 @@ impl World {
             .iter()
             .filter_map(|s| {
                 let owner = s.owner?;
+                // §stash (Nov 2 2026): on the world each yard stands on.
+                // `site_for` names where a NEW one would go, so a Shipyard off
+                // the system's primary planet (the charter's, on the landing
+                // world) used to mend nothing.
                 let rate = crate::build::REPAIR_YARDS
                     .iter()
-                    .map(|&kind| {
-                        let tier = s.tier(kind);
-                        if tier == 0 {
-                            return 0.0;
-                        }
-                        let body = s.site_for(kind).unwrap_or(0);
+                    .flat_map(|&kind| s.bodies.iter().filter(move |b| b.tier(kind) > 0).map(move |b| (kind, b.id, b.tier(kind))))
+                    .map(|(kind, body, tier)| {
                         crate::build::REPAIR_HP_PER_SEC_PER_TIER
                             * tier as f64
                             * s.staffing_factor(body, kind)
@@ -13841,7 +13960,9 @@ impl World {
             if let Some(sys) = self.systems.iter_mut().find(|s| s.id == sys_id) {
                 for (c, per) in crate::build::REPAIR_COST_PER_HP {
                     let e = sys.stockpile.entry(*c).or_insert(0.0);
+                    let used = (spent * per).min(*e);
                     *e = (*e - spent * per).max(0.0);
+                    sys.tally_used(*c, used);
                 }
             }
             // Owner-only news, once the fleet is whole again — a per-tick event
@@ -13875,7 +13996,7 @@ impl World {
             .filter(|job| job.in_place && (self.dock_of(job.fleet) != Some(DockSite::System(job.system))
                 || self.fleets.get(&job.fleet).is_none_or(|f| f.owner != job.owner
                     || job.hulls.first().is_some_and(|h|
-                        f.cargo_units() > f.cargo_capacity_after_refit(job.ship, &h.loadout, &job.to, job.n)))))
+                        !f.cargo_fits(f.cargo_capacity_after_refit(job.ship, &h.loadout, &job.to, job.n))))))
             .map(|job| job.id).collect();
         let cancelled: Vec<_> = self.refit_queue.iter().filter(|job| interrupted.contains(&job.id)).cloned().collect();
         self.refit_queue.retain(|job| !interrupted.contains(&job.id));
@@ -13886,7 +14007,7 @@ impl World {
                     let requested = job.to.modules().iter().filter(|m| **m == module).count();
                     let reserved: u32 = job.hulls.iter().map(|h| requested.saturating_sub(
                         h.loadout.modules().iter().filter(|m| **m == module).count()) as u32).sum();
-                    if reserved > 0 { *sys.modules.entry(module).or_insert(0) += reserved; }
+                    sys.put_modules(module, reserved);
                 }
                 events.push(Event::new(self.time, EventPayload::OrderRejected {
                     owner: job.owner, fleet: job.fleet, target: Some(job.system),
@@ -13965,7 +14086,7 @@ impl World {
                     f.rebuild_cache();
                 }
                 if let Some(sys) = self.systems.iter_mut().find(|s| s.id == job.system) {
-                    for (module, n) in returned { if n > 0 { *sys.modules.entry(module).or_insert(0) += n; } }
+                    for (module, n) in returned { sys.put_modules(module, n); }
                 }
             } else if can_rejoin {
                 let f = self.fleets.get_mut(&rejoin).unwrap();
@@ -14027,6 +14148,38 @@ impl World {
     /// Affiliation is intentionally absent from this lookup.
     fn research_of(&self, owner: PlayerId) -> Option<&crate::research::ResearchState> {
         self.players.get(&owner).map(|c| &c.research)
+    }
+
+    /// §reactors-drives: may `owner` buy, fit or be shown `c`? Everything but a
+    /// reactor, drive or fuel of rung 2–4 always; those once the rung's
+    /// programme is complete (`fuel::known_after`). An owner with no research
+    /// state (a scripted spawn's) knows only rung 1.
+    pub fn good_known(&self, owner: PlayerId, c: crate::cargo::Commodity) -> bool {
+        // §modules-as-goods (Nov 8 2026): a module is known once research
+        // opens it (an arrived blueprint counts); military modules need none.
+        if let Some(m) = c.module() {
+            return !m.needs_research() || self.research_of(owner).is_some_and(|r| crate::research::has_module(r, m));
+        }
+        let has = |programme: &str| self.research_of(owner).is_some_and(|r| r.has(programme));
+        // §hull-ladder: a sized part waits for its size's line as well.
+        crate::fuel::known_after(c).is_none_or(has) && crate::fuel::size_known_after(c).is_none_or(has)
+    }
+
+    /// §reactors-drives: the engine a scripted hull of `kind` for `owner`
+    /// arrives with — a corporation's best known rung, so a prize or an
+    /// automatic convoy burns a fuel it can buy; an NPC's default
+    /// (`ShipKind::default_engine`).
+    pub fn engine_for(&self, owner: PlayerId, kind: ShipKind) -> crate::fuel::Engine {
+        use crate::fuel::{Drive, ReactorGrade};
+        if self.research_of(owner).is_none() {
+            return kind.default_engine();
+        }
+        let reactor = ReactorGrade::ALL.into_iter().rev()
+            .find(|g| self.good_known(owner, g.commodity())).unwrap_or_default();
+        let drive = Drive::ALL.into_iter().rev()
+            .find(|d| kind.can_mount(reactor, *d) && self.good_known(owner, d.commodity()))
+            .unwrap_or_default();
+        (reactor, drive)
     }
 
     /// §research R4a: a single tuner's value for `owner` (identity default: 1.0
@@ -14105,13 +14258,12 @@ impl World {
             let Some(f) = self.fleets.get_mut(id).filter(|f| f.owner == owner) else {
                 continue;
             };
-            let mut room = if owner.is_pirate() { u32::MAX } else { f.cargo_capacity().saturating_sub(f.cargo_units()) };
+            let mut room = if owner.is_pirate() { crate::ship::HoldRoom::UNLIMITED } else { f.cargo_room() };
             for cargo in left.iter_mut() {
-                let n = cargo.units.min(room);
+                let n = room.take(cargo.commodity, cargo.units);
                 if n > 0 {
                     f.add_cargo(cargo.commodity, n);
                     cargo.units -= n;
-                    room -= n;
                     kept += n;
                 }
             }
@@ -14131,10 +14283,17 @@ impl World {
         for (kind, n) in &hulls[1..] {
             prize.add(*kind, *n);
         }
+        // §reactors-drives: a prize is refitted to engines its new owner can
+        // fuel (the best rung it has researched).
         for ship in prize.ships.iter_mut() {
             ship.hp = ship.max_hp() * PRIZE_HULL_FRAC;
+            (ship.reactor, ship.drive) = self.engine_for(owner, ship.kind);
         }
-        prize.fuel = prize.fuel_capacity() * PRIZE_HULL_FRAC;
+        // Its tanks, resized to the new engines, arrive as worn as its hulls.
+        prize.fill_stores();
+        for fuel in crate::fuel::ReactorGrade::ALL.map(|g| g.fuel()) {
+            *prize.store_mut(fuel) *= PRIZE_HULL_FRAC;
+        }
         self.fleets.insert(id, prize);
         id
     }
@@ -14604,6 +14763,7 @@ impl World {
                             } else {
                                 sys.stockpile.insert(*c, left);
                             }
+                            sys.tally_used(*c, *per * rate * DT);
                         }
                     }
                     funded_rate += rate;
@@ -14877,8 +15037,21 @@ impl World {
                 continue;
             }
             match sys_owner {
+                // §claims: no claim, no colony. It holds there, told once,
+                // and settles the tick its claim is held.
+                None if !reserved && !self.may_colonize(owner, sys_id) => {
+                    if let Some(sh) = self.fleets.get_mut(&cid)
+                        && !sh.notified_held
+                    {
+                        sh.notified_held = true;
+                        events.push(Event::new(now, EventPayload::ClaimMissing { owner, system: sys_id, fleet: cid }).at_origin(pos));
+                    }
+                }
                 None if !reserved => {
                     if let Some(enclave) = self.enclaves.get_mut(&sys_id) { enclave.cleared = true; }
+                    if let Some(corp) = self.players.get_mut(&owner) {
+                        corp.claims.remove(&sys_id); // used up
+                    }
                     let landing = self.colony_landing_terms(owner);
                     // SETTLE: flip ownership, consume the ship (no destruction —
                     // it became the colony), light-propagate the claim.
@@ -14941,9 +15114,6 @@ impl World {
                     if let Some(fl) = self.fleets.get_mut(&cid) {
                         fl.remove_one(ShipKind::Colony);
                         let landed = std::mem::take(&mut fl.passengers);
-                        // §modules Part B3: crates aboard land into the new colony's
-                        // ledger (founding materiel — never deleted).
-                        let landed_mods = std::mem::take(&mut fl.modules);
                         if fl.is_empty() {
                             self.fleets.remove(&cid);
                         } else {
@@ -14962,21 +15132,6 @@ impl World {
                                     owner,
                                     system: sys_id,
                                     manifest: landed,
-                                },
-                            ));
-                        }
-                        if !landed_mods.is_empty()
-                            && let Some(sy) = self.systems.iter_mut().find(|sy| sy.id == sys_id)
-                        {
-                            for (k, n) in &landed_mods {
-                                *sy.modules.entry(*k).or_insert(0) += n;
-                            }
-                            events.push(Event::new(
-                                now,
-                                EventPayload::ModulesDelivered {
-                                    owner,
-                                    system: sys_id,
-                                    manifest: landed_mods,
                                 },
                             ));
                         }
@@ -15129,6 +15284,9 @@ impl World {
                 sys.blockade_prev = Some((h, self.time));
             }
             sys.blockade = None;
+            // §veil: the sky clears with the flag; the captor sets its own policy.
+            sys.veil_up = false;
+            sys.veil_never = false;
         }
         // Drop the OLD owner's in-progress builds here (they no longer own it).
         self.build_queue.retain(|j| j.system != sys_id);
@@ -15320,6 +15478,7 @@ impl World {
                     *sys.stockpile
                         .get_mut(&crate::cargo::Commodity::Provisions)
                         .unwrap() -= draw;
+                    sys.tally_used(crate::cargo::Commodity::Provisions, draw);
                 }
                 let coverage_secs = (have - draw) / demand_per_s;
                 let state =
@@ -15386,6 +15545,7 @@ impl World {
                     && let Some(stock) = sys.stockpile.get_mut(&f)
                 {
                     *stock -= burned;
+                    sys.tally_used(f, burned);
                 }
                 let (body, was) = (sys.bodies[bi].id, sys.bodies[bi].grid.brownout);
                 grid.brownout = crate::power::browning_out(grid.power, was);
@@ -15488,6 +15648,7 @@ impl World {
                     let power = if crate::power::powered(kind) { b.grid.power } else { 1.0 };
                     let mut amount = (natural_rate
                         * crate::production::ore_bulk_ratio(resource)
+                        * crate::production::OUTPUT_SCALE
                         * throughput
                         * staffing
                         * skill
@@ -15517,6 +15678,7 @@ impl World {
             }
             if trace_adds > 0.0 {
                 *sys.stockpile.entry(crate::cargo::Commodity::RareElements).or_insert(0.0) += trace_adds;
+                sys.tally_made(crate::cargo::Commodity::RareElements, trace_adds);
             }
             // §research R3: raw units mined this tick (DeepCrust school gate) — and
             // the same units count toward the Materials-field industry throughput.
@@ -15542,6 +15704,7 @@ impl World {
             }
             for (c, amount) in stockpile_adds {
                 *sys.stockpile.entry(c).or_insert(0.0) += amount;
+                sys.tally_made(c, amount);
             }
             // Extraction suspension latch (per staffed extraction structure per
             // body): the food floor keeps it above zero, so the only outage is
@@ -15617,6 +15780,13 @@ impl World {
                     if tier == 0 || workers + spec_crew == 0 {
                         continue; // unbuilt/unposted = idle by choice
                     }
+                    // §shipbuilding-overhaul: a Drive Works line waits for the
+                    // tier its product needs (Fusion Cores and reactors at II).
+                    if kind == crate::build::StructureKind::DriveWorks
+                        && crate::production::drive_works_gate(conv.output).0 > tier
+                    {
+                        continue;
+                    }
                     let food = crate::production::food_factor_with(kind, food_state, em.rationing);
                     let staffing = ((workers + spec_crew).min(tier) as f64 / tier as f64) * share;
                     let skill = crate::production::skill_factor_points(points, tier);
@@ -15678,10 +15848,12 @@ impl World {
                     if now_suspended.is_none() && out > 0.0 {
                         for (c, per) in conv.inputs {
                             *sys.stockpile.get_mut(c).expect("bounded by stock") -= out * per * input_mult;
+                            sys.tally_used(*c, out * per * input_mult);
                         }
                         let emitted = out * yield_mult;
                         for (commodity, units) in conv.outputs().chain(byproduct) {
                             *sys.stockpile.entry(commodity).or_insert(0.0) += emitted * units;
+                            sys.tally_made(commodity, emitted * units);
                         }
                         // §research R3: processed units (Foundry school gate) + the
                         // Materials-field aggregate industry throughput.
@@ -16277,7 +16449,8 @@ impl World {
                             && fleet.trade_capacity() > 0
                             && self.dock_of(**id) == Some(DockSite::System(source_id))
                     })
-                    .map(|(id, fleet)| (*id, fleet.trade_capacity()))
+                    // §hold-room: an empty hold's room for this good.
+                    .map(|(id, fleet)| (*id, fleet.trade_room().fits(order.commodity)))
                     .next()
                 else {
                     continue;
@@ -16398,12 +16571,12 @@ impl World {
             if !matches!(p.commodity, crate::cargo::Commodity::Deuterium | crate::cargo::Commodity::Uranium) {
                 let Some(freighter) = self.fleets.get(&p.fleet_id) else { continue };
                 let mass = freighter.hull_mass()
-                    + p.units as f64 * crate::ship::CARGO_MASS_PER_UNIT;
+                    + p.units as f64 * p.commodity.mass_per_unit();
                 let cost = crate::fuel::fuel_cost(p.spawn.distance(p.dest), mass) / crate::transit::WARP_FACTOR
                     * freighter.propulsion_fuel_mult();
-                // The assigned hull supplies the store its regime burns: Tiny
+                // The assigned hull supplies its own tanks (in energy): Tiny
                 // and Bulk do not borrow the legacy Medium's range allowance.
-                if cost > freighter.propulsion_store() {
+                if cost > freighter.energy_aboard() {
                     if let Some(s) = self
                         .systems
                         .iter_mut()
@@ -16498,12 +16671,8 @@ impl World {
     /// refill because no honest fixed-leg estimate exists.
     fn fuel_rescue_package(&self, fleet_id: EntityId) -> Option<f64> {
         let fleet = self.fleets.get(&fleet_id)?;
-        // §fuel-overhaul: the store the fleet's regime burns.
-        let room = if fleet.burns_uranium() {
-            (fleet.uranium_capacity() - fleet.uranium).max(0.0)
-        } else {
-            fleet.fusion_room()
-        };
+        // §shipbuilding-overhaul: the tank with the least range left.
+        let (fuel_kind, room) = fleet.thirstiest()?;
         if room <= 1e-9 {
             return None;
         }
@@ -16540,8 +16709,10 @@ impl World {
         let well_distance = distance.min(crate::transit::HYPERLIMIT * 2.0);
         let well_surcharge = crate::fuel::fuel_cost(well_distance, fleet.mass())
             * (1.0 - 1.0 / crate::transit::WARP_FACTOR);
-        let cruise = (warp + well_surcharge) * captain_mult * fleet.propulsion_fuel_mult();
-        let reserve = fleet.propulsion_capacity() * crate::tca::TCA_RESCUE_RESERVE_FRAC;
+        // Energy for the leg, in units of the thirsty tank's fuel.
+        let grade = crate::fuel::ReactorGrade::burning(fuel_kind).expect("a warp fuel");
+        let cruise = (warp + well_surcharge) * captain_mult * fleet.propulsion_fuel_mult() / grade.energy_per_unit();
+        let reserve = fleet.tank_capacity(fuel_kind) * crate::tca::TCA_RESCUE_RESERVE_FRAC;
         Some((cruise + reserve).min(room))
     }
 
@@ -16586,7 +16757,10 @@ impl World {
             events.push(reject(RescueRejectReason::AlreadyDispatched));
             return;
         }
-        let uranium = fleet.burns_uranium();
+        let Some((fuel_kind, _)) = fleet.thirstiest() else {
+            events.push(reject(RescueRejectReason::NotStranded));
+            return;
+        };
         let (Some(fuel), Some(cost)) = (self.fuel_rescue_package(fleet_id), self.fuel_rescue_cost(fleet_id)) else {
             events.push(reject(RescueRejectReason::NotStranded));
             return;
@@ -16621,7 +16795,7 @@ impl World {
                 fuel,
                 cost,
                 leg: RescueLeg::Outbound,
-                uranium,
+                fuel_kind,
             },
         );
         events.push(Event::new(
@@ -16686,11 +16860,7 @@ impl World {
                             .fleets
                             .get_mut(&run.customer)
                             .expect("customer checked above");
-                        let delivered = if run.uranium {
-                            customer.refuel_uranium(run.fuel)
-                        } else {
-                            customer.refuel(run.fuel)
-                        };
+                        let delivered = customer.take_fuel(run.fuel_kind, run.fuel);
                         if delivered > 1e-9 {
                             customer.stalled = false;
                         }
@@ -16889,14 +17059,15 @@ impl World {
         Some(())
     }
 
-    /// How many more units this fleet may take aboard. Capacity is shared by
-    /// every commodity stack; unlike the retired single-stack hold, loading a
-    /// different good is legal whenever aggregate room remains. §holds: a dock
-    /// never fills a Combat Freighter's loot-only hold.
+    /// How many more units of `commodity` this fleet may take aboard. Room is
+    /// shared by every commodity stack; unlike the retired single-stack hold,
+    /// loading a different good is legal whenever aggregate room remains.
+    /// §hold-room: each good fills its own room a unit. §holds: a dock never
+    /// fills a Combat Freighter's loot-only hold.
     fn cargo_room_for(
         &self,
         fleet_id: EntityId,
-        _commodity: crate::cargo::Commodity,
+        commodity: crate::cargo::Commodity,
     ) -> Result<u32, TradeRejectReason> {
         let f = self
             .fleets
@@ -16906,7 +17077,7 @@ impl World {
         if capacity == 0 {
             return Err(TradeRejectReason::NoCargoRoom { capacity });
         }
-        Ok(capacity.saturating_sub(f.cargo_units()))
+        Ok(f.trade_room().fits(commodity))
     }
 
     /// LOAD a fleet from the Market Warehouse or an owned system's stockpile
@@ -18264,22 +18435,113 @@ impl World {
         }
     }
 
+    /// The owner's research and syndicate multipliers on immigration. Existing
+    /// research keeps its mechanical value: medical/civic work attracts and
+    /// processes settlers faster, rather than creating biological population
+    /// inside the production tick.
+    pub fn migration_mods(&self, owner: PlayerId) -> crate::migration::MigrationMods {
+        crate::migration::MigrationMods {
+            speed: self.research_mod(owner, crate::research::ModKey::PopGrowth)
+                * self.syndicate_mult(owner, crate::syndicate::SyndicateBonus::Migration),
+            housing: self.research_mod(owner, crate::research::ModKey::HabitatCap),
+            young: self.research_mod(owner, crate::research::ModKey::GrowthBelowHalf),
+        }
+    }
+
+    /// The world the owner's next liner goes to: the best-scoring candidate
+    /// among `systems` (the owner's, as the sim holds them or as the View
+    /// reports them), ties to the lower ids.
+    pub fn migration_pick<'a>(
+        &self,
+        owner: PlayerId,
+        systems: impl IntoIterator<Item = &'a StarSystem>,
+    ) -> Option<crate::migration::MigrantCandidate> {
+        let mods = self.migration_mods(owner);
+        let mut best: Option<crate::migration::MigrantCandidate> = None;
+        for sys in systems.into_iter().filter(|s| s.owner == Some(owner)) {
+            for body in &sys.bodies {
+                let Ok(candidate) = crate::migration::candidate(sys, body, mods) else {
+                    continue;
+                };
+                if best.is_none_or(|old| {
+                    candidate.score > old.score
+                        || (candidate.score == old.score
+                            && (candidate.system, candidate.body) < (old.system, old.body))
+                }) {
+                    best = Some(candidate);
+                }
+            }
+        }
+        best
+    }
+
+    /// §migration-status: when the owner's next allocation can run — its
+    /// interval timer, or the first landing that frees a berth when the
+    /// traffic cap is full. `None` while capped liners have no timetable.
+    pub fn migration_due_at(&self, owner: PlayerId) -> Option<f64> {
+        use crate::migration::{MIGRATION_MAX_IN_FLIGHT_PER_CORP, MigrantLeg};
+        let timer = self.next_migration_at.get(&owner).copied().unwrap_or(0.0);
+        let outbound: Vec<EntityId> = self
+            .migrant_runs
+            .values()
+            .filter(|run| run.owner == owner && run.leg == MigrantLeg::Outbound)
+            .map(|run| run.fleet)
+            .collect();
+        if outbound.len() < MIGRATION_MAX_IN_FLIGHT_PER_CORP {
+            return Some(timer);
+        }
+        outbound
+            .iter()
+            .filter_map(|fleet| self.migrant_lands_at(*fleet))
+            .min_by(f64::total_cmp)
+            .map(|landing| landing.max(timer))
+    }
+
+    /// §migration-status: when a liner reaches its destination, flown the way
+    /// `integrate_movement` flies it: warp for the star in open space (on
+    /// thrusters through any other well, spooling again after it), then
+    /// thrusters from the hyperlimit to the world it berths at, where that
+    /// world will be by then. A spool runs on thrusters, so each one costs
+    /// part of its length against warp.
+    pub fn migrant_lands_at(&self, fleet: EntityId) -> Option<f64> {
+        use crate::transit::{HYPERLIMIT, Regime, WARP_FACTOR, WARP_SPOOL_S, well_legs};
+        let ship = self.fleets.get(&fleet)?;
+        let FleetOrder::MoveTo { dest } = ship.order else {
+            return None;
+        };
+        let speed = ship.transit_speed();
+        if speed <= 0.0 {
+            return None;
+        }
+        let spool = WARP_SPOOL_S * (1.0 - 1.0 / WARP_FACTOR);
+        let sys = self.systems.iter().find(|s| s.pos == dest);
+        let stop = match sys {
+            Some(_) if ship.pos.distance(dest) > HYPERLIMIT => dest + (ship.pos - dest).normalized() * HYPERLIMIT,
+            Some(_) => ship.pos,
+            None => dest,
+        };
+        let others = self.systems.iter().filter(|s| sys.is_none_or(|d| d.id != s.id)).map(|s| s.pos);
+        let (inside, crossings) = well_legs(ship.pos, stop, others);
+        let cruising = matches!(ship.drive_state, crate::ship::DriveState::Cruising(Regime::Warp));
+        let in_well = self.systems.iter().any(|s| s.pos.distance(ship.pos) <= HYPERLIMIT);
+        let spools = crossings + u32::from(!cruising && !in_well && ship.pos.distance(stop) > 1.0);
+        let leg = ship.pos.distance(stop);
+        let at_stop = self.time + inside / speed + (leg - inside) / (speed * WARP_FACTOR) + spool * spools as f64;
+        let Some(sys) = sys else {
+            return Some(at_stop);
+        };
+        let spot = |t: f64| self.spot_for(fleet, ship, sys).map_or(dest, |body| Self::spot_pos(sys, body, stop, t));
+        let first = stop.distance(spot(at_stop)) / speed;
+        Some(at_stop + stop.distance(spot(at_stop + first)) / speed)
+    }
+
     /// Allocate external settlers from the Wormhole Hub. This pass only chooses
     /// a destination and spawns a real hull; it never edits population. Housing
     /// is reserved immediately so several liners cannot overbook one Habitat.
     fn depart_migrant_liners(&mut self) {
         use crate::migration::{
-            MIGRANT_COHORT_PEOPLE, MIGRANT_COHORT_POP, MIGRATION_BASE_INTERVAL_S,
-            MIGRATION_MAX_IN_FLIGHT_PER_CORP, MigrantLeg, MigrantRun, MigrationPolicy,
+            MIGRANT_COHORT_PEOPLE, MIGRATION_MAX_IN_FLIGHT_PER_CORP, MigrantLeg, MigrantRun,
         };
-
-        #[derive(Clone, Copy)]
-        struct Candidate {
-            system: EntityId,
-            body: u32,
-            score: f64,
-            interval_s: f64,
-        }
 
         let owners: Vec<PlayerId> = self.players.keys().copied().collect();
         for owner in owners {
@@ -18294,72 +18556,7 @@ impl World {
             if in_flight >= MIGRATION_MAX_IN_FLIGHT_PER_CORP {
                 continue;
             }
-
-            // Existing research keeps its mechanical value: medical/civic work
-            // now attracts and processes settlers faster, rather than creating
-            // biological population inside the production tick.
-            let migration_mult = self.research_mod(owner, crate::research::ModKey::PopGrowth)
-                * self.syndicate_mult(owner, crate::syndicate::SyndicateBonus::Migration);
-            let habitat_mult = self.research_mod(owner, crate::research::ModKey::HabitatCap);
-            let young_mult = self.research_mod(owner, crate::research::ModKey::GrowthBelowHalf);
-            let mut best: Option<Candidate> = None;
-            for sys in self.systems.iter().filter(|s| {
-                s.owner == Some(owner)
-                    && s.food_state == crate::colony::FoodState::WellSupplied
-                    && !s.blockade_held()
-            }) {
-                let workforce = crate::colony::workforce_units(sys.population());
-                let posted = sys.workforce_posted();
-                // §workforce cap: posts can no longer exceed the workforce, so a
-                // staffing shortage is no free worker while crews are still
-                // wanted — built posts stand empty, or a population drop left
-                // the posted lines short.
-                let short = posted >= workforce && (posted > workforce || sys.workforce_posts() > posted);
-                for body in &sys.bodies {
-                    let policy = body.migration_policy;
-                    if policy == MigrationPolicy::Closed || body.population <= 0.0 {
-                        continue;
-                    }
-                    if policy == MigrationPolicy::Managed && !short {
-                        continue;
-                    }
-                    let cap = body.population_capacity()
-                        * habitat_mult;
-                    let reserved = body.population
-                        + body.inbound_migrants as f64 / 1_000_000.0;
-                    if cap - reserved + 1e-12 < MIGRANT_COHORT_POP {
-                        continue;
-                    }
-                    let appeal = body.population_growth_mult().max(0.25);
-                    let below_half = reserved < cap * 0.5;
-                    let young = if below_half { young_mult } else { 1.0 };
-                    let interval_s = MIGRATION_BASE_INTERVAL_S * policy.interval_mult()
-                        / (appeal * migration_mult * young).max(0.05);
-                    // Policy is the player's explicit direction. Within a policy,
-                    // worlds with better living conditions and more free housing
-                    // win; lower population breaks near-ties toward frontier sites.
-                    let free_frac = ((cap - reserved) / cap.max(MIGRANT_COHORT_POP))
-                        .clamp(0.0, 1.0);
-                    let score = policy.selection_weight() * 100.0
-                        + appeal * 10.0
-                        + free_frac
-                        - reserved;
-                    let candidate = Candidate {
-                        system: sys.id,
-                        body: body.id,
-                        score,
-                        interval_s,
-                    };
-                    if best.is_none_or(|old| {
-                        candidate.score > old.score
-                            || (candidate.score == old.score
-                                && (candidate.system, candidate.body) < (old.system, old.body))
-                    }) {
-                        best = Some(candidate);
-                    }
-                }
-            }
-            let Some(target) = best else {
+            let Some(target) = self.migration_pick(owner, &self.systems) else {
                 continue;
             };
             let Some(dest_pos) = self
@@ -18512,7 +18709,7 @@ impl World {
     /// Captured or capacity-lost destinations reject the landing and the liner
     /// returns to the Hub. A successful arrival is the only post-founding path
     /// that increases population.
-    fn resolve_migrant_arrivals(&mut self, _events: &mut Vec<Event>) {
+    fn resolve_migrant_arrivals(&mut self, events: &mut Vec<Event>) {
         use crate::migration::{MIGRANT_COHORT_POP, MigrantLeg};
 
         // Combat/removal paths normally scuttle their sidecars immediately; this
@@ -18591,9 +18788,22 @@ impl World {
                                 run.people as f64 / 1_000_000.0,
                             );
                         }
+                        events.push(Event::new(self.time, EventPayload::MigrantsLanded {
+                            owner: run.owner,
+                            system: run.dest,
+                            body: run.body,
+                            people: run.people,
+                            relocated: run.origin.is_some(),
+                        }));
                         self.migrant_runs.remove(&fleet);
                         self.fleets.remove(&fleet);
                     } else {
+                        events.push(Event::new(self.time, EventPayload::MigrantsTurnedBack {
+                            owner: run.owner,
+                            system: run.dest,
+                            body: run.body,
+                            people: run.people,
+                        }));
                         if let Some(active) = self.migrant_runs.get_mut(&fleet) {
                             active.leg = MigrantLeg::Returning;
                         }
@@ -18624,10 +18834,12 @@ impl World {
         mission: TradeMission,
     ) -> EntityId {
         let id = self.alloc_entity_id();
-        let mut ship = Fleet::single(
+        // §reactors-drives: a corporation's convoy runs on the rung it can fuel.
+        let mut ship = Fleet::single_on(
             id,
             owner,
             ShipKind::Convoy,
+            self.engine_for(owner, ShipKind::Convoy),
             spawn,
             FleetOrder::MoveTo { dest },
             Some(cargo),
@@ -18696,79 +18908,6 @@ impl World {
                     && land_at != Some(home_sys)
                 {
                     // Turn for home, people (and any cargo) still aboard.
-                    ship.order = FleetOrder::MoveTo { dest: corp.home };
-                    ship.mission = Some(TradeMission::DeliverToSystem { system: home_sys });
-                    self.fleets.insert(id, ship);
-                    continue;
-                }
-            }
-            // §modules Part B3 (Sol hub): a SELL convoy clears its crates at Sol on
-            // arrival — the buy-back price is decided here (price-on-arrival).
-            if !ship.modules.is_empty() && matches!(ship.mission, Some(TradeMission::SellAtHub)) {
-                let manifest = std::mem::take(&mut ship.modules);
-                let priced: Vec<(crate::module::ModuleKind, u32, f64)> = manifest
-                    .into_iter()
-                    .map(|(k, n)| (k, n, self.module_sell_price(k)))
-                    .collect();
-                for (kind, n, unit) in priced {
-                    self.wire_home(ship.owner, unit * n as f64, self.hub);
-                    events.push(Event::new(
-                        now,
-                        EventPayload::ModulesSold {
-                            owner: ship.owner,
-                            kind,
-                            n,
-                            unit_price: unit,
-                        },
-                    ));
-                }
-                continue; // the sell convoy's job is done — it vanishes at the hub.
-            }
-            // §modules Part B3: MODULE CRATES land into the destination ledger under
-            // the same rule — held ground (owner or ally); a lost destination
-            // redirects the convoy home so crates are never silently deleted.
-            // A player hauling bulk goods to the Market Warehouse keeps its
-            // recovered equipment aboard. The warehouse has no module ledger;
-            // this is not a failed system delivery to redirect back home.
-            if !ship.modules.is_empty()
-                && !matches!(ship.mission, Some(TradeMission::DeliverToWarehouse { .. })) {
-                let land_at = match ship.mission {
-                    Some(TradeMission::DeliverToSystem { system }) => Some(system),
-                    Some(TradeMission::DeliverHome) => {
-                        self.players.get(&ship.owner).and_then(|c| c.home_system)
-                    }
-                    _ => None,
-                };
-                let allies = self.allies_of(ship.owner);
-                let landed = land_at.is_some_and(|sid| {
-                    self.systems
-                        .iter_mut()
-                        .find(|s| {
-                            s.id == sid
-                                && s.owner
-                                    .is_some_and(|o| o == ship.owner || allies.contains(&o))
-                        })
-                        .map(|sys| {
-                            for (k, n) in &ship.modules {
-                                *sys.modules.entry(*k).or_insert(0) += n;
-                            }
-                        })
-                        .is_some()
-                });
-                if landed {
-                    let manifest = std::mem::take(&mut ship.modules);
-                    events.push(Event::new(
-                        now,
-                        EventPayload::ModulesDelivered {
-                            owner: ship.owner,
-                            system: land_at.unwrap(),
-                            manifest,
-                        },
-                    ));
-                } else if let Some(corp) = self.players.get(&ship.owner)
-                    && let Some(home_sys) = corp.home_system
-                    && land_at != Some(home_sys)
-                {
                     ship.order = FleetOrder::MoveTo { dest: corp.home };
                     ship.mission = Some(TradeMission::DeliverToSystem { system: home_sys });
                     self.fleets.insert(id, ship);
@@ -19529,7 +19668,6 @@ impl World {
     /// live integrated market curve. The corporation's Market Warehouse is
     /// ordinary cargo, not a fuel pump, and is deliberately untouched.
     fn refuel_docked(&mut self, events: &mut Vec<Event>) {
-        use crate::cargo::Commodity as C;
         let ids: Vec<EntityId> = self.fleets.keys().copied().collect();
         for id in ids {
             // Do not fill tanks which the yard has committed to remove.
@@ -19541,13 +19679,12 @@ impl World {
                 continue;
             };
             let owner = f.owner;
-            let fusion = !f.burns_uranium();
-            let rooms = (
-                if fusion { f.fusion_room() } else { 0.0 },
-                (f.uranium_capacity() - f.uranium).max(0.0),
-                (f.antimatter_capacity() - f.antimatter).max(0.0),
-            );
-            if rooms.0 <= 1e-9 && rooms.1 <= 1e-9 && rooms.2 <= 1e-9 {
+            // §shipbuilding-overhaul: one tank per fuel aboard; the dock fills
+            // each kind the hulls burn, and (Phase 5) the magazines the guns
+            // aboard take, from the same stockpile or the same Hub purchase.
+            let wants: Vec<(crate::cargo::Commodity, f64)> = f.supplies_aboard().into_iter()
+                .map(|c| (c, f.room(c))).filter(|(_, room)| *room > 1e-9).collect();
+            if wants.is_empty() {
                 continue;
             }
             let mut took_any = false;
@@ -19557,42 +19694,24 @@ impl World {
                         continue;
                     };
                     let f = self.fleets.get_mut(&id).expect("docked fleet exists");
-                    let draw = |sys: &mut crate::galaxy::StarSystem, c: C, want: f64| -> f64 {
+                    for (c, want) in wants {
                         let spare = sys.free_stock(c) - sys.power_reserve(c, POWER_RESERVE_SECS);
                         let take = spare.min(want).max(0.0);
                         if take > 1e-9 {
                             *sys.stockpile.entry(c).or_insert(0.0) -= take;
+                            took_any |= f.take_fuel(c, take) > 1e-9;
                         }
-                        take.max(0.0)
-                    };
-                    if fusion {
-                        if f.fuel_research.helium3 {
-                            let units = draw(sys, C::Helium3, f.fusion_room());
-                            took_any |= f.refuel_helium3(units) > 1e-9;
-                        }
-                        let d = draw(sys, crate::fuel::MOVEMENT_FUEL, f.fusion_room());
-                        took_any |= f.refuel(d) > 1e-9;
                     }
-                    let u = draw(sys, crate::fuel::FISSION_FUEL, (f.uranium_capacity() - f.uranium).max(0.0));
-                    took_any |= f.refuel_uranium(u) > 1e-9;
-                    let a = draw(sys, crate::fuel::JUMP_FUEL, (f.antimatter_capacity() - f.antimatter).max(0.0));
-                    took_any |= f.refuel_antimatter(a) > 1e-9;
                 }
                 crate::ship::DockSite::Hub => {
                     if self.charter_of(owner).exchange_closed() {
                         continue;
                     }
-                    for (commodity, room) in [(crate::fuel::MOVEMENT_FUEL, rooms.0),
-                        (crate::fuel::FISSION_FUEL, rooms.1), (crate::fuel::JUMP_FUEL, rooms.2)]
-                    {
+                    for (commodity, room) in wants {
                         let units = self.hub_bunker(owner, id, commodity, room, events);
                         if units > 0.0 {
                             let f = self.fleets.get_mut(&id).expect("docked fleet exists");
-                            match commodity {
-                                C::Uranium => { f.refuel_uranium(units); }
-                                C::Antimatter => { f.refuel_antimatter(units); }
-                                _ => { f.refuel(units); }
-                            }
+                            f.take_fuel(commodity, units);
                             took_any = true;
                         }
                     }
@@ -20257,15 +20376,15 @@ impl World {
                 .get(&owner)
                 .map(|c| c.founding.stage)
                 .unwrap_or(S::Complete);
-            // The refining route needs research BEFORE its Smelter. The same
-            // one-time assistance is available here and on the freight route;
-            // switching goals/queues never awards another grant.
+            // The charter's research step gets a one-time head start. The same
+            // assistance is available here and on the freight route; switching
+            // goals/queues never awards another grant.
             if matches!(stage, S::GrowBusiness | S::FirstResearch)
                 && !founding.research_grant_applied
                 && research_completed == 0
                 && let Some(active) = research_active.as_deref()
                 && crate::research::programme(active).is_some_and(|p| p.tier == 1)
-                // §refining: the charter funds the programme its Smelter needs.
+                // §freight-frames: the charter funds the programme its next build needs.
                 && (!founding.local_opening || active == crate::founding::CHARTER_RESEARCH)
                 && let Some(corp) = self.players.get_mut(&owner)
             {
@@ -20302,26 +20421,46 @@ impl World {
                 // privateer) are `advance_local_opening`'s, which returned above.
                 S::BuildBioharvester | S::BuildHabitat | S::BuildAgroplex | S::BuildMine
                 | S::PirateRaid | S::BuildGunPlatform | S::SellOre | S::PowerShipyard | S::BuySemiconductors
-                | S::BuildShipyard | S::BuildFreighter | S::BuildInterceptor
+                | S::BuildShipyard | S::BuildSmelter | S::BuildFreighter | S::BuildInterceptor
                 | S::DefeatPrivateer | S::BuildConvoy
                 | S::CompleteExport | S::GrowBusiness | S::BuildSecondFreighter => None,
                 // Done when the report that the den fell reaches command.
                 S::EliminateDen => {
-                    let unreported = founding.den_report_at.is_none();
-                    self.note_founding_den_cleared(owner, events);
                     // §vendetta: among the den's stores, the uncle's message.
-                    if unreported
-                        && self.players[&owner].founding.den_report_at.is_some()
-                        && !owner.is_bot()
-                        && let Some(pos) = founding.den.and_then(|d| self.systems.iter().find(|s| s.id == d)).map(|s| s.pos)
-                    {
-                        out.push(Event::new(self.time, EventPayload::Vendetta {
-                            owner, beat: crate::founding::VendettaBeat::Den, pos, stolen: BTreeMap::new(), wreck: None }));
-                    }
+                    self.note_and_tell_founding_den_cleared(owner, events, &mut out);
                     self.players
                         .get(&owner)
                         .and_then(|c| c.founding.den_report_at)
                         .is_some_and(|at| at <= self.time)
+                        .then_some(S::RepairInterceptor)
+                }
+                // §stash (Peter, Nov 3 2026): three steps that overlap. The
+                // loot loads and travels whichever of them is current.
+                S::RepairInterceptor => {
+                    self.advance_founding_stash(owner, &mut out);
+                    self.players.get(&owner).is_some_and(|c| c.founding.den_wounded.is_empty())
+                        .then_some(S::BuildTinyFreighter)
+                }
+                S::BuildTinyFreighter => {
+                    self.advance_founding_stash(owner, &mut out);
+                    let own = self.fleets.values().any(|f| f.owner == owner && f.ships.iter().any(|s| s.kind.is_player_freighter()));
+                    let hauled = self.players.get(&owner).is_some_and(|c| c.founding.stash_fleet.is_some()
+                        || c.founding.stash_home_at.is_some());
+                    (own || hauled).then_some(S::FullSpeed)
+                }
+                // §full-speed (Peter, Nov 4 2026): a freighter flying Full, or
+                // the loot already aboard.
+                S::FullSpeed => {
+                    self.advance_founding_stash(owner, &mut out);
+                    let full = self.fleets.values().any(|f| f.owner == owner && f.transit == crate::ship::TransitMode::Full
+                        && f.ships.iter().any(|s| s.kind.is_player_freighter()));
+                    let hauled = self.players.get(&owner).is_some_and(|c| c.founding.stash_fleet.is_some()
+                        || c.founding.stash_home_at.is_some());
+                    (full || hauled).then_some(S::HaulLoot)
+                }
+                S::HaulLoot => {
+                    self.advance_founding_stash(owner, &mut out);
+                    self.players.get(&owner).is_some_and(|c| c.founding.stash_home_at.is_some_and(|at| at <= self.time))
                         .then_some(S::PrepareExport)
                 }
                 // §charter-v5: done when the report of the first ore export
@@ -20331,14 +20470,29 @@ impl World {
                     .is_some_and(|at| at <= self.time)
                     .then_some(S::FirstResearch),
                 S::LocalRecovery | S::ExportProduction => Some(S::PrepareExport),
-                // §refining (Oct 30 2026): Enrichment, which unlocks the Smelter.
+                // §freight-frames (Nov 6 2026): Freight Frames, which unlocks
+                // the Small Freighter (Enrichment and its Smelter before).
                 S::FirstResearch => {
-                    let enrichment = research_active.as_deref() == Some(crate::founding::CHARTER_RESEARCH)
+                    let researching = research_active.as_deref() == Some(crate::founding::CHARTER_RESEARCH)
                         || self.players[&owner].research.completed.contains(crate::founding::CHARTER_RESEARCH);
-                    (enrichment && staffed(crate::build::StructureKind::Academy)).then_some(S::BuildSmelter)
+                    (researching && staffed(crate::build::StructureKind::Academy)).then_some(S::AnswerSignal)
                 }
-                // Done once a staffed Smelter stands at home.
-                S::BuildSmelter => staffed(crate::build::StructureKind::Smelter).then_some(S::ExpandMining),
+                // §signals (Peter, Nov 4 2026): while the research runs, a
+                // captained fleet answers a signal. Bots skip it, and so does a
+                // corporation with no open signal or no captained fleet.
+                S::AnswerSignal => {
+                    let corp = &self.players[&owner];
+                    let answered = corp.signals.signals.iter().any(|s| s.outcome.is_some());
+                    let open = corp.signals.signals.iter().any(|s| s.outcome.is_none());
+                    let answering = self.fleets.values().any(|f| f.owner == owner
+                        && matches!(f.order, FleetOrder::Expedition { task: crate::sites::ExpeditionTask::Signal, .. }));
+                    let captained = self.fleets.values().any(|f| f.owner == owner && self.captain_assigned_to(owner, f.id).is_some());
+                    (owner.is_bot() || answered || answering || !open || !captained).then_some(S::BuildSmallFreighter)
+                }
+                // §freight-frames: done once a Small Freighter is the corporation's.
+                S::BuildSmallFreighter => self.fleets.values()
+                    .any(|f| f.owner == owner && f.contains(crate::ship::ShipKind::SmallFreighter))
+                    .then_some(S::ExpandMining),
                 S::ExpandMining => self.founding_mine_expanded(owner).then_some(S::SurveyCandidates),
                 S::SurveyCandidates => {
                     // §charter v3: one probe survey of the assigned local stop.
@@ -20648,13 +20802,14 @@ impl World {
                                 _ => None,
                             },
                             operation.board_day,
+                            operation.founder_contract(),
                         ));
                         operation.rewards_paid.insert(report.recipient);
                     }
                 }
             }
         }
-        for (player, reward, share, assigned_fleet, prize, board_day) in payouts {
+        for (player, reward, share, assigned_fleet, prize, board_day, founder) in payouts {
             // §contract-board: the day's bonus, once enough of its contracts
             // have paid out.
             if let Some(day) = board_day
@@ -20674,10 +20829,11 @@ impl World {
                     }));
                 }
             }
+            let mut standing = 0.0;
             if let Some(corp) = self.players.get_mut(&player) {
                 corp.credits += reward.credits * share;
                 let now = self.time;
-                corp.earn_standing(reward.authority_standing * share, now);
+                standing = corp.earn_standing(reward.authority_standing * share, now);
                 if corp.research.active.is_some() {
                     corp.research.progress += reward.research_insight * share;
                 }
@@ -20687,6 +20843,22 @@ impl World {
                 if let Some(prize) = prize {
                     corp.research.recover_dossier(prize.programme(), pirate::SitePrize::DOSSIER_FRACTION);
                 }
+            }
+            // §den-contract: the den's contract pays as the charter's reward
+            // moment, as its stipend did (§founding R6), and its line opens
+            // the den's loot. §privateer-contract: the privateer's, as his
+            // bounty's stipend did.
+            if let Some(kind) = founder {
+                let family = self.pirate_family(player);
+                let title = if kind == crate::operation::FollowUpKind::FounderDen {
+                    family.map_or_else(|| "Privateer den eliminated · contract".to_string(),
+                        |p| format!("{} den eliminated · contract", p.surname()))
+                } else {
+                    family.map_or_else(|| "Rogue Privateer destroyed · contract".to_string(),
+                        |p| format!("{} destroyed · contract", p.nephew_name()))
+                };
+                events.push(Event::new(self.time, EventPayload::CharterStipend {
+                    owner: player, title, credits: reward.credits * share, standing, dossier: None }));
             }
             if let Some(fleet) = assigned_fleet {
                 self.grant_captain_xp(player, fleet, (reward.captain_xp as f64 * share) as u32);
@@ -20846,10 +21018,16 @@ impl World {
                 | F::BuildFreighter
                 | F::BuildInterceptor
                 | F::EliminateDen
+                | F::RepairInterceptor
+                | F::BuildTinyFreighter
+                | F::FullSpeed
+                | F::HaulLoot
+                | F::AnswerSignal
                 | F::PirateRaid
                 | F::BuildGunPlatform
                 | F::SellOre
                 | F::BuildSmelter
+                | F::BuildSmallFreighter
                 | F::ExpandMining => M::HomeDevelopment,
                 F::BuildScout => M::Exploration,
                 F::SurveyCandidates => M::Specialization,
@@ -20905,8 +21083,9 @@ impl World {
                 })
                 .unwrap_or_default();
             for (system, tier, origin) in intel {
-                // §charter-v4: a founder's den is the charter's own step and
-                // pays its stipend; no Authority bounty beside it.
+                // §charter-v4: a founder's den is the charter's own step.
+                // §den-contract: its contract is the charter's own
+                // (`post_founding_den_contract`); no second bounty.
                 if self.enclaves.get(&system).is_some_and(|e| e.founder_den) {
                     continue;
                 }
@@ -21140,6 +21319,11 @@ impl World {
         let Some(operation) = self.operations.get_mut(&id) else {
             return;
         };
+        // §den-contract, §privateer-contract: the charter's own contracts
+        // can't be dropped.
+        if operation.founder_contract().is_some() {
+            return;
+        }
         if !operation.participants.remove(&player) || operation.state.terminal() {
             return;
         }
@@ -21252,7 +21436,7 @@ impl World {
         let Some(fleet) = self.fleets.get_mut(&fleet_id) else {
             return;
         };
-        let room = fleet.cargo_capacity().saturating_sub(fleet.cargo_units());
+        let room = fleet.cargo_room().fits(commodity);
         if fleet.owner != player || !in_reach || room == 0 {
             return;
         }
@@ -21680,6 +21864,20 @@ impl World {
                 continue;
             }
             let snapshot = operation.clone();
+            // §den-contract: a founder's den found cleared without its fall
+            // in hand (a reload between the two, or another corporation's
+            // guns) still pays its contractor, as the den's step still counts
+            // (`note_founding_den_cleared`).
+            if snapshot.is_founder_den()
+                && snapshot.state == crate::operation::OperationState::Active
+                && let crate::operation::OperationKind::PirateBounty { system, .. } = snapshot.kind
+                && self.enclaves.get(&system).is_none_or(|e| e.cleared)
+                && let crate::operation::OperationScope::Private { player } = snapshot.scope
+            {
+                let pos = snapshot.kind.target_pos(&self.operation_system_positions(), self.hub);
+                self.complete_operation(id, Some(player), pos, events);
+                continue;
+            }
             if let crate::operation::OperationKind::PirateBounty { system, tier } = snapshot.kind
                 && self.enclaves.get(&system).is_some_and(|e|
                     (pirate::permanent_site(tier) && e.cleared)
@@ -21733,7 +21931,7 @@ impl World {
                         self.recover_pirate_prize(player, id, fleet, events);
                     }
                 }
-                crate::operation::OperationKind::RescueSalvage { pos, .. } => {
+                crate::operation::OperationKind::RescueSalvage { pos, commodity, .. } => {
                     let recovery = snapshot
                         .assigned_fleets
                         .iter()
@@ -21743,7 +21941,7 @@ impl World {
                                     && (ship.pos.distance(pos)
                                         <= crate::operation::SALVAGE_RECOVERY_RADIUS
                                         || self.same_system(ship.pos, pos))
-                                    && ship.cargo_units() < ship.cargo_capacity())
+                                    && ship.cargo_room().fits(commodity) > 0)
                                 .then_some((*player, *fleet))
                             })
                         })
@@ -22546,6 +22744,19 @@ mod tests {
         let yard = crate::build::yard_for(ship).0;
         let sys = w.systems.iter_mut().find(|s| s.id == system).unwrap();
         sys.set_population(0.05);
+        // §shipbuilding-overhaul: a staffed yard has the kit parts on its
+        // shelf (bought from the Authority in play).
+        // §hull-ladder: every size of engine and frame, plating, precision
+        // parts and the capitals' rare materials, in quantity.
+        for (part, n) in [(Commodity::FissionReactor, 200.0), (Commodity::ZephyrDrive, 200.0), (Commodity::NavComputer, 20.0),
+            (Commodity::HullSections, 600.0), (Commodity::CargoBay, 60.0), (Commodity::PulseLaser, 60.0), (Commodity::BeamBattery, 40.0),
+            (Commodity::Composites, 3_000.0), (Commodity::PrecisionComponents, 800.0), (Commodity::Electronics, 2_000.0),
+            (Commodity::Machinery, 1_000.0), (Commodity::RareElements, 5_000.0), (Commodity::Iridium, 3_000.0),
+            (Commodity::HeavyFissionReactor, 100.0), (Commodity::HeavyZephyrDrive, 100.0), (Commodity::HeavyHullSections, 400.0),
+            (Commodity::CapitalFissionReactor, 200.0), (Commodity::CapitalZephyrDrive, 200.0), (Commodity::CapitalHullSections, 1_600.0)] {
+            let have = sys.stockpile.entry(part).or_insert(0.0);
+            *have = have.max(n);
+        }
         let body = sys.bodies.iter_mut().max_by_key(|b| b.tier(yard)).unwrap();
         assert!(body.tier(yard) > 0);
         body.assignments.insert(yard, crate::production::Assignment::crew(body.tier(yard)));
@@ -23474,7 +23685,7 @@ mod tests {
                 (Commodity::Polymers, 400.0),
             ],
         );
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Freighter,
@@ -23672,14 +23883,14 @@ mod tests {
         }]);
         let home = w.players[&id].home_system.unwrap();
         staff_construction_yard(&mut w, home, ShipKind::TinyFreighter);
-        // The Tiny recipe is Alloys + Machinery + Polymers —
-        // the starter kit covers it; measure the ALLOYS line, nothing at the
-        // home produces Alloys so the debit is exact.
+        // §hull-ladder: the Tiny's kit is engines, frame, bay, plating and a
+        // few parts — the sandbox kit covers it; measure the COMPOSITES line,
+        // nothing at the home produces Composites so the debit is exact.
         let alloys0 =
-            w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Alloys];
+            w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Composites];
         let ships0 = w.fleets.len();
 
-        w.receive_admin_for_test(&[Command::BuildShip {
+        w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -23687,10 +23898,10 @@ mod tests {
             loadout: Default::default(),
         }]);
         let alloys1 =
-            w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Alloys];
+            w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&Commodity::Composites];
         assert!(
-            (alloys0 - alloys1 - 20.0).abs() < 1e-9,
-            "alloys debited by the Tiny Freighter recipe (got {})",
+            (alloys0 - alloys1 - 4.0).abs() < 1e-9,
+            "plating debited by the Tiny Freighter recipe (got {})",
             alloys0 - alloys1
         );
         assert_eq!(w.build_queue.len(), 1, "a build job is enqueued");
@@ -23775,7 +23986,7 @@ mod tests {
         w.fleets.insert(supply_id, supply);
         assert_eq!(w.dock_of(supply_id), Some(DockSite::System(home)));
 
-        w.receive_admin_for_test(&[Command::BuildShip {
+        w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: owner,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -23789,11 +24000,12 @@ mod tests {
                 ship: ShipKind::TinyFreighter
             }
         )));
-        // The reduced recipe consumes 36 of the 45 imported units, not the
-        // entire hold. The original Tiny remains available for another route.
-        assert_eq!(w.fleets[&supply_id].cargo_amount(Commodity::Alloys), 5);
-        assert_eq!(w.fleets[&supply_id].cargo_amount(Commodity::Machinery), 2);
-        assert_eq!(w.fleets[&supply_id].cargo_amount(Commodity::Polymers), 2);
+        // §hull-ladder: the kit recipe draws its one Machinery of the 45
+        // imported units (no Alloys in a kit), not the entire hold. The
+        // original Tiny remains available for another route.
+        assert_eq!(w.fleets[&supply_id].cargo_amount(Commodity::Alloys), 25);
+        assert_eq!(w.fleets[&supply_id].cargo_amount(Commodity::Machinery), 9);
+        assert_eq!(w.fleets[&supply_id].cargo_amount(Commodity::Polymers), 10);
         assert_eq!(w.fleets[&supply_id].flagship_kind(), ShipKind::TinyFreighter);
     }
 
@@ -23859,9 +24071,11 @@ mod tests {
             name: "Acme".into(),
         }]);
         let home = w.players[&id].home_system.unwrap();
-        // Home produces only Ore + Provisions → it has NO Alloys/Fuel, so a Raider
-        // (Alloys + Fuel) is unaffordable: a soft reject (no debit, no job, no event).
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        // §hull-ladder: the sandbox kit holds a freighter's parts but, once its
+        // six Pulse Lasers are gone, no guns — so a Raider (six of them) is
+        // unaffordable: a soft reject (no debit, no job, no event).
+        w.systems.iter_mut().find(|s| s.id == home).unwrap().stockpile.remove(&Commodity::PulseLaser);
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Raider,
@@ -23871,7 +24085,7 @@ mod tests {
         assert!(
             !ev.iter()
                 .any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
-            "no build started"
+            "no build started: {:?}", ev.iter().map(|e| format!("{:?}", e.payload).chars().take(120).collect::<String>()).collect::<Vec<_>>()
         );
         assert!(
             w.build_queue.is_empty(),
@@ -23968,7 +24182,7 @@ mod tests {
             home,
             &[(Commodity::MetallicOre, 100.0), (Commodity::Alloys, 50.0)],
         );
-        w.receive_admin_for_test(&[Command::BuildShip {
+        w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -24040,7 +24254,9 @@ mod tests {
             name: "Acme".into(),
         }]);
         let home = w.players[&id].home_system.unwrap();
-        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 10_000.0)]);
+        // §progression: a level II of an income structure costs ×3.5.
+        seed_stock(&mut w, home, &[(Commodity::MetallicOre, 10_000.0), (Commodity::Alloys, 1_000.0),
+            (Commodity::Machinery, 1_000.0)]);
         let pool = crate::build::SlotPool::Resource;
         // §home-ore: the garden's own ore site starts free; mine it here so the
         // planets' Resource pool is full for this test.
@@ -24104,7 +24320,7 @@ mod tests {
         );
 
         // Ships are UNITS, not developments — never slot-gated (only recipe-gated).
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -24222,6 +24438,8 @@ mod tests {
             player_id: id,
             name: "Armada".into(),
         }]);
+        // §licences: these tests are about research and yards; the Authority licenses every hull.
+        w.players.get_mut(&id).unwrap().licences.extend(crate::licence::licensed_hulls().into_iter().map(|k| (k, 0.0)));
         let sid = w.players[&id].syndicate.unwrap();
         let home = w.players[&id].home_system.unwrap();
         let hpos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
@@ -24237,6 +24455,7 @@ mod tests {
             &mut w,
             home,
             &[
+                (Commodity::NavComputer, 100.0), (Commodity::BeamBattery, 100.0), (Commodity::PulseLaser, 100.0), // §shipbuilding-overhaul: the kit
                 (Commodity::Alloys, 20_000.0),
                 (Commodity::Electronics, 10_000.0),
                 (Commodity::Armaments, 10_000.0),
@@ -24246,10 +24465,14 @@ mod tests {
             ],
         );
         seed_stock(&mut w, home, &[(Commodity::HullSections, 1000.0),
-            (Commodity::PrecisionComponents, 1000.0), (Commodity::WarpCore, 1000.0),
-            (Commodity::Iridium, 1000.0)]);
+            (Commodity::PrecisionComponents, 1000.0), (Commodity::FissionReactor, 1000.0), (Commodity::ZephyrDrive, 1000.0),
+            (Commodity::Iridium, 10_000.0), (Commodity::RareElements, 10_000.0),
+            // §hull-ladder: plating and the heavy and capital sizes.
+            (Commodity::Composites, 20_000.0), (Commodity::HeavyFissionReactor, 200.0), (Commodity::HeavyZephyrDrive, 200.0),
+            (Commodity::HeavyHullSections, 1_000.0), (Commodity::CapitalFissionReactor, 500.0), (Commodity::CapitalZephyrDrive, 500.0),
+            (Commodity::CapitalHullSections, 5_000.0)]);
         // UNRESEARCHED: a capital keel soft-rejects with the research reason.
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Destroyer,
@@ -24273,7 +24496,7 @@ mod tests {
             .research
             .completed
             .insert("hull_line_iv_destroyer".into());
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Destroyer,
@@ -24286,13 +24509,11 @@ mod tests {
             "the unlocked Destroyer lays its keel"
         );
         // TITAN: research VIII grants the hull AND the Shipyard-6 ceiling (the
-        // effects array in action).
-        w.players
-            .get_mut(&id)
-            .unwrap()
-            .research
-            .completed
-            .insert("hull_line_viii_titan".into());
+        // effects array in action). §hull-ladder: its capital engines and
+        // frame are the Dreadnought line's (`fuel::EngineSize::programme`).
+        let research = &mut w.players.get_mut(&id).unwrap().research.completed;
+        research.insert("hull_line_vii_dreadnought".into());
+        research.insert("hull_line_viii_titan".into());
         assert_eq!(
             crate::research::unlocked_structure_tier(
                 &w.players[&id].research,
@@ -24301,7 +24522,7 @@ mod tests {
             6,
             "Line VIII carries the yard ceiling with the hull"
         );
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Titan,
@@ -24314,7 +24535,7 @@ mod tests {
             "the first Titan keel is laid"
         );
         // SINGLETON: a second keel is rejected while one is QUEUED…
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Titan,
@@ -24341,7 +24562,7 @@ mod tests {
             )
         });
         let titan = squad(&mut w, id, hpos, ShipKind::Titan, 1, FleetOrder::Idle);
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Titan,
@@ -24381,7 +24602,7 @@ mod tests {
             )],
             complete_tick: w.tick + 10_000,
         });
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Titan,
@@ -24431,7 +24652,7 @@ mod tests {
             w.syndicates[&sid].flagship_name.is_none(),
             "the name dies with the ship"
         );
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Titan,
@@ -24857,7 +25078,7 @@ mod tests {
 
         // Convoy (needs tier 1) builds turn one — no chicken-and-egg stall.
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 100.0)]);
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -24879,7 +25100,10 @@ mod tests {
             id,
             name: "Acme".into(),
         }]);
+        // §research-locked (Nov 11 2026): the Corvette is Escort Datalink's.
+        w.players.get_mut(&id).unwrap().research.completed.insert("hull_line_iii_escort_datalink".into());
         let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::NavComputer, 8.0), (Commodity::HullSections, 20.0), (Commodity::PulseLaser, 16.0), (Commodity::FissionReactor, 20.0), (Commodity::ZephyrDrive, 20.0)]); // §shipbuilding-overhaul: the kit parts
         // §economy Part 5: hulls = Alloys+Electronics+Armaments+a Warp Core;
         // the Shipyard-2 build needs Machinery/Alloys/Electronics.
         seed_stock(
@@ -24890,10 +25114,13 @@ mod tests {
                 (Commodity::Electronics, 60.0),
                 (Commodity::Armaments, 40.0),
                 (Commodity::Machinery, 40.0),
-                (Commodity::WarpCore, 3.0),
+                (Commodity::FissionReactor, 8.0), (Commodity::ZephyrDrive, 8.0),
+                // §hull-ladder: an Interceptor's and a Corvette's kits.
+                (Commodity::NavComputer, 2.0), (Commodity::HullSections, 20.0), (Commodity::PulseLaser, 10.0),
+                (Commodity::Composites, 40.0), (Commodity::PrecisionComponents, 5.0),
             ],
         );
-        let build = |w: &mut World, ship_kind| w.receive_admin_for_test(&[Command::BuildShip {
+        let build = |w: &mut World, ship_kind| w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind,
@@ -24984,7 +25211,7 @@ mod tests {
         );
         seed_stock(&mut w, claim, &[(Commodity::MetallicOre, 100.0)]);
 
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: claim,
             ship_kind: ShipKind::TinyFreighter,
@@ -25277,6 +25504,7 @@ mod tests {
         // Plant a colony fleet right on the target (unit test shortcut — the
         // transit itself is covered by the §ships part 3 claiming tests).
         let pos = w.systems.iter().find(|s| s.id == target).unwrap().pos;
+        w.grant_claim(id, target);
         let fid = EntityId(9001);
         w.fleets.insert(
             fid,
@@ -25367,7 +25595,7 @@ mod tests {
             "food changes efficiency and eligibility, never population by itself"
         );
         assert!(
-            system_stock(&w, home, Commodity::MetallicOre) > 20.0,
+            system_stock(&w, home, Commodity::MetallicOre) > 20.0 * crate::production::OUTPUT_SCALE,
             "the staffed mine banks ore for building"
         );
         assert!(
@@ -25502,6 +25730,102 @@ mod tests {
         );
         w.depart_migrant_liners();
         assert_eq!(w.migrant_runs.len(), 1);
+    }
+
+    #[test]
+    fn managed_counts_inbound_crews_so_one_empty_post_calls_one_liner() {
+        use crate::build::StructureKind as K;
+        use crate::migration::MigrationHold;
+        let mut w = test_world();
+        let owner = PlayerId(5_054);
+        w.step(&[Command::AddPlayer { id: owner, name: "Counted".into() }]);
+        let system = w.players[&owner].home_system.unwrap();
+        // Three crews, all posted, plenty of housing, and a Mining Complex
+        // level still wanting a fourth crew.
+        let body = {
+            let sys = w.systems.iter_mut().find(|s| s.id == system).unwrap();
+            let body = sys.bodies.iter().find(|b| b.population > 0.0).unwrap().id;
+            for b in sys.bodies.iter_mut() {
+                b.assignments.clear();
+                b.structures.retain(|kind, _| !kind.takes_workforce());
+            }
+            sys.food_state = crate::colony::FoodState::WellSupplied;
+            let b = sys.bodies.iter_mut().find(|b| b.id == body).unwrap();
+            b.population = 0.003;
+            b.set_tier(K::Habitat, 4);
+            b.set_tier(K::MiningComplex, 4);
+            b.assignments.insert(K::MiningComplex, crate::production::Assignment::crew(3));
+            body
+        };
+        let hold = |w: &World| {
+            let sys = w.systems.iter().find(|s| s.id == system).unwrap();
+            crate::migration::candidate(sys, sys.bodies.iter().find(|b| b.id == body).unwrap(), w.migration_mods(owner)).err()
+        };
+        {
+            let sys = w.systems.iter().find(|s| s.id == system).unwrap();
+            assert_eq!((sys.workforce_posted(), sys.workforce_posts()), (3, 4), "every crew posted, one post short");
+        }
+        assert_eq!(hold(&w), None, "one post short: a liner is due");
+        w.depart_migrant_liners();
+        assert_eq!(w.migrant_runs.len(), 1);
+
+        // The interval runs out before the liner lands: its crew already
+        // fills the empty post, so Managed calls nobody else.
+        w.next_migration_at.clear();
+        assert_eq!(hold(&w), Some(MigrationHold::Staffed));
+        w.depart_migrant_liners();
+        assert_eq!(w.migrant_runs.len(), 1, "one empty post, one liner");
+
+        // A second empty post calls a second liner.
+        let sys = w.systems.iter_mut().find(|s| s.id == system).unwrap();
+        sys.bodies.iter_mut().find(|b| b.id == body).unwrap().set_tier(K::MiningComplex, 5);
+        w.depart_migrant_liners();
+        assert_eq!(w.migrant_runs.len(), 2);
+
+        // An unposted crew holds Managed until it is posted.
+        w.next_migration_at.clear();
+        let sys = w.systems.iter_mut().find(|s| s.id == system).unwrap();
+        sys.bodies.iter_mut().find(|b| b.id == body).unwrap()
+            .assignments.insert(K::MiningComplex, crate::production::Assignment::crew(2));
+        assert_eq!(hold(&w), Some(MigrationHold::CrewFree));
+    }
+
+    #[test]
+    fn a_liner_lands_on_its_timetable_and_logs_the_landing() {
+        let mut w = test_world();
+        let owner = PlayerId(5_055);
+        w.step(&[Command::AddPlayer { id: owner, name: "Timetable".into() }]);
+        let system = w.players[&owner].home_system.unwrap();
+        let body = {
+            let sys = w.systems.iter_mut().find(|s| s.id == system).unwrap();
+            sys.food_state = crate::colony::FoodState::WellSupplied;
+            let b = sys.bodies.iter_mut().find(|b| b.population > 0.0).unwrap();
+            b.migration_policy = crate::migration::MigrationPolicy::Open;
+            b.set_tier(crate::build::StructureKind::Habitat, 4);
+            b.id
+        };
+        w.depart_migrant_liners();
+        let fleet = *w.migrant_runs.keys().next().expect("one liner");
+        assert_eq!(w.migration_pick(owner, &w.systems).map(|c| (c.system, c.body)), Some((system, body)),
+            "still the pick for the next liner");
+        // Fly only the last 8,000 su: warp to the well, thrusters inside it.
+        let dest = w.systems.iter().find(|s| s.id == system).unwrap().pos;
+        w.fleets.get_mut(&fleet).unwrap().pos = dest + Vec2::new(8_000.0, 0.0);
+        let due = w.migrant_lands_at(fleet).expect("a timetable");
+        let mut landed = None;
+        for _ in 0..200 * crate::config::TICK_HZ {
+            landed = w.step(&[]).into_iter().find_map(|e| match e.payload {
+                EventPayload::MigrantsLanded { owner: o, system: s, body: b, people, relocated } if o == owner =>
+                    Some((e.time, s, b, people, relocated)),
+                _ => None,
+            });
+            if landed.is_some() {
+                break;
+            }
+        }
+        let (at, s, b, people, relocated) = landed.expect("the liner lands");
+        assert!((at - due).abs() <= 3.0, "landed at {at:.1}, timetable said {due:.1}");
+        assert_eq!((s, b, people, relocated), (system, body, crate::migration::MIGRANT_COHORT_PEOPLE, false));
     }
 
     #[test]
@@ -25640,7 +25964,7 @@ mod tests {
         w.step(&[]);
         let ore_gain = system_stock(&w, sid, Commodity::MetallicOre) - ore0;
         let bio_gain = system_stock(&w, sid, Commodity::Biomass) - bio0;
-        let expect = 1.0 * crate::production::tier_throughput(1) * 0.5 * crate::config::DT;
+        let expect = 1.0 * crate::production::tier_throughput(1) * 0.5 * crate::production::OUTPUT_SCALE * crate::config::DT;
         assert!(
             (ore_gain - expect).abs() < 1e-9,
             "one crew across two lines: HALF rate each (got {ore_gain})"
@@ -25774,7 +26098,7 @@ mod tests {
         }
         let mach = system_stock(&w, sid, Commodity::Machinery);
         assert!(
-            mach > 1.0,
+            mach > 1.0 * crate::production::OUTPUT_SCALE,
             "ore → Alloys → Machinery end-to-end offline (got {mach})"
         );
 
@@ -25908,7 +26232,7 @@ mod tests {
             }
             seed_stock(&mut w, home, &[(Commodity::MetallicOre, 50.0)]);
             let started = w.tick;
-            let ev = w.receive_admin_for_test(&[Command::BuildShip {
+            let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
                 player_id: id,
                 system_id: home,
                 ship_kind: ShipKind::TinyFreighter,
@@ -26179,7 +26503,7 @@ mod tests {
         }]);
         let home = w.players[&id].home_system.unwrap();
         let ev = w.receive_admin_for_test(&[
-            Command::BuildShip {
+            Command::BuildShip { reactor: Default::default(), drive: Default::default(),
                 player_id: id,
                 system_id: home,
                 ship_kind: ShipKind::TinyFreighter,
@@ -26197,10 +26521,15 @@ mod tests {
             .iter()
             .filter(|e| matches!(e.payload, EventPayload::BuildStarted { .. }))
             .count();
+        // §progression (Nov 11 2026): an income structure's level II costs
+        // ×3.5, what it returns in about six hours, so it waits on the
+        // colony's own goods; the kit funds the hull.
         assert_eq!(
-            started, 2,
-            "the kit funds a convoy AND the first mine tier-up, turn one"
+            started, 1,
+            "the kit funds a convoy, turn one; the first mine tier-up is an investment"
         );
+        assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::BuildStarted {
+            what: crate::build::BuildKind::Ship { ship: ShipKind::TinyFreighter }, .. })));
     }
 
     // --- §bodies: per-body building + the shared labor pool ---------------------
@@ -26418,7 +26747,7 @@ mod tests {
             "1 unit / 2 posted = half share"
         );
         w.step(&[]);
-        let expect = 1.0 * crate::production::tier_throughput(1) * 0.5 * crate::config::DT;
+        let expect = 1.0 * crate::production::tier_throughput(1) * 0.5 * crate::production::OUTPUT_SCALE * crate::config::DT;
         let ore = system_stock(&w, sid, Commodity::MetallicOre);
         let bio = system_stock(&w, sid, Commodity::Biomass);
         assert!(
@@ -26514,7 +26843,7 @@ mod tests {
         w.step(&[]);
         let gain = system_stock(&w, sid, Commodity::MetallicOre);
         assert!(
-            (gain - 1.0 * crate::config::DT).abs() < 1e-9,
+            (gain - 1.0 * crate::production::OUTPUT_SCALE * crate::config::DT).abs() < 1e-9,
             "no resident = no bonus, plain rate (got {gain})"
         );
         let s = w.systems.iter().find(|s| s.id == sid).unwrap();
@@ -27016,8 +27345,9 @@ mod tests {
             );
         }
         seed_stock(&mut w, home, &[(Commodity::Volatiles, 100.0)]);
-        // Refine for a while → a real fuel reserve appears from Volatiles.
-        for _ in 0..(20 * crate::config::TICK_HZ) {
+        // Refine for a while → a real fuel reserve appears from Volatiles
+        // (§progression: at the output scale, twenty times as long).
+        for _ in 0..((20.0 / crate::production::OUTPUT_SCALE) as u32 * crate::config::TICK_HZ) {
             w.step(&[]);
         }
         assert!(
@@ -27061,7 +27391,7 @@ mod tests {
         let home = w.players[&id].home_system.unwrap();
         staff_construction_yard(&mut w, home, ShipKind::Scout);
         seed_stock(&mut w, home, &[(Commodity::Electronics, 10.0)]); // kit covers Alloys; fuel seed covers the 8 Fuel
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Scout,
@@ -27438,7 +27768,7 @@ mod tests {
                 home,
                 &[(Commodity::MetallicOre, 200.0), (Commodity::Alloys, 100.0)],
             );
-            w.receive_admin_for_test(&[Command::BuildShip {
+            w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
                 player_id: id,
                 system_id: home,
                 ship_kind: ShipKind::Convoy,
@@ -27586,7 +27916,13 @@ mod tests {
             f.pos = w.hub;
             f.vel = Vec2::new(0.0, 0.0);
             f.order = FleetOrder::Idle;
-            f.fuel = 0.0;
+            // §shipbuilding-overhaul: a fusion Interceptor, so the Hub sells it Deuterium.
+            for s in &mut f.ships { s.reactor = crate::fuel::ReactorGrade::Fusion; }
+            // §reactors-drives: once its owner has Bunkerage.
+            w.players.get_mut(&id).unwrap().research.completed.insert("prop_bunkerage".into());
+            f.launch_empty();
+            // Phase 5: its guns' crystals are fresh, so the Hub sells it fuel alone.
+            f.crystals = f.magazine_capacity(Commodity::BeamCrystals);
         }
         assert_eq!(w.dock_of(ship), Some(DockSite::Hub));
 
@@ -27594,7 +27930,7 @@ mod tests {
         // automatic bunkerage must buy a fresh market lot rather than consume it.
         seed_warehouse(&mut w, id, &[(Commodity::Deuterium, 4)]);
         w.players.get_mut(&id).unwrap().credits = 10_000.0;
-        let units = w.fleets[&ship].fuel_capacity().floor() as u32;
+        let units = (w.fleets[&ship].fuel_capacity() - 1e-6).ceil() as u32;
         let quote = w.market.quote_buy(Commodity::Deuterium, units);
         let supply0 = w.market.available_to_buy(Commodity::Deuterium);
         let credits0 = w.players[&id].credits;
@@ -27607,7 +27943,10 @@ mod tests {
                 && (f64::from(bought) * unit_price + penalty - quote.total).abs() < 1e-6)),
             "automatic bunkerage emits its exact charge without claiming warehouse cargo");
 
-        assert!((w.fleets[&ship].fuel - f64::from(units)).abs() < 1e-9);
+        // §reactors-drives: the tank is fractional (3.5); the whole units
+        // bought fill it and the spill is paid for.
+        assert!((w.fleets[&ship].fuel - w.fleets[&ship].fuel_capacity()).abs() < 1e-9);
+        assert_eq!(units, 4);
         assert!(
             ((credits0 - w.players[&id].credits) - quote.total).abs() < 1e-6,
             "the live integrated market quote is charged"
@@ -27657,11 +27996,13 @@ mod tests {
         );
     }
 
-    /// §fuel-overhaul: once a corporation has Fusion Reactors, a fusion tank at
-    /// its dock takes Helium-3 first — one unit of space for six of energy —
-    /// so a tank of it goes six times as far. Before the research, Deuterium only.
+    /// §shipbuilding-overhaul: a hull burns the fuel of its cores and nothing
+    /// else. A fusion Battleship takes Deuterium at the dock; refitted to Helium
+    /// Cores it takes Helium-3 into a tank a sixth the size, for the same range;
+    /// a mixed formation draws from each tank by the mass that burns it.
     #[test]
-    fn fusion_tanks_take_helium3_first_once_fusion_reactors_is_researched() {
+    fn each_hull_fills_and_burns_its_own_cores_fuel() {
+        use crate::fuel::{Drive, ReactorGrade};
         let mut w = test_world();
         let id = PlayerId(7);
         w.step(&[Command::AddPlayer {
@@ -27671,36 +28012,45 @@ mod tests {
         w.fleets.retain(|_, f| f.owner != id);
         let home = w.players[&id].home_system.unwrap();
         let line = player_ship(&mut w, id, ShipKind::Battleship);
-        w.fleets.get_mut(&line).unwrap().fuel = 0.0;
+        w.fleets.get_mut(&line).unwrap().launch_empty();
         assert_eq!(w.dock_of(line), Some(DockSite::System(home)));
         let stock = |w: &World, c| w.systems.iter().find(|s| s.id == home).unwrap().stockpile.get(&c).copied().unwrap_or(0.0);
         seed_stock(&mut w, home, &[(Commodity::Helium3, 1_000.0), (Commodity::Deuterium, 10_000.0)]);
         let tank = w.fleets[&line].fuel_capacity();
+        // §reactors-drives: a Fusion Reactor stores twice the energy aboard, at four a unit.
+        assert!((tank - 8_000.0 * crate::fuel::FUEL_PER_HULL_MASS * 2.0 / 4.0).abs() < 1e-9, "a fusion tank: twice the energy at four a unit");
         w.refuel_docked(&mut Vec::new());
         assert!((w.fleets[&line].fuel - tank).abs() < 1e-9 && w.fleets[&line].helium3 == 0.0,
-            "no Helium-3 before Fusion Reactors");
+            "a fusion hull takes no Helium-3");
         assert_eq!(stock(&w, Commodity::Helium3), 1_000.0);
 
-        w.players.get_mut(&id).unwrap().research.completed.insert(crate::power::FUSION_RESEARCH.into());
-        w.refresh_fleet_fuel_research();
-        w.fleets.get_mut(&line).unwrap().launch_empty();
-        let deuterium = stock(&w, Commodity::Deuterium);
+        let f = w.fleets.get_mut(&line).unwrap();
+        let full_range = f.range_at(crate::transit::WARP_FACTOR);
+        assert_eq!(f.set_engines(ShipKind::Battleship, Some(ReactorGrade::Helium), None, 1), vec![(ReactorGrade::Fusion, Drive::Zephyr)]);
+        assert!(f.fuel_capacity() == 0.0 && (f.helium3_capacity() - tank * 2.0 / crate::fuel::HELIUM3_FUEL_EQUIV).abs() < 1e-9,
+            "an Advanced Fusion tank holds twice the energy in a sixth of the units");
+        f.launch_empty();
         w.refuel_docked(&mut Vec::new());
         let f = &w.fleets[&line];
-        assert!((f.helium3 - tank).abs() < 1e-9, "Helium-3 fills the whole tank's space");
-        assert!((f.fuel - tank * crate::fuel::HELIUM3_FUEL_EQUIV).abs() < 1e-9, "at six times the energy");
-        assert!(f.fusion_room() < 1e-9);
-        assert_eq!(stock(&w, Commodity::Deuterium), deuterium, "no room left for Deuterium");
+        assert!((f.helium3 - f.helium3_capacity()).abs() < 1e-9 && f.fuel == 0.0, "now it takes Helium-3 only");
+        assert!((f.range_at(crate::transit::WARP_FACTOR) - full_range * 2.0).abs() < 1e-6, "twice the range a rung up");
 
-        // Burning takes Deuterium first, Helium-3 last.
+        // A mixed formation: each hull's share comes out of its own tank.
         let f = w.fleets.get_mut(&line).unwrap();
-        f.launch_empty();
-        f.fuel = 10.0 + 2.0 * crate::fuel::HELIUM3_FUEL_EQUIV;
-        f.helium3 = 2.0;
-        f.burn_fusion(4.0);
-        assert!((f.deuterium() - 6.0).abs() < 1e-9 && f.helium3 == 2.0);
-        f.burn_fusion(6.0 + crate::fuel::HELIUM3_FUEL_EQUIV);
-        assert!(f.deuterium().abs() < 1e-9 && (f.helium3 - 1.0).abs() < 1e-9);
+        f.add_fitted_on(ShipKind::Destroyer, &crate::module::Loadout::default(), (crate::fuel::ReactorGrade::Fusion, crate::fuel::Drive::Zephyr), 1);
+        f.fill_stores();
+        let (he, d) = (f.helium3, f.fuel);
+        let base = crate::fuel::fuel_tick(f.mass(), f.transit_speed(), 1.0);
+        let units = f.burn_units(base, false);
+        assert_eq!(units.len(), 2, "{units:?}");
+        assert!(f.can_pay(&units));
+        f.pay(&units);
+        let he_energy = (he - f.helium3) * ReactorGrade::Helium.energy_per_unit();
+        let d_energy = (d - f.fuel) * ReactorGrade::Fusion.energy_per_unit();
+        assert!((he_energy / d_energy - 8_000.0 / 2_000.0).abs() < 1e-6, "energy splits by hull mass");
+        assert!(((he_energy + d_energy) - base).abs() < 1e-9, "and sums to the tick");
+        f.fuel = 0.0;
+        assert!(!f.can_pay(&f.burn_units(base, false)), "one dry tank holds the whole formation");
     }
 
     /// THE BUG THIS MODEL EXISTS TO KILL: a fleet with dry tanks must not move.
@@ -27856,19 +28206,23 @@ mod tests {
             dest: far,
         }]);
 
-        // §fuel-overhaul: out of Deuterium, it switches to its Uranium and
-        // flies on, slower, with a notice.
+        // §shipbuilding-overhaul: a dry tank holds the formation where it
+        // stands; nothing switches regime any more.
         w.fleets.get_mut(&convoy).unwrap().fuel = 0.0;
-        let mut switched = Vec::new();
+        let held = w.fleets[&convoy].pos;
+        let mut events = Vec::new();
         for _ in 0..30 {
-            switched.extend(w.step(&[]));
+            events.extend(w.step(&[]));
         }
-        assert_eq!(w.fleets[&convoy].transit, crate::ship::TransitMode::Slow);
-        assert!(switched.iter().any(|e| matches!(e.payload,
-            EventPayload::FuelSwitched { fleet, to: crate::ship::TransitMode::Slow, .. } if fleet == convoy)));
+        assert_eq!(w.fleets[&convoy].pos, held, "no fuel, no movement");
+        assert!(w.fleets[&convoy].stalled);
+        assert_eq!(w.fleets[&convoy].transit, crate::ship::TransitMode::Full, "the throttle is untouched");
+        assert!(!events.iter().any(|e| matches!(e.payload, EventPayload::FuelSwitched { .. })));
+        w.fleets.get_mut(&convoy).unwrap().fill_stores();
+        w.step(&[]);
         let moving = w.fleets[&convoy].pos;
         w.step(&[]);
-        assert!(w.fleets[&convoy].pos.distance(moving) > 1e-6, "Uranium keeps it moving");
+        assert!(w.fleets[&convoy].pos.distance(moving) > 1e-6, "fuel moves it again");
 
         // Empty BOTH stores mid-flight and park it far from any dock, so nothing
         // refuels it out from under the assertion.
@@ -29715,6 +30069,238 @@ mod tests {
         );
     }
 
+    // --- §veil: THE IONISED SKY (docs/veil.md) -----------------------------------
+
+    /// Grant `owner` an unclaimed system that has a world with a sky, at `pos`.
+    fn grant_sky_system_at(w: &mut World, owner: PlayerId, pos: Vec2) -> EntityId {
+        let sys = w
+            .systems
+            .iter_mut()
+            .find(|s| s.is_unclaimed() && s.bodies.iter().any(|b| b.has_atmosphere()))
+            .expect("an unclaimed system with a sky");
+        sys.owner = Some(owner);
+        sys.claimed_at = Some(0.0);
+        sys.pos = pos;
+        sys.id
+    }
+
+    /// Stand a Veil Projector at `level` on `sys`'s world with a sky, on a
+    /// Fusion Plant with `fuel` Deuterium in store. Direct placement — the build
+    /// rules are tested on their own. Returns the body.
+    fn veiled(w: &mut World, sys: EntityId, level: u32, fuel: f64) -> u32 {
+        use crate::build::StructureKind as K;
+        let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+        let body = s.bodies.iter_mut().find(|b| b.has_atmosphere()).expect("a world with a sky");
+        body.set_tier(K::VeilProjector, level);
+        body.set_tier(K::PowerPlant, crate::power::FUSION_CORE_TIER);
+        let id = body.id;
+        *s.stockpile.entry(Commodity::Deuterium).or_insert(0.0) += fuel;
+        id
+    }
+
+    fn sys_of<'a>(w: &'a World, sys: EntityId) -> &'a crate::galaxy::StarSystem {
+        w.systems.iter().find(|s| s.id == sys).unwrap()
+    }
+
+    /// A held, ripe siege of an undefended sky system (`ripe_siege` for a system
+    /// chosen for its atmosphere). Returns (system, the blockading fleet).
+    fn ripe_sky_siege(w: &mut World, atk: PlayerId, def: PlayerId, pos: Vec2) -> (EntityId, EntityId) {
+        let sys = grant_sky_system_at(w, def, pos);
+        let blk = blockader_on_station(w, atk, sys, 1);
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            w.step(&[]);
+            if sys_of(w, sys).blockade_held() {
+                break;
+            }
+        }
+        assert!(sys_of(w, sys).blockade_held(), "an undefended system is held at once");
+        let dur = w.siege_duration_secs();
+        let now = w.time;
+        w.systems.iter_mut().find(|s| s.id == sys).unwrap().blockade.as_mut().unwrap().siege_since = Some(now - dur - 1.0);
+        (sys, blk)
+    }
+
+    /// §veil THE CHAIN: under a held blockade the Veil rises off the Fusion
+    /// Plant's fuel; while it is up the guns overhead pin nothing and the prize
+    /// crews load nothing; when the fuel runs out it drops, and the siege as it
+    /// was resumes — suppression climbs and the stripping begins.
+    #[test]
+    fn a_veil_blanks_bombardment_and_plunder_until_the_reactor_runs_dry() {
+        use crate::build::StructureKind as K;
+        let (mut w, atk, def) = blockade_pair();
+        w.enclaves.clear();
+        let pos = Vec2::new(5000.0, 0.0);
+        let sys = grant_sky_system_at(&mut w, def, pos);
+        {
+            let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
+            let body = s.site_for(K::Garrison).unwrap();
+            s.bodies.iter_mut().find(|b| b.id == body).unwrap().set_tier(K::Garrison, 2);
+        }
+        // A Veil I on 2 units of Deuterium: 6 MW × 0.005/MW·s = 0.03 a second,
+        // so about 66 s of sky.
+        veiled(&mut w, sys, 1, 2.0);
+        seed_stock(&mut w, sys, &[(Commodity::Provisions, 20_000.0), (Commodity::Alloys, 400.0)]);
+        // Eight raiders' guns overhead, with a hauler along for the prize.
+        let guns = blockader_on_station(&mut w, atk, sys, 8);
+        w.fleets.get_mut(&guns).unwrap().add(ShipKind::SmallFreighter, 1);
+
+        let (mut raised, mut plundered, mut dropped) = (None, false, None);
+        for _ in 0..(30 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                match e.payload {
+                    EventPayload::VeilRaised { system, level, .. } if system == sys => raised = Some(level),
+                    EventPayload::SystemPlundered { system, .. } if system == sys => plundered = true,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(raised, Some(1), "the Veil rises against the held blockade");
+        let s = sys_of(&w, sys);
+        assert!(s.veil_up && s.blockade_held(), "up, under a blockade that still holds");
+        assert!(s.garrison_suppression < 0.02, "eight raiders' guns pin nothing through the Veil: {}", s.garrison_suppression);
+        assert!(!plundered, "nothing loads through the Veil");
+        let fuel = s.stockpile.get(&Commodity::Deuterium).copied().unwrap_or(0.0);
+        assert!(fuel < 2.0 - 0.5, "the projector burns the reactor's Deuterium: {fuel} left");
+
+        // The fuel runs out: the Veil drops, and the siege resumes as it was.
+        for _ in 0..(120 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                match e.payload {
+                    EventPayload::VeilDropped { system, reason, .. } if system == sys => dropped = Some(reason),
+                    EventPayload::SystemPlundered { system, .. } if system == sys => plundered = true,
+                    _ => {}
+                }
+            }
+            if plundered && sys_of(&w, sys).garrison_suppression > 0.4 {
+                break;
+            }
+        }
+        assert_eq!(dropped, Some(crate::event::VeilDown::Dry), "it came down for want of fuel");
+        let s = sys_of(&w, sys);
+        assert!(!s.veil_up, "and stays down");
+        assert!(s.garrison_suppression > 0.4, "the guns pin the garrison again: {}", s.garrison_suppression);
+        assert!(plundered, "and the stripping begins");
+        assert_eq!(s.tier_sum(K::Garrison), 2, "nothing was destroyed");
+    }
+
+    /// §veil THE LANDING RULE: through a raised Veil only Troop Transports get
+    /// down, and the Veil takes its share of them. A capital's boarding party
+    /// holds in orbit with nothing landed; a transport's 40 arrive as 32 under a
+    /// Veil III and still take empty ground.
+    #[test]
+    fn through_a_veil_only_transports_land_and_the_veil_takes_its_share() {
+        let (mut w, atk, def) = blockade_pair();
+        w.enclaves.clear();
+        let pos = Vec2::new(5000.0, 0.0);
+        let (sys, _blk) = ripe_sky_siege(&mut w, atk, def, pos);
+        veiled(&mut w, sys, 3, 10_000.0);
+        w.step(&[]);
+        assert!(sys_of(&w, sys).veil_up, "Veil III up over a ripe siege");
+
+        // A battleship carries a 12-man boarding party — none of it gets down.
+        let capital = squad(&mut w, atk, pos, ShipKind::Battleship, 1, FleetOrder::Idle);
+        let mut held = None;
+        for _ in 0..(5 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::AssaultHeld { marines, .. } = e.payload {
+                    held = Some(marines);
+                }
+            }
+        }
+        assert_eq!(held, Some(0), "a capital's party waits aboard under the Veil");
+        assert!(w.assaults.is_empty(), "no landing opened");
+        assert_eq!(sys_of(&w, sys).owner, Some(def));
+        w.fleets.remove(&capital);
+
+        // One transport: 40 aboard, 20% shredded in the descent at Veil III.
+        let force = landing_force(&mut w, atk, pos, 1);
+        let mut began = None;
+        for _ in 0..(10 * crate::config::TICK_HZ) {
+            for e in w.step(&[]) {
+                if let EventPayload::AssaultBegan { marines, descent_losses, .. } = e.payload {
+                    began = Some((marines, descent_losses));
+                }
+            }
+            if began.is_some() {
+                break;
+            }
+        }
+        assert_eq!(began, Some((32, 8)), "32 land, 8 lost in the Veil");
+        let rec = w.ground_records.values().find(|r| r.system == sys).expect("the landing is recorded");
+        assert_eq!((rec.marines_landed, rec.descent_losses), (32, 8));
+        assert!(
+            run_until(&mut w, 300, |w| sys_of(w, sys).owner == Some(atk)),
+            "the landing takes the empty ground"
+        );
+        let s = sys_of(&w, sys);
+        assert!(!s.veil_up, "the sky clears with the flag");
+        assert!(!w.fleets.contains_key(&force) || w.fleets[&force].count(ShipKind::Transport) == 0,
+            "the transport became the occupation");
+    }
+
+    /// §veil THE GATES: a Solar Array can't carry it, a Fusion Plant can; the
+    /// owner can forbid it and allow it again; a Raid order is theft, not a
+    /// siege, and never raises it; and a Veil needs a sky to build at all.
+    #[test]
+    fn a_veil_needs_a_reactor_a_siege_and_the_owners_leave() {
+        use crate::build::StructureKind as K;
+        let (mut w, atk, def) = blockade_pair();
+        w.enclaves.clear();
+        let pos = Vec2::new(5000.0, 0.0);
+        let sys = grant_sky_system_at(&mut w, def, pos);
+        let body = veiled(&mut w, sys, 1, 1_000.0);
+        let set_plant = |w: &mut World, tier: u32| {
+            w.systems.iter_mut().find(|s| s.id == sys).unwrap().bodies.iter_mut().find(|b| b.id == body).unwrap()
+                .set_tier(K::PowerPlant, tier);
+        };
+        let run = |w: &mut World, secs: u32| -> Vec<EventPayload> {
+            let mut out = Vec::new();
+            for _ in 0..(secs * crate::config::TICK_HZ) {
+                out.extend(w.step(&[]).into_iter().map(|e| e.payload));
+            }
+            out
+        };
+        // Solar only: no reactor to feed it.
+        set_plant(&mut w, crate::power::FUSION_CORE_TIER - 1);
+        let blk = blockader_on_station(&mut w, atk, sys, 1);
+        run(&mut w, 5);
+        let s = sys_of(&w, sys);
+        assert!(s.blockade_held() && !s.veil_up, "a Solar Array can't carry a Veil");
+        // A Fusion Plant: it rises.
+        set_plant(&mut w, crate::power::FUSION_CORE_TIER);
+        let ev = run(&mut w, 5);
+        assert!(ev.iter().any(|e| matches!(e, EventPayload::VeilRaised { system, .. } if *system == sys)));
+        assert!(sys_of(&w, sys).veil_up);
+        // The owner forbids it: down, and said so (the admin helper steps once
+        // itself, so the drop may land in its own events).
+        let mut ev: Vec<EventPayload> = w.receive_admin_for_test(&[Command::SetVeilPolicy { player_id: def, system_id: sys, raise: false }])
+            .into_iter().map(|e| e.payload).collect();
+        ev.extend(run(&mut w, 5));
+        assert!(ev.iter().any(|e| matches!(e, EventPayload::VeilDropped { system, reason: crate::event::VeilDown::Forbidden, .. } if *system == sys)));
+        assert!(!sys_of(&w, sys).veil_up);
+        // A rival can't set it.
+        w.receive_admin_for_test(&[Command::SetVeilPolicy { player_id: atk, system_id: sys, raise: true }]);
+        run(&mut w, 2);
+        assert!(!sys_of(&w, sys).veil_up, "only the owner sets the policy");
+        // Allowed again: back up.
+        w.receive_admin_for_test(&[Command::SetVeilPolicy { player_id: def, system_id: sys, raise: true }]);
+        run(&mut w, 5);
+        assert!(sys_of(&w, sys).veil_up);
+        // A Raid order is theft, not a siege: the Veil stands down.
+        w.fleets.get_mut(&blk).unwrap().order = FleetOrder::Blockade { system: sys, station: pos, raid: true, repeat: false };
+        let ev = run(&mut w, 5);
+        assert!(ev.iter().any(|e| matches!(e, EventPayload::VeilDropped { system, reason: crate::event::VeilDown::Relieved, .. } if *system == sys)));
+        assert!(!sys_of(&w, sys).veil_up, "a raid never raises the Veil");
+        // The build rule: a Veil needs a sky.
+        let sky = sys_of(&w, sys).bodies.iter().find(|b| b.id == body).unwrap();
+        assert!(K::VeilProjector.suits(sky));
+        let airless = w.systems.iter().flat_map(|s| s.bodies.iter()).find(|b| !b.has_atmosphere()).expect("an airless body somewhere");
+        assert!(!K::VeilProjector.suits(airless), "no sky, no Veil");
+        assert_eq!(crate::build::max_buildable_tier(K::VeilProjector, 0), 0, "research opens it");
+        assert_eq!(crate::build::max_buildable_tier(K::VeilProjector, 3), 3);
+        assert_eq!(crate::build::max_buildable_tier(K::VeilProjector, 6), 3, "three levels, no more");
+    }
+
     // --- §plunder: STRIPPING A BLOCKADED SYSTEM ----------------------------------
 
     /// §plunder THE MILESTONE: a held blockade takes a BOUNDED slice of the
@@ -29787,8 +30373,9 @@ mod tests {
         );
 
         // BOUNDED: run a long time; the hold is all it carries, and the
-        // settlers keep their rations (§vault).
-        for _ in 0..(400 * crate::config::TICK_HZ) {
+        // settlers keep their rations (§vault). §hold-room: a Small
+        // Freighter's 150 room is 300 Alloys, ten minutes at 0.5 a second.
+        for _ in 0..(700 * crate::config::TICK_HZ) {
             w.step(&[]);
         }
         let food = system_stock(&w, sys, Commodity::Provisions);
@@ -29801,7 +30388,9 @@ mod tests {
         // THE HOLD IS FINITE: the freighter's hold, and the goods are on the
         // SHIP — they still have to survive the trip home.
         let carried = w.fleets[&raider].cargo.unwrap().units;
-        assert_eq!(carried, ShipKind::SmallFreighter.cargo_units(), "the freighter's hold, and no more");
+        assert_eq!(carried, crate::ship::HoldRoom::new(ShipKind::SmallFreighter.cargo_units(), 0).fits(Commodity::Alloys),
+            "the freighter's hold, and no more");
+        assert!(w.fleets[&raider].cargo_room().is_full());
     }
 
     /// §holds (Peter, Oct 27 2026: "force the player to bring along a freighter
@@ -29822,18 +30411,21 @@ mod tests {
         let blockade = FleetOrder::Blockade { system: sys, station: spos, raid: false, repeat: false };
         let lone = squad(&mut w, atk, spos, ShipKind::Raider, 1, blockade.clone());
         let pack = squad(&mut w, atk, spos, ShipKind::Raider, 4, blockade.clone());
-        w.fleets.get_mut(&pack).unwrap().add(ShipKind::SmallFreighter, 1);
+        w.fleets.get_mut(&pack).unwrap().add(ShipKind::TinyFreighter, 1);
         let tail = squad(&mut w, atk, spos, ShipKind::Raider, 1, blockade);
         w.fleets.get_mut(&tail).unwrap().add(ShipKind::TinyFreighter, 1);
         assert!(lone < pack && pack < tail, "fleets load in id order");
 
-        // 200 units at the §vault loading rate (0.5/s), after the opening fight.
-        for _ in 0..(520 * crate::config::TICK_HZ) {
+        // §hold-room: two Tiny holds are 200 Alloys (100 room), at the
+        // §vault loading rate (0.5/s), after the opening fight.
+        for _ in 0..(600 * crate::config::TICK_HZ) {
             w.step(&[]);
         }
+        let fits = crate::ship::HoldRoom::new(ShipKind::TinyFreighter.cargo_units(), 0).fits(Commodity::Alloys);
+        assert_eq!(fits, 100);
         assert_eq!(w.fleets[&lone].cargo_units(), 0, "a warship has no hold");
-        assert_eq!(w.fleets[&pack].cargo_units(), ShipKind::SmallFreighter.cargo_units(), "a freighter's hold, full");
-        assert_eq!(w.fleets[&tail].cargo_units(), ShipKind::TinyFreighter.cargo_units(), "then the next fleet's freighter");
+        assert_eq!(w.fleets[&pack].cargo_units(), fits, "a freighter's hold, full");
+        assert_eq!(w.fleets[&tail].cargo_units(), fits, "then the next fleet's freighter");
         let alloys = system_stock(&w, sys, Commodity::Alloys);
         assert!((alloys - 400.0).abs() < 1.5, "the holds' 200, the dearest good first (got {alloys:.1})");
     }
@@ -29886,7 +30478,7 @@ mod tests {
         w.fleets.get_mut(&raider).unwrap().add(ShipKind::TinyFreighter, 1);
         assert!(run_until(&mut w, 60, |w| w.fleets[&raider].cargo_units() > 0), "the blockade takes a prize");
         let first = w.time;
-        assert!(run_until(&mut w, 200, |w| w.fleets[&raider].cargo_units() >= 50), "the hold fills");
+        assert!(run_until(&mut w, 200, |w| w.fleets[&raider].cargo_units() >= 50), "fifty units aboard");
         let secs = w.time - first;
         assert!((90.0..=110.0).contains(&secs), "49 more units at 0.5 a second (took {secs:.0} s)");
         assert_eq!(system_stock(&w, sys, Commodity::Electronics), 120.0, "the Vault keeps the dearest good");
@@ -29910,12 +30502,13 @@ mod tests {
         let raid = squad(&mut w, atk, spos, ShipKind::Raider, 3,
             FleetOrder::Blockade { system: sys, station: spos, raid: true, repeat: false });
         w.fleets.get_mut(&raid).unwrap().add(ShipKind::CombatFreighter, 1);
-        assert!(run_until(&mut w, 300, |w| !matches!(w.fleets[&raid].order, FleetOrder::Blockade { .. })),
+        assert!(run_until(&mut w, 420, |w| !matches!(w.fleets[&raid].order, FleetOrder::Blockade { .. })),
             "the raid turns home");
         let f = &w.fleets[&raid];
         let home = w.players[&atk].home_system.unwrap();
         let home_pos = w.systems.iter().find(|s| s.id == home).unwrap().pos;
-        assert_eq!(f.cargo_amount(Commodity::Alloys), ShipKind::CombatFreighter.cargo_units(), "a full loot hold");
+        // §hold-room: 80 room is 160 Alloys.
+        assert_eq!(f.cargo_amount(Commodity::Alloys), 2 * ShipKind::CombatFreighter.cargo_units(), "a full loot hold");
         assert!(matches!(f.order, FleetOrder::MoveTo { dest } if dest == home_pos), "bound for home: {:?}", f.order);
         assert_eq!(f.mission, Some(TradeMission::DeliverToSystem { system: home }), "to unload there");
         assert!(!f.raid_looted);
@@ -30053,7 +30646,7 @@ mod tests {
         assert!(matches!(w.cargo_room_for(cf, Commodity::Alloys),
             Err(TradeRejectReason::NoCargoRoom { capacity: 0 })));
         w.fleets.get_mut(&cf).unwrap().add(ShipKind::TinyFreighter, 1);
-        assert!(matches!(w.cargo_room_for(cf, Commodity::Alloys), Ok(50)), "only the Tiny Freighter's hold");
+        assert!(matches!(w.cargo_room_for(cf, Commodity::Alloys), Ok(100)), "only the Tiny Freighter's 50 room: 100 Alloys");
     }
 
     /// §holds: a blockade's plunder fills the Combat Freighters riding with it.
@@ -30070,13 +30663,14 @@ mod tests {
         seed_stock(&mut w, sys, &[(Commodity::Machinery, 400.0), (Commodity::MetallicOre, 400.0)]);
         let pack = squad(&mut w, atk, spos, ShipKind::Raider, 4, FleetOrder::Blockade { system: sys, station: spos, raid: false, repeat: false });
         w.fleets.get_mut(&pack).unwrap().add(ShipKind::CombatFreighter, 2);
-        // 160 units at the §vault loading rate (0.5/s), after the opening fight.
-        for _ in 0..(400 * crate::config::TICK_HZ) {
+        // §hold-room: 160 room is 320 Machinery, at the §vault loading rate
+        // (0.5/s), after the opening fight.
+        for _ in 0..(800 * crate::config::TICK_HZ) {
             w.step(&[]);
         }
         let f = &w.fleets[&pack];
-        assert_eq!(f.cargo_units(), 160, "two holds, full");
-        assert_eq!(f.cargo_amount(Commodity::Machinery), 160, "the dearest good first");
+        assert_eq!(f.cargo_units(), 320, "two holds, full");
+        assert_eq!(f.cargo_amount(Commodity::Machinery), 320, "the dearest good first");
     }
 
     /// §holds: a raid stows a convoy's cargo in the raider's Combat Freighter,
@@ -30102,7 +30696,7 @@ mod tests {
             run_until(&mut w, 120, |w| !w.fleets.contains_key(&convoy));
             (!w.fleets.contains_key(&convoy), w.fleets.get(&raider).and_then(|f| f.cargo).map(|c| c.units))
         };
-        assert_eq!(run(ShipKind::Convoy, 400), (true, Some(80)), "the Combat Freighter keeps 80; the rest sinks");
+        assert_eq!(run(ShipKind::Convoy, 400), (true, Some(160)), "the Combat Freighter's 80 room keeps 160 Machinery; the rest sinks");
         assert_eq!(run(ShipKind::CombatFreighter, 80), (true, Some(80)), "a lone Combat Freighter's loot changes hands");
     }
 
@@ -30356,7 +30950,7 @@ mod tests {
         {
             let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
             s.set_tier(K::OrdnanceFoundry, 1); // refits install here…
-            *s.modules.entry(ModuleKind::MassDriver).or_insert(0) += 2;
+            s.put_modules(ModuleKind::MassDriver, 2);
             // …but NO crew is posted, so its repair service does nothing. This
             // isolates the refit path: any healing seen here is laundering.
         }
@@ -31744,11 +32338,12 @@ mod tests {
                 6,
                 FleetOrder::Idle,
             );
-            w.fleets.get_mut(&striker).unwrap().set_fitted(
-                ShipKind::Raider,
-                &Loadout::new(vec![ModuleKind::MassDriver]),
-                6,
-            );
+            {
+                let s = w.fleets.get_mut(&striker).unwrap();
+                s.set_fitted(ShipKind::Raider, &Loadout::new(vec![ModuleKind::MassDriver]), 6);
+                // §shipbuilding-overhaul Phase 5: the drivers fire from a slug magazine.
+                s.fill_stores();
+            }
             let target = squad(
                 &mut w,
                 def,
@@ -32001,7 +32596,7 @@ mod tests {
             w.systems
                 .iter()
                 .find(|s| s.id == sid)
-                .map(|s| s.modules.get(&ModuleKind::MassDriver).copied().unwrap_or(0))
+                .map(|s| s.module_stock(ModuleKind::MassDriver))
                 .unwrap_or(0)
                 >= 1
         });
@@ -32076,7 +32671,7 @@ mod tests {
             s.claimed_at = Some(0.0);
             s.set_tier(crate::build::StructureKind::Shipyard, 2); // a yard for the raiders
             s.set_tier(crate::build::StructureKind::OrdnanceFoundry, 1); // §yards: fits install at a foundry
-            *s.modules.entry(ModuleKind::MassDriver).or_insert(0) += 1;
+            s.put_modules(ModuleKind::MassDriver, 1);
             s.id
         };
         staff_construction_yard(&mut w, sid, ShipKind::Raider);
@@ -32084,16 +32679,17 @@ mod tests {
             &mut w,
             sid,
             &[
+                (Commodity::NavComputer, 6.0), (Commodity::HullSections, 12.0), (Commodity::PulseLaser, 12.0), // §shipbuilding-overhaul: the kit
                 (Commodity::Alloys, 200.0),
                 (Commodity::Electronics, 200.0),
                 (Commodity::Armaments, 200.0),
-                (Commodity::WarpCore, 20.0),
+                (Commodity::FissionReactor, 20.0), (Commodity::ZephyrDrive, 20.0),
                 (Commodity::Deuterium, 200.0),
             ],
         );
         let md = Loadout::new(vec![ModuleKind::MassDriver]);
         let before: std::collections::BTreeSet<EntityId> = w.fleets.keys().copied().collect();
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: sid,
             ship_kind: ShipKind::Raider,
@@ -32110,10 +32706,7 @@ mod tests {
                 .iter()
                 .find(|s| s.id == sid)
                 .unwrap()
-                .modules
-                .get(&ModuleKind::MassDriver)
-                .copied()
-                .unwrap_or(0),
+                .module_stock(ModuleKind::MassDriver),
             0,
             "the module left the ledger"
         );
@@ -32177,7 +32770,7 @@ mod tests {
                 .unwrap()
         };
         let before = alloys(&w);
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: sid,
             ship_kind: ShipKind::Raider,
@@ -32220,7 +32813,7 @@ mod tests {
             let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
             s.set_tier(crate::build::StructureKind::OrdnanceFoundry, 1);
             for (m, c) in stock {
-                *s.modules.entry(*m).or_insert(0) += *c;
+                s.put_modules(*m, *c);
             }
         }
         let fleet = squad(w, id, hpos, ShipKind::Raider, n, FleetOrder::Idle);
@@ -32263,10 +32856,7 @@ mod tests {
                 .iter()
                 .find(|s| s.id == home)
                 .unwrap()
-                .modules
-                .get(&ModuleKind::WhippleArmor)
-                .copied()
-                .unwrap_or(0),
+                .module_stock(ModuleKind::WhippleArmor),
             0,
             "both Whipple crates debited from the ledger"
         );
@@ -32317,10 +32907,7 @@ mod tests {
                 .iter()
                 .find(|s| s.id == home)
                 .unwrap()
-                .modules
-                .get(&ModuleKind::MassDriver)
-                .copied()
-                .unwrap_or(0),
+                .module_stock(ModuleKind::MassDriver),
             2,
             "stripping RETURNS both mass drivers to the ledger"
         );
@@ -32432,30 +33019,34 @@ mod tests {
             id,
             name: "A".into(),
         }]);
+        // §research-locked (Nov 11 2026): the Corvette is Escort Datalink's.
+        w.players.get_mut(&id).unwrap().research.completed.insert("hull_line_iii_escort_datalink".into());
         let sid = {
             let s = w.systems.iter_mut().find(|s| s.is_unclaimed()).unwrap();
             s.owner = Some(id);
             s.claimed_at = Some(0.0);
             s.set_tier(crate::build::StructureKind::Shipyard, 2); // corvettes need tier 2
             s.set_tier(crate::build::StructureKind::OrdnanceFoundry, 1); // §yards: fits install at a foundry
-            *s.modules.entry(ModuleKind::TorpedoRack).or_insert(0) += 2;
-            *s.modules.entry(ModuleKind::WhippleArmor).or_insert(0) += 2;
-            *s.modules.entry(ModuleKind::MassDriver).or_insert(0) += 2;
+            s.put_modules(ModuleKind::TorpedoRack, 2);
+            s.put_modules(ModuleKind::WhippleArmor, 2);
+            s.put_modules(ModuleKind::MassDriver, 2);
             s.id
         };
         seed_stock(
             &mut w,
             sid,
             &[
+                (Commodity::NavComputer, 6.0), (Commodity::HullSections, 60.0), (Commodity::PulseLaser, 12.0), // §shipbuilding-overhaul: the kit
+                (Commodity::Composites, 200.0), (Commodity::PrecisionComponents, 20.0), (Commodity::Machinery, 100.0), // §hull-ladder
                 (Commodity::Alloys, 400.0),
                 (Commodity::Electronics, 200.0),
                 (Commodity::Armaments, 200.0),
-                (Commodity::WarpCore, 20.0),
+                (Commodity::FissionReactor, 20.0), (Commodity::ZephyrDrive, 20.0),
             ],
         );
         // Torp(3) + Whipple(3) = 6 > the Corvette's 5 → BuildRejected, ledger intact.
         let heavy = Loadout::new(vec![ModuleKind::TorpedoRack, ModuleKind::WhippleArmor]);
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: sid,
             ship_kind: ShipKind::Corvette,
@@ -32470,16 +33061,13 @@ mod tests {
         assert!(w.build_queue.is_empty(), "nothing queued");
         let sys = w.systems.iter().find(|s| s.id == sid).unwrap();
         assert_eq!(
-            sys.modules
-                .get(&ModuleKind::TorpedoRack)
-                .copied()
-                .unwrap_or(0),
+            sys.module_stock(ModuleKind::TorpedoRack),
             2,
             "ledger never debited on a reject"
         );
         // Driver(2) + Whipple(3) = 5 fits exactly → the classic brawler builds.
         let brawler = Loadout::new(vec![ModuleKind::MassDriver, ModuleKind::WhippleArmor]);
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: sid,
             ship_kind: ShipKind::Corvette,
@@ -32732,307 +33320,32 @@ mod tests {
         );
     }
 
-    // --- §modules Part B3: module TRANSPORT (raidable crate convoy) -------------
+    // --- §modules-as-goods (Nov 8 2026): modules on the Hub book ------------------
 
     #[test]
-    fn transfer_modules_debits_source_and_delivers_to_the_destination() {
+    fn modules_trade_on_the_hub_book_like_goods() {
+        use crate::cargo::Commodity;
         use crate::module::ModuleKind;
         let mut w = test_world();
         w.enclaves.clear();
         let id = PlayerId(1);
-        w.step(&[Command::AddPlayer {
-            id,
-            name: "A".into(),
-        }]);
-        let home = w.players[&id].home_system.unwrap();
-        // Nearest unclaimed system, taken as the destination (short crossing).
-        let dest = {
-            let hp = w.systems.iter().find(|s| s.id == home).unwrap().pos;
-            let s = w
-                .systems
-                .iter_mut()
-                .filter(|s| s.is_unclaimed())
-                .min_by(|a, b| {
-                    a.pos
-                        .distance(hp)
-                        .total_cmp(&b.pos.distance(hp))
-                        .then(a.id.cmp(&b.id))
-                })
-                .unwrap();
-            s.owner = Some(id);
-            s.claimed_at = Some(0.0);
-            s.id
-        };
-        {
-            let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
-            s.modules.insert(ModuleKind::MassDriver, 3);
-            s.modules.insert(ModuleKind::WhippleArmor, 2);
-        }
-        w.receive_admin_for_test(&[Command::TransferModules {
-            player_id: id,
-            from: home,
-            to: dest,
-            manifest: [(ModuleKind::MassDriver, 2), (ModuleKind::WhippleArmor, 1)]
-                .into_iter()
-                .collect(),
-        }]);
-        // Source debited AT LOADING (crates aboard, not at home).
-        let hs = w.systems.iter().find(|s| s.id == home).unwrap();
-        assert_eq!(
-            hs.modules
-                .get(&ModuleKind::MassDriver)
-                .copied()
-                .unwrap_or(0),
-            1
-        );
-        assert_eq!(
-            hs.modules
-                .get(&ModuleKind::WhippleArmor)
-                .copied()
-                .unwrap_or(0),
-            1
-        );
-        assert!(
-            w.fleets
-                .values()
-                .any(|f| f.owner == id && f.modules.values().sum::<u32>() == 3),
-            "a crate convoy flies with the manifest"
-        );
-        // Fly to arrival → the destination ledger is credited.
-        let mut delivered = false;
-        for _ in 0..(600 * crate::config::TICK_HZ) {
-            for e in w.step(&[]) {
-                if matches!(e.payload, EventPayload::ModulesDelivered { owner, system, .. } if owner == id && system == dest)
-                {
-                    delivered = true;
-                }
-            }
-            if delivered {
-                break;
-            }
-        }
-        assert!(delivered, "the crates land in the destination ledger");
-        let ds = w.systems.iter().find(|s| s.id == dest).unwrap();
-        assert_eq!(
-            ds.modules
-                .get(&ModuleKind::MassDriver)
-                .copied()
-                .unwrap_or(0),
-            2
-        );
-        assert_eq!(
-            ds.modules
-                .get(&ModuleKind::WhippleArmor)
-                .copied()
-                .unwrap_or(0),
-            1
-        );
-    }
-
-    #[test]
-    fn transfer_modules_clamps_to_the_ledger_and_the_convoy_berths() {
-        use crate::module::{MODULE_CONVOY_BERTHS, ModuleKind};
-        let mut w = test_world();
-        w.enclaves.clear();
-        let id = PlayerId(1);
-        w.step(&[Command::AddPlayer {
-            id,
-            name: "A".into(),
-        }]);
-        let home = w.players[&id].home_system.unwrap();
-        let dest = {
-            let hp = w.systems.iter().find(|s| s.id == home).unwrap().pos;
-            let s = w
-                .systems
-                .iter_mut()
-                .filter(|s| s.is_unclaimed())
-                .min_by(|a, b| {
-                    a.pos
-                        .distance(hp)
-                        .total_cmp(&b.pos.distance(hp))
-                        .then(a.id.cmp(&b.id))
-                })
-                .unwrap();
-            s.owner = Some(id);
-            s.claimed_at = Some(0.0);
-            s.id
-        };
-        // More stocked than one convoy can haul; ask for all of it.
-        w.systems
-            .iter_mut()
-            .find(|s| s.id == home)
-            .unwrap()
-            .modules
-            .insert(ModuleKind::MassDriver, MODULE_CONVOY_BERTHS + 8);
-        w.receive_admin_for_test(&[Command::TransferModules {
-            player_id: id,
-            from: home,
-            to: dest,
-            manifest: [(ModuleKind::MassDriver, MODULE_CONVOY_BERTHS + 8)]
-                .into_iter()
-                .collect(),
-        }]);
-        let carried: u32 = w
-            .fleets
-            .values()
-            .find(|f| f.owner == id && !f.modules.is_empty())
-            .map(|f| f.modules.values().sum())
-            .unwrap_or(0);
-        assert_eq!(
-            carried, MODULE_CONVOY_BERTHS,
-            "one convoy hauls at most its berths"
-        );
-        let left = w
-            .systems
-            .iter()
-            .find(|s| s.id == home)
-            .unwrap()
-            .modules
-            .get(&ModuleKind::MassDriver)
-            .copied()
-            .unwrap_or(0);
-        assert_eq!(
-            left, 8,
-            "the overflow stays in the source ledger for the next run"
-        );
-    }
-
-    // --- §modules Part B3: the SOL module market (buy at a premium, sell back low)
-
-    #[test]
-    #[ignore = "§galaxy-scale: awaiting re-baseline. The 50× galaxy rescale and per-tick fuel changed travel times and stockpile readings under it; the behaviour it asserts is still wanted. Re-enable with `cargo test -- --ignored`."]
-    fn buy_module_from_sol_debits_credits_now_and_delivers_the_crate() {
-        use crate::module::ModuleKind;
-        let mut w = test_world();
-        w.enclaves.clear();
-        let id = PlayerId(1);
-        w.step(&[Command::AddPlayer {
-            id,
-            name: "A".into(),
-        }]);
-        let home = w.players[&id].home_system.unwrap();
-        w.players.get_mut(&id).unwrap().credits = 100_000.0;
-        let before = w.players[&id].credits;
-        let ev = w.receive_admin_for_test(&[Command::BuyModule {
-            player_id: id,
-            module: ModuleKind::MassDriver,
-            n: 3,
-            dest_system: home,
-        }]);
-        // Debit matches the reported purchase price (drift-proof: read the event).
-        let unit = ev
-            .iter()
-            .find_map(|e| match e.payload {
-                EventPayload::ModulesPurchased { unit_price, n, .. } if n == 3 => Some(unit_price),
-                _ => None,
-            })
-            .expect("a purchase settled");
-        assert!(unit > 0.0, "Sol charges a real price");
-        assert!(
-            (before - w.players[&id].credits - unit * 3.0).abs() < 1e-6,
-            "credits debited unit×3 NOW"
-        );
-        assert!(
-            w.fleets
-                .values()
-                .any(|f| f.owner == id && f.modules.get(&ModuleKind::MassDriver) == Some(&3)),
-            "a delivery convoy carries the crates from Sol"
-        );
-        let mut delivered = false;
-        for _ in 0..(600 * crate::config::TICK_HZ) {
-            for e in w.step(&[]) {
-                if matches!(e.payload, EventPayload::ModulesDelivered { owner, system, .. } if owner == id && system == home)
-                {
-                    delivered = true;
-                }
-            }
-            if delivered {
-                break;
-            }
-        }
-        assert!(delivered, "the purchase lands in the home ledger");
-        assert_eq!(
-            w.systems
-                .iter()
-                .find(|s| s.id == home)
-                .unwrap()
-                .modules
-                .get(&ModuleKind::MassDriver)
-                .copied()
-                .unwrap_or(0),
-            3
-        );
-    }
-
-    #[test]
-    #[ignore = "§galaxy-scale: awaiting re-baseline. The 50× galaxy rescale and per-tick fuel changed travel times and stockpile readings under it; the behaviour it asserts is still wanted. Re-enable with `cargo test -- --ignored`."]
-    fn sell_module_to_sol_commits_the_crate_then_credits_on_arrival() {
-        use crate::module::ModuleKind;
-        let mut w = test_world();
-        w.enclaves.clear();
-        let id = PlayerId(1);
-        w.step(&[Command::AddPlayer {
-            id,
-            name: "A".into(),
-        }]);
-        let home = w.players[&id].home_system.unwrap();
-        w.systems
-            .iter_mut()
-            .find(|s| s.id == home)
-            .unwrap()
-            .modules
-            .insert(ModuleKind::MassDriver, 2);
-        w.players.get_mut(&id).unwrap().credits = 0.0;
-        w.receive_admin_for_test(&[Command::SellModule {
-            player_id: id,
-            module: ModuleKind::MassDriver,
-            n: 2,
-            from_system: home,
-        }]);
-        // Ledger debited at commit; a convoy carries the crates to the hub.
-        assert_eq!(
-            w.systems
-                .iter()
-                .find(|s| s.id == home)
-                .unwrap()
-                .modules
-                .get(&ModuleKind::MassDriver)
-                .copied()
-                .unwrap_or(0),
-            0,
-            "the crates leave the ledger at commit"
-        );
-        assert!(
-            w.fleets
-                .values()
-                .any(|f| f.owner == id && f.modules.get(&ModuleKind::MassDriver) == Some(&2)),
-            "a sell convoy carries them to Sol"
-        );
-        // Fly to the hub → the buy-back credits on arrival (price-on-arrival).
-        let mut proceeds = 0.0;
-        for _ in 0..(600 * crate::config::TICK_HZ) {
-            for e in w.step(&[]) {
-                if let EventPayload::ModulesSold {
-                    owner,
-                    n,
-                    unit_price,
-                    ..
-                } = e.payload
-                {
-                    if owner == id {
-                        proceeds += unit_price * n as f64;
-                    }
-                }
-            }
-            if proceeds > 0.0 {
-                break;
-            }
-        }
-        assert!(proceeds > 0.0, "Sol paid a buy-back");
-        assert!(
-            (w.players[&id].credits - proceeds).abs() < 1e-6,
-            "credits == the reported buy-back proceeds"
-        );
+        w.step(&[Command::AddPlayer { id, name: "Fitter".into() }]);
+        // Priced like a kit part: a fifth over its recipe at base prices.
+        let basket: f64 = crate::build::module_recipe(ModuleKind::MassDriver).costs.iter()
+            .map(|(c, n)| n * crate::market::base_price(*c)).sum();
+        assert_eq!(crate::market::base_price(Commodity::MassDriver), (basket * crate::market::MODULE_VALUE_ADDED).round());
+        // The Authority sells a Mass Driver into the warehouse, like any good.
+        w.players.get_mut(&id).unwrap().credits = 1e6;
+        w.receive_admin_for_test(&[Command::MarketBuy { player_id: id, commodity: Commodity::MassDriver, units: 2,
+            max_unit_price: None }]);
+        assert_eq!(w.players[&id].warehouse.get(&Commodity::MassDriver).copied(), Some(2));
+        // It never sells a found-only module; the Hub still buys one.
+        assert_eq!(w.market.available_to_buy(Commodity::SurveyDrive), 0);
+        assert!(w.market.available_to_sell(Commodity::SurveyDrive) > 0);
+        assert!(crate::market::hub_sells(Commodity::TorpedoRack) && !crate::market::hub_sells(Commodity::PrismaticLance));
+        // Research opens the utilities: Extended Tanks waits for its programme.
+        assert!(w.good_known(id, Commodity::TorpedoRack));
+        assert!(!w.good_known(id, Commodity::ExtendedTanks));
     }
 
     /// Part 1 verb distinction: RAID steals a convoy's cargo (seized by the raider),
@@ -33059,14 +33372,14 @@ mod tests {
                 r.completed.insert("hull_corsair_v_boarding_parties".into());
                 r.completed.insert("hull_corsair_v_salvage_rigs".into());
             }
-            // A freighter rides with the raider: salvage needs crate berths.
+            // A freighter rides with the raider: salvage needs a hold.
             w.fleets.get_mut(&raider).unwrap().add(ShipKind::SmallFreighter, 1);
             let before: std::collections::BTreeSet<EntityId> = w.fleets.keys().copied().collect();
             w.step(&[Command::CommitRaid { player_id: atk, raider_id: raider, target_id: convoy }]);
             run_until(&mut w, 60, |w| !w.fleets.contains_key(&convoy) && w.engagements.is_empty());
             let prize = w.fleets.iter().find(|(id, f)| !before.contains(id) && f.owner == atk)
                 .map(|(_, f)| (f.count(ShipKind::SmallFreighter), f.ships.iter().all(|s| s.hp < s.max_hp()), f.cargo_units()));
-            let crates = w.fleets.get(&raider).map_or(0, |f| f.modules.get(&ModuleKind::CargoPods).copied().unwrap_or(0));
+            let crates = w.fleets.get(&raider).map_or(0, |f| f.cargo_amount(ModuleKind::CargoPods.good()));
             let stowed = w.fleets.get(&raider).map_or(0, |f| f.cargo_units());
             (prize, crates, stowed)
         };
@@ -33074,8 +33387,9 @@ mod tests {
         let (prize, crates, stowed) = run(true);
         let (hulls, battered, aboard) = prize.expect("a prize fleet");
         assert!(hulls >= 1 && battered, "the stripped convoy's freighters, battered");
-        assert_eq!((aboard, stowed), (40, 0), "§holds: the boarded freighters keep their own cargo aboard");
-        assert_eq!(crates, 1, "a quarter of two Cargo Pods, rounded");
+        // §modules-as-goods: the salvaged module is the raider's only cargo.
+        assert_eq!((aboard, stowed), (40, 1), "§holds: the boarded freighters keep their own cargo aboard");
+        assert_eq!(crates, 1, "a quarter of two Cargo Pods, rounded, in the raider's hold");
     }
 
     /// §holds (Peter, Oct 27 2026): a raid keeps a convoy's cargo only in a
@@ -35521,6 +35835,28 @@ mod tests {
 
     /// Corvettes are MILITARY industry: Shipyard tier 2, like the raider.
     #[test]
+    fn the_corvette_waits_for_escort_datalink() {
+        // §research-locked (Peter, Nov 11 2026: "Shouldn't the corvette ...
+        // not show up in the shipyard until they have been unlocked by
+        // research?"): refused for research until Escort Datalink is done.
+        let mut w = test_world();
+        let id = PlayerId(45);
+        w.step(&[Command::AddPlayer { id, name: "Acme".into() }]);
+        let home = w.players[&id].home_system.unwrap();
+        let build = |w: &mut World| w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
+            player_id: id, system_id: home, ship_kind: ShipKind::Corvette, join: None, loadout: Default::default() }]);
+        let needs_research = |ev: &[Event]| ev.iter().any(|e| matches!(e.payload, EventPayload::BuildRejected {
+            reason: crate::event::BuildRejectReason::NeedsResearch, .. }));
+        assert!(!crate::research::has_hull(&w.players[&id].research, ShipKind::Corvette));
+        let ev = build(&mut w);
+        assert!(needs_research(&ev), "{ev:?}");
+        w.players.get_mut(&id).unwrap().research.completed.insert("hull_line_iii_escort_datalink".into());
+        assert!(crate::research::has_hull(&w.players[&id].research, ShipKind::Corvette));
+        let ev = build(&mut w);
+        assert!(!needs_research(&ev), "researched: any refusal is the yard's: {ev:?}");
+    }
+
+    #[test]
     fn corvette_needs_shipyard_two() {
         let mut w = test_world();
         let id = PlayerId(44);
@@ -35528,13 +35864,17 @@ mod tests {
             id,
             name: "Acme".into(),
         }]);
+        // §research-locked (Nov 11 2026): the Corvette is Escort Datalink's.
+        w.players.get_mut(&id).unwrap().research.completed.insert("hull_line_iii_escort_datalink".into());
         let home = w.players[&id].home_system.unwrap();
         seed_stock(
             &mut w,
             home,
-            &[(Commodity::Electronics, 20.0), (Commodity::Armaments, 20.0)],
-        ); // kit covers Alloys
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+            &[(Commodity::Electronics, 20.0), (Commodity::Armaments, 20.0),
+                // §hull-ladder: the Corvette's kit — frame, plating, precision parts.
+                (Commodity::HullSections, 20.0), (Commodity::Composites, 40.0), (Commodity::PrecisionComponents, 5.0)],
+        ); // kit covers the engines, Nav Computer, guns and Machinery
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Corvette,
@@ -35559,7 +35899,7 @@ mod tests {
             .find(|s| s.id == home)
             .unwrap()
             .set_tier(crate::build::StructureKind::Shipyard, 2);
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Corvette,
@@ -35598,9 +35938,10 @@ mod tests {
                 (Commodity::Electronics, 5_000.0),
             ],
         );
-        let stock0 = system_stock(&w, home, Commodity::Alloys);
+        // §hull-ladder: a Tiny's kit is paid in plating, not Alloys.
+        let stock0 = system_stock(&w, home, Commodity::Composites);
         // Home is Shipyard 1 → exactly ONE slip.
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -35610,13 +35951,13 @@ mod tests {
         assert!(
             ev.iter()
                 .any(|e| matches!(e.payload, EventPayload::BuildStarted { .. })),
-            "the first convoy takes the slip"
+            "the first convoy takes the slip: {:?}", ev.iter().map(|e| format!("{:?}", e.payload).chars().take(160).collect::<String>()).collect::<Vec<_>>()
         );
-        let after_first = system_stock(&w, home, Commodity::Alloys);
+        let after_first = system_stock(&w, home, Commodity::Composites);
         assert!(after_first < stock0, "the first hull was paid for");
 
         // The second finds the slip occupied — soft reject, nothing spent.
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -35635,7 +35976,7 @@ mod tests {
         );
         assert_eq!(w.build_queue.len(), 1, "no second job queued");
         assert!(
-            (system_stock(&w, home, Commodity::Alloys) - after_first).abs() < 1e-9,
+            (system_stock(&w, home, Commodity::Composites) - after_first).abs() < 1e-9,
             "a slip reject is FREE — the recipe is never eaten"
         );
 
@@ -35645,7 +35986,7 @@ mod tests {
             .find(|s| s.id == home)
             .unwrap()
             .set_tier(K::Shipyard, 2);
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -35675,6 +36016,8 @@ mod tests {
             id,
             name: "Yards".into(),
         }]);
+        // §licences: these tests are about research and yards; the Authority licenses every hull.
+        w.players.get_mut(&id).unwrap().licences.extend(crate::licence::licensed_hulls().into_iter().map(|k| (k, 0.0)));
         w.players
             .get_mut(&id)
             .unwrap()
@@ -35682,6 +36025,7 @@ mod tests {
             .completed
             .insert("hull_line_iv_destroyer".into());
         let home = w.players[&id].home_system.unwrap();
+        seed_stock(&mut w, home, &[(Commodity::NavComputer, 8.0), (Commodity::HullSections, 40.0), (Commodity::CargoBay, 8.0), (Commodity::PulseLaser, 8.0), (Commodity::BeamBattery, 4.0), (Commodity::FissionReactor, 30.0), (Commodity::ZephyrDrive, 30.0)]); // §shipbuilding-overhaul: the kit parts
         {
             let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
             s.set_tier(K::Shipyard, 2);
@@ -35700,10 +36044,11 @@ mod tests {
             ],
         );
         seed_stock(&mut w, home, &[(Commodity::HullSections, 100.0),
-            (Commodity::PrecisionComponents, 100.0)]);
+            (Commodity::PrecisionComponents, 100.0), (Commodity::Composites, 1_000.0), // §hull-ladder: the Destroyer's kit
+            (Commodity::FissionReactor, 100.0), (Commodity::ZephyrDrive, 100.0)]);
         // Fill BOTH Shipyard slips with convoys.
         for _ in 0..2 {
-            w.receive_admin_for_test(&[Command::BuildShip {
+            w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
                 player_id: id,
                 system_id: home,
                 ship_kind: ShipKind::TinyFreighter,
@@ -35713,7 +36058,7 @@ mod tests {
         }
         assert_eq!(w.build_queue.len(), 2, "the Shipyard's two slips are full");
         // A third convoy is refused…
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -35728,7 +36073,7 @@ mod tests {
             }
         )));
         // …but the DRYDOCK's own slip is untouched by the Shipyard's congestion.
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Destroyer,
@@ -35754,6 +36099,8 @@ mod tests {
             id,
             name: "Tall".into(),
         }]);
+        // §licences: these tests are about research and yards; the Authority licenses every hull.
+        w.players.get_mut(&id).unwrap().licences.extend(crate::licence::licensed_hulls().into_iter().map(|k| (k, 0.0)));
         w.players
             .get_mut(&id)
             .unwrap()
@@ -35779,7 +36126,7 @@ mod tests {
                 (Commodity::Deuterium, 20_000.0),
             ],
         );
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Destroyer,
@@ -35800,13 +36147,15 @@ mod tests {
             "a Shipyard — at ANY tier — no longer lays a ship of the line"
         );
         seed_stock(&mut w, home, &[(Commodity::HullSections, 100.0),
-            (Commodity::PrecisionComponents, 100.0)]);
+            (Commodity::PrecisionComponents, 100.0), (Commodity::NavComputer, 4.0), (Commodity::PulseLaser, 4.0),
+            (Commodity::BeamBattery, 4.0), (Commodity::FissionReactor, 40.0), (Commodity::ZephyrDrive, 40.0),
+            (Commodity::Composites, 500.0)]); // §hull-ladder: the Destroyer's kit
         w.systems
             .iter_mut()
             .find(|s| s.id == home)
             .unwrap()
             .set_tier(K::NavalDrydock, 1);
-        let ev = w.receive_admin_for_test(&[Command::BuildShip {
+        let ev = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::Destroyer,
@@ -35941,7 +36290,7 @@ mod tests {
         {
             let s = w.systems.iter_mut().find(|s| s.id == home).unwrap();
             s.set_tier(K::Shipyard, 6); // a very tall CONSTRUCTION yard…
-            *s.modules.entry(ModuleKind::MassDriver).or_insert(0) += 2;
+            s.put_modules(ModuleKind::MassDriver, 2);
         }
         let fleet = squad(&mut w, id, hpos, ShipKind::Raider, 2, FleetOrder::Idle);
         let to = Loadout::new(vec![ModuleKind::MassDriver]);
@@ -35958,7 +36307,7 @@ mod tests {
             "…installs nothing — refit is the foundry's work"
         );
         assert_eq!(
-            w.systems.iter().find(|s| s.id == home).unwrap().modules[&ModuleKind::MassDriver],
+            w.systems.iter().find(|s| s.id == home).unwrap().module_stock(ModuleKind::MassDriver),
             2,
             "a rejected refit debits no crates"
         );
@@ -36162,6 +36511,12 @@ mod tests {
             id,
             name: "Acme".into(),
         }]);
+        // §reactors-drives: Deuterium is for sale once Bunkerage is done. Its
+        // +25% tank is applied and topped up here, so the stockpile below is
+        // read at rest.
+        w.players.get_mut(&id).unwrap().research.completed.insert("prop_bunkerage".into());
+        w.refresh_fleet_fuel_research();
+        w.refuel_docked(&mut Vec::new());
         // Start from an empty hub warehouse so the assertions below read as
         // absolute totals rather than deltas off the starting stock.
         clear_warehouse(&mut w, id);
@@ -37021,11 +37376,12 @@ mod tests {
             f.cargo = None;
         }
         let cap = w.fleets[&convoy].cargo_capacity();
+        // §hold-room: Deuterium takes half a room unit.
         let ev = issue_and_deliver(&mut w, Command::HubLoad {
             player_id: id,
             fleet_id: convoy,
             commodity: Deuterium,
-            units: cap + 1,
+            units: 2 * cap + 1,
         });
         assert!(
             matches!(reason_of(&ev), Some(TradeRejectReason::NoCargoRoom { capacity }) if capacity == cap)
@@ -39554,7 +39910,11 @@ mod tests {
                 name: "B".into(),
             },
         ];
-        for _ in 0..600 {
+        a.step(&cmds);
+        b.step(&cmds);
+        a.grant_claim(PlayerId(1), sysid);
+        b.grant_claim(PlayerId(1), sysid);
+        for _ in 1..600 {
             a.step(&cmds);
             b.step(&cmds);
         }
@@ -39662,6 +40022,7 @@ mod tests {
         let sysid = richest_system(&w);
         let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
         let cid = colony_at(&mut w, id, pos);
+        w.grant_claim(id, sysid);
         let credits0 = w.players[&id].credits;
         let ev = w.step(&[]);
         let sys = w.systems.iter().find(|s| s.id == sysid).unwrap();
@@ -39708,6 +40069,7 @@ mod tests {
         }]);
         let sysid = richest_system(&w);
         let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+        w.grant_claim(id, sysid);
         // A colony ship WITH a corvette escort, arriving as ONE fleet.
         let fid = w.alloc_entity_id();
         let mut fleet = Fleet::single(fid, id, ShipKind::Colony, pos, FleetOrder::Idle, None);
@@ -40197,7 +40559,7 @@ mod tests {
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 300.0)]);
         let dock = park_fleet(&mut w, id, hpos, ShipKind::Raider);
         let fleets_before = w.fleets.len();
-        w.receive_admin_for_test(&[Command::BuildShip {
+        w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -40247,7 +40609,7 @@ mod tests {
             .assigned_fleet = Some(dock);
         let fleets_before = w.fleets.len();
 
-        w.receive_admin_for_test(&[Command::BuildShip {
+        w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -40551,6 +40913,8 @@ mod tests {
             name: "Acme".into(),
         }]);
         let fid = w.fleets.values().find(|f| f.owner == id).unwrap().id;
+        // §reactors-drives: Stealth needs a Gale Drive or better.
+        for s in &mut w.fleets.get_mut(&fid).unwrap().ships { s.drive = crate::fuel::Drive::Gale; }
         w.step(&[Command::SetFleetTransit {
             player_id: id,
             fleet_id: fid,
@@ -40582,7 +40946,7 @@ mod tests {
         staff_construction_yard(&mut w, home, ShipKind::TinyFreighter);
         seed_stock(&mut w, home, &[(Commodity::MetallicOre, 300.0)]);
         let fleets_before = w.fleets.len();
-        w.receive_admin_for_test(&[Command::BuildShip {
+        w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: id,
             system_id: home,
             ship_kind: ShipKind::TinyFreighter,
@@ -40621,6 +40985,7 @@ mod tests {
         let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
         // A's ship arrives THIS tick; B's is still one tick of flight away
         // (simulated: park B's next tick — later arrival loses).
+        w.grant_claim(a, sysid);
         colony_at(&mut w, a, pos);
         w.step(&[]);
         assert_eq!(
@@ -40659,6 +41024,7 @@ mod tests {
             .find(|s| s.is_unclaimed() && !w.home_slots.iter().any(|h| h.system == Some(s.id)))
             .unwrap();
         let (other_id, other_pos) = (other.id, other.pos);
+        w.grant_claim(b, other_id);
         // Teleport-park it there (flight time is not what's under test).
         let f = w.fleets.get_mut(&b_ship).unwrap();
         f.pos = other_pos;
@@ -40691,6 +41057,10 @@ mod tests {
             ]);
             let sysid = richest_system(&w);
             let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+            // §claims: a claim has one holder, so a true tie is between two
+            // syndicates at war with the Authority (they need none).
+            w.season.rebels.insert(a, Default::default());
+            w.season.rebels.insert(b, Default::default());
             let a_ship = colony_at(&mut w, a, pos); // lower id — allocated first
             let b_ship = colony_at(&mut w, b, pos);
             w.step(&[]);
@@ -40816,7 +41186,8 @@ mod tests {
                 assert_ne!(d.resource, Commodity::Provisions, "deposits are raws");
                 *by_res.entry(d.resource).or_insert(0.0) +=
                     crate::explore::natural_extraction_rate(body, d, sys.trait_)
-                        * crate::production::ore_bulk_ratio(d.resource);
+                        * crate::production::ore_bulk_ratio(d.resource)
+                        * crate::production::OUTPUT_SCALE;
             }
         }
         for (c, rate) in by_res {
@@ -42289,14 +42660,14 @@ mod tests {
         assert!(rejected(&fit(&mut w, 0, vec![M::MassDriver])), "no crates");
         {
             let s = w.systems.iter_mut().find(|s| s.id == sys).unwrap();
-            s.modules.insert(M::MassDriver, 2);
-            s.modules.insert(M::WhippleArmor, 1);
+            s.put_modules(M::MassDriver, 2);
+            s.put_modules(M::WhippleArmor, 1);
         }
         let ev = fit(&mut w, 0, vec![M::MassDriver, M::MassDriver, M::WhippleArmor]);
         assert!(ev.iter().any(|e| matches!(e.payload, EventPayload::StationRefitted { mount: 0, .. })));
         let s = station_of(&w, sys);
         assert_eq!(s.mounts[0].fit, "mass_driver+mass_driver+whipple_armor");
-        assert!(s.modules.is_empty(), "the crates went into the hardpoint");
+        assert!(crate::module::MODULE_KINDS.iter().all(|m| s.module_stock(*m) == 0), "the modules went into the hardpoint");
         assert!(rejected(&fit(&mut w, 1, vec![M::WarpStabilizer])), "ship equipment");
         assert!(rejected(&fit(&mut w, 7, vec![])), "no such hardpoint");
         assert!(rejected(&fit(&mut w, 1, vec![M::PrismaticLance])), "lances need research");
@@ -42305,8 +42676,8 @@ mod tests {
         fit(&mut w, 0, vec![]);
         let s = station_of(&w, sys);
         assert_eq!((s.mounts[0].fit.as_str(), s.mounts[1].fit.as_str()), ("", "prismatic_lance"));
-        assert_eq!(s.modules.get(&M::MassDriver), Some(&2), "stripped crates come back");
-        assert_eq!(s.modules.get(&M::WhippleArmor), Some(&1));
+        assert_eq!(s.module_stock(M::MassDriver), 2, "stripped modules come back");
+        assert_eq!(s.module_stock(M::WhippleArmor), 1);
     }
 
     /// A station guards the space around its system: a raid on its owner's
@@ -44767,14 +45138,14 @@ mod tests {
             s.claimed_at = Some(0.0);
             s.food_state = crate::colony::FoodState::WellSupplied;
             let b = s.bodies.iter_mut().next().unwrap();
-            b.set_tier(crate::build::StructureKind::Habitat, 2); // ceiling 8.0M
-            b.population = 0.010; // well under half-cap — the charter applies
+            b.set_tier(crate::build::StructureKind::Habitat, 2); // 16,000 × the world's multiplier
+            b.population = 0.003; // well under half-cap at any multiplier — the charter applies
             b.migration_policy = crate::migration::MigrationPolicy::Priority;
             *s.stockpile.entry(Commodity::Provisions).or_insert(0.0) = 600.0;
             // Isolate the target from the home body's default policy.
             for system in &mut w.systems {
                 for body in &mut system.bodies {
-                    if body.population > 0.0 && body.population != 0.010 {
+                    if body.population > 0.0 && body.population != 0.003 {
                         body.migration_policy = crate::migration::MigrationPolicy::Closed;
                     }
                 }
@@ -45357,6 +45728,7 @@ mod tests {
             "an unheld node grants nothing"
         );
 
+        w.grant_claim(id, sid);
         colony_at(&mut w, id, pos);
         let ev = w.step(&[]);
         assert_eq!(
@@ -45968,6 +46340,7 @@ mod tests {
             "the frontier prize starts unsurveyed"
         );
         let pos = w.systems.iter().find(|s| s.id == sysid).unwrap().pos;
+        w.grant_claim(id, sysid);
         colony_at(&mut w, id, pos);
         w.step(&[]);
         assert_eq!(
@@ -46586,12 +46959,12 @@ mod tests {
         let sil = system_stock(&w, sid, Commodity::Silicates);
         let home = crate::galaxy::DEPOSIT_BASE_RICHNESS;
         assert!(
-            (ore - home * crate::explore::BONUS_VEIN_MULT * DT).abs() < 1e-9,
+            (ore - home * crate::explore::BONUS_VEIN_MULT * crate::production::OUTPUT_SCALE * DT).abs() < 1e-9,
             "the vein commodity runs ×{} (got {ore})",
             crate::explore::BONUS_VEIN_MULT
         );
         assert!(
-            (sil - home * DT).abs() < 1e-9,
+            (sil - home * crate::production::OUTPUT_SCALE * DT).abs() < 1e-9,
             "other commodities are untouched (got {sil})"
         );
     }
@@ -46626,7 +46999,7 @@ mod tests {
             system_stock(&w, sid, Commodity::MetallicOre) / power
         };
         let base = crate::explore::DEEP_DEPOSITS_BASE_MULT;
-        let richness = crate::galaxy::DEPOSIT_BASE_RICHNESS;
+        let richness = crate::galaxy::DEPOSIT_BASE_RICHNESS * crate::production::OUTPUT_SCALE;
         let ladder = crate::production::tier_throughput;
         assert!(
             (gain_at_tier(0) - 0.0).abs() < 1e-12,
@@ -46765,6 +47138,7 @@ mod tests {
         };
         let pos = w.systems.iter().find(|s| s.id == sid).unwrap().pos;
         // A claims it physically.
+        w.grant_claim(a, sid);
         colony_at(&mut w, a, pos);
         let ev = w.step(&[]);
         assert!(
@@ -47280,7 +47654,7 @@ mod tests {
         assert!(corp.warehouse.is_empty(), "the Market Warehouse starts empty");
         assert_eq!(
             corp.founding.stage,
-            crate::founding::FoundingStage::BuildBioharvester
+            crate::founding::FoundingStage::BuildHabitat
         );
         assert!(corp.founding.protected(w.time));
         assert!(!corp.founding.expansion_unlocked());
@@ -47300,19 +47674,26 @@ mod tests {
         }
         // §charter-crates: the Landfall crate and the fuel seeds; the
         // Authority releases the rest a chapter at a time.
-        assert_eq!(system_stock(&w, home, Commodity::Machinery), 47.0);
-        assert_eq!(system_stock(&w, home, Commodity::Alloys), 110.0);
+        // §smelt-from-landing (Nov 6 2026): the Smelter's 15 and 30 land too.
+        assert_eq!(system_stock(&w, home, Commodity::Machinery), 104.0);
+        assert_eq!(system_stock(&w, home, Commodity::Alloys), 245.0);
         assert_eq!(system_stock(&w, home, Commodity::Polymers), 20.0);
-        assert_eq!(system_stock(&w, home, Commodity::Armaments), 15.0);
-        assert_eq!(system_stock(&w, home, Commodity::Electronics), crate::founding::KIT_SEMICONDUCTORS);
-        assert_eq!(system_stock(&w, home, Commodity::WarpCore), 0.0, "each hull's core comes with its chapter");
+        assert_eq!(system_stock(&w, home, Commodity::Armaments), crate::founding::KIT_ARMAMENTS);
+        // §charter-v6: the raid's and step 4's Solar Array's.
+        assert_eq!(system_stock(&w, home, Commodity::Electronics), crate::founding::KIT_SEMICONDUCTORS + crate::founding::PLANT_SEMICONDUCTORS);
+        // Peter (Nov 5 2026): the first Interceptor's and the Tiny
+        // Freighter's; the den holds the uncle's, the Reach crate the barge's.
+        // §shipbuilding-overhaul: the charter's six Fission Cores and the
+        // Interceptor's and Tiny Freighter's kit parts; no Deuterium seed.
+        assert_eq!(system_stock(&w, home, Commodity::FissionReactor), 6.0, "six Fission Cores");
+        assert_eq!(system_stock(&w, home, Commodity::PulseLaser), 6.0, "the Interceptor's guns");
         assert_eq!(system_stock(&w, home, Commodity::Uranium), 20.0, "the seed's 20");
-        assert_eq!(system_stock(&w, home, Commodity::Deuterium), 10.0);
+        assert_eq!(system_stock(&w, home, Commodity::Deuterium), 0.0);
 
         assert!(!w.fleets.values().any(|f| f.owner == owner), "§charter-v4: no starting ships");
         assert_eq!((corp.founding.interceptor, corp.founding.convoy), (None, None));
 
-        let rejected = w.receive_admin_for_test(&[Command::BuildShip {
+        let rejected = w.receive_admin_for_test(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
             player_id: owner,
             system_id: home,
             ship_kind: ShipKind::Colony,
@@ -47462,23 +47843,25 @@ mod tests {
             w.systems.iter_mut().find(|s| s.id == id).unwrap()
         }
 
-        w.players.get_mut(&owner).unwrap().research.active = Some("mat_enrichment".into());
+        // §freight-frames (Nov 6 2026): the charter researches Freight Frames.
+        w.players.get_mut(&owner).unwrap().research.active = Some(crate::founding::CHARTER_RESEARCH.into());
         w.advance_founding_programs(&[]);
         assert_eq!(stage(&w), S::FirstResearch, "research runs at a staffed Academy");
         home_mut(&mut w, home_system).set_tier(K::Academy, 1);
         home_mut(&mut w, home_system).assign(K::Academy, crate::production::Assignment::crew(1));
         w.advance_founding_programs(&[]);
-        assert_eq!(stage(&w), S::BuildSmelter, "starting Enrichment is the step; it runs on");
+        assert_eq!(stage(&w), S::AnswerSignal, "starting Freight Frames is the step; it runs on");
+        // §signals: with no captained fleet to send, the signal step passes.
+        w.advance_founding_programs(&[]);
+        assert_eq!(stage(&w), S::BuildSmallFreighter);
         assert!(!w.players[&owner].founding.expansion_unlocked());
 
-        // §refining: a staffed Smelter, then the second mine it needs.
-        let land = home_mut(&mut w, home_system).bodies.iter().find(|b| b.tier(K::CommandCenter) > 0).unwrap().id;
-        let landing = home_mut(&mut w, home_system).bodies.iter_mut().find(|b| b.id == land).unwrap();
-        landing.structures.insert(K::Smelter, 1);
+        // §freight-frames: the hull it unlocks, then the second mine.
         w.advance_founding_programs(&[]);
-        assert_eq!(stage(&w), S::BuildSmelter, "an unstaffed Smelter refines nothing");
-        let landing = home_mut(&mut w, home_system).bodies.iter_mut().find(|b| b.id == land).unwrap();
-        landing.assignments.insert(K::Smelter, crate::production::Assignment::crew(1));
+        assert_eq!(stage(&w), S::BuildSmallFreighter, "waits for the hull");
+        let at = w.players[&owner].home;
+        let hull = w.alloc_entity_id();
+        w.fleets.insert(hull, Fleet::single(hull, owner, crate::ship::ShipKind::SmallFreighter, at, FleetOrder::Idle, None));
         w.advance_founding_programs(&[]);
         assert_eq!(stage(&w), S::ExpandMining);
 
@@ -47558,7 +47941,7 @@ mod tests {
         assert!(w.players[&owner].founding.vendetta.is_some(), "his oath stands");
         assert_eq!(w.systems.iter().filter(|s| s.owner == Some(owner)).count(), 1, "no colony required");
         let milestones = &w.players[&owner].founding.milestones;
-        let sequence = [S::FirstResearch, S::BuildSmelter, S::ExpandMining, S::SurveyCandidates, S::BuildBarge,
+        let sequence = [S::FirstResearch, S::BuildSmallFreighter, S::ExpandMining, S::SurveyCandidates, S::BuildBarge,
             S::ProspectBelt, S::MineBelt, S::HaulOre, S::SecureStores, S::Vendetta];
         for pair in sequence.map(|stage| milestones[&stage]).windows(2) {
             assert!(pair[0] <= pair[1], "milestone telemetry is monotone");
@@ -47609,7 +47992,8 @@ mod tests {
             .find(|b| b.tier(K::CommandCenter) > 0).unwrap().id;
         let b = w.systems.iter_mut().find(|s| s.id == home).unwrap().bodies.iter_mut()
             .find(|b| b.id == land).unwrap();
-        for kind in [K::Bioharvester, K::Agroplex, K::Habitat] {
+        // §charter-v6: and step 4's Solar Array, which the mine runs on.
+        for kind in [K::Bioharvester, K::Agroplex, K::Habitat, K::PowerPlant] {
             b.structures.insert(kind, 1);
         }
         for kind in [K::Bioharvester, K::Agroplex] {
@@ -47625,8 +48009,8 @@ mod tests {
             w.systems.iter().find(|s| s.id == home).unwrap().trait_,
             w.systems.iter().find(|s| s.id == home).unwrap().stockpile);
         assert_eq!(w.build_queue[0].body_id, land, "inside the land grant, on the landing world");
-        assert_eq!(system_stock(&w, home, Commodity::Alloys), 85.0);
-        assert_eq!(system_stock(&w, home, Commodity::Machinery), 35.0);
+        assert_eq!(system_stock(&w, home, Commodity::Alloys), 220.0);
+        assert_eq!(system_stock(&w, home, Commodity::Machinery), 92.0);
         // §charter-gates: built in the privateer's flight (about half a minute).
         step_until(&mut w, 60 * u64::from(crate::config::TICK_HZ), "opening mine", |world| {
             world.systems.iter().find(|s| s.id == home).unwrap()
@@ -47640,7 +48024,9 @@ mod tests {
             workers: 1, specialists: Default::default(), refining_ore: None,
         }]);
         w.step(&[]); // the guide uses the arrived mine/assignment report
-        assert_eq!(w.players[&owner].founding.stage, crate::founding::FoundingStage::PirateRaid);
+        // §charter-v6: the mine's step hands on to the Smelter's; the raid
+        // is already in flight.
+        assert_eq!(w.players[&owner].founding.stage, crate::founding::FoundingStage::BuildSmelter);
         assert!(system_stock(&w, home, Commodity::MetallicOre) > 0.0);
         let inbound = |w: &World| w.migrant_runs.values().any(|run| run.owner == owner && run.dest == home);
         // §workforce cap: three of seven crews posted — hands to spare, so a
@@ -47687,11 +48073,11 @@ mod tests {
         loaded.step(&[Command::AddPlayer { id: owner, name: "New arrival".into() }]);
         assert_eq!(loaded.players[&owner].home_system, Some(slot));
         assert_eq!(loaded.systems.iter().find(|s| s.id == slot).unwrap().population(), crate::colony::HOME_FOUNDING_POP);
-        assert_eq!(system_stock(&loaded, slot, Commodity::Alloys), 110.0);
-        assert_eq!(system_stock(&loaded, slot, Commodity::Machinery), 47.0);
-        assert_eq!(system_stock(&loaded, slot, Commodity::Electronics), crate::founding::KIT_SEMICONDUCTORS);
+        assert_eq!(system_stock(&loaded, slot, Commodity::Alloys), 245.0);
+        assert_eq!(system_stock(&loaded, slot, Commodity::Machinery), 104.0);
+        assert_eq!(system_stock(&loaded, slot, Commodity::Electronics), crate::founding::KIT_SEMICONDUCTORS + crate::founding::PLANT_SEMICONDUCTORS);
         assert_eq!(system_stock(&loaded, slot, Commodity::Polymers), 20.0);
-        assert_eq!(system_stock(&loaded, slot, Commodity::Deuterium), 10.0);
+        assert_eq!(system_stock(&loaded, slot, Commodity::Deuterium), 0.0, "§shipbuilding-overhaul: no Deuterium seed");
         assert_eq!(system_stock(&loaded, slot, Commodity::Uranium), 20.0);
         assert_eq!(loaded.systems.iter().find(|s| s.id == slot).unwrap().trait_, None);
     }
@@ -47705,7 +48091,7 @@ mod tests {
                 let owner = PlayerId(900 + slot);
                 w.step(&[Command::AddPlayer { id: owner, name: format!("Mine {slot}") }]);
                 let home = w.players[&owner].home_system.unwrap();
-                assert_eq!(w.players[&owner].founding.stage, crate::founding::FoundingStage::BuildBioharvester);
+                assert_eq!(w.players[&owner].founding.stage, crate::founding::FoundingStage::BuildHabitat);
                 // §charter-gates: the mine's step.
                 w.players.get_mut(&owner).unwrap().founding.set_stage(crate::founding::FoundingStage::BuildMine, w.time);
                 let land = w.systems.iter().find(|s| s.id == home).unwrap().bodies.iter()
@@ -47719,8 +48105,8 @@ mod tests {
                 }, None, Default::default(), &mut events);
                 assert!(w.build_queue.iter().any(|job| job.owner == owner && job.body_id == land),
                     "seed={seed} slot={slot}: {events:?}");
-                assert_eq!(system_stock(&w, home, Commodity::Alloys), 85.0);
-                assert_eq!(system_stock(&w, home, Commodity::Machinery), 35.0);
+                assert_eq!(system_stock(&w, home, Commodity::Alloys), 220.0);
+                assert_eq!(system_stock(&w, home, Commodity::Machinery), 92.0);
             }
         }
     }
@@ -48052,7 +48438,7 @@ mod tests {
     }
 
     /// §player-styles check 1: two Interceptors and a Combat Freighter raiding
-    /// a home at the end of the charter (Gun Platform, Vault, Warehouse, full
+    /// a home at the end of the charter (Laser Battery, Vault, Warehouse, full
     /// stores), 60,000 su away, for a day under the victim's cap. One trip is
     /// flown on five seeds for its losses and time on station; the day's haul
     /// is the dearest goods out of the Vault's reach up to the cap (what a raid
@@ -48066,7 +48452,7 @@ mod tests {
         let fleet_cost = 2.0 * recipe_value(crate::build::BuildKind::Ship { ship: ShipKind::Raider })
             + recipe_value(crate::build::BuildKind::Ship { ship: ShipKind::CombatFreighter });
         let interceptor = recipe_value(crate::build::BuildKind::Ship { ship: ShipKind::Raider });
-        let (mut lost, mut units, mut at_target, mut cap, mut speed, mut mass, mut haul_day) = (0, 0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        let (mut lost, mut units, mut at_target, mut cap, mut speed, mut mass, mut hull, mut haul_day) = (0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
         let seeds = [123u64, 7, 41, 99, 5150];
         for seed in seeds {
             let mut cfg = SimConfig::for_players(seed, 4);
@@ -48101,13 +48487,14 @@ mod tests {
             let f = &w.fleets[&raid];
             speed = f.transit_speed() * crate::transit::WARP_FACTOR;
             mass = f.mass();
+            hull = f.hull_mass();
         }
         let n = seeds.len() as f64;
         let (units, at_target) = (units as f64 / n, at_target / n);
         let losses = lost as f64 / n * interceptor;
-        assert!(lost <= 1, "the Gun Platform rarely kills a raider: {lost} in {n} trips");
+        assert!(lost <= 1, "the Laser Battery rarely kills a raider: {lost} in {n} trips");
         let leg = 60_000.0;
-        let burn = crate::fuel::fuel_cost(leg, mass - units * 28.0) + crate::fuel::fuel_cost(leg, mass);
+        let burn = crate::fuel::fuel_cost(leg, hull) + crate::fuel::fuel_cost(leg, mass);
         let trips = cap / units;
         let net = |fuel: f64| haul_day - trips * (fuel + losses);
         let full = net(burn * crate::market::base_price(crate::fuel::MOVEMENT_FUEL));
@@ -48120,7 +48507,10 @@ mod tests {
             slow_trip / 60.0, fleet_cost / slow);
         assert!(slow_trip * trips <= 86_400.0, "the cap, not the clock, limits the day");
         assert!(full < 0.0, "full warp burns more than it takes");
-        assert!(slow > 0.0 && fleet_cost / slow < 3.0, "slow warp pays, within three days: {:.1}", fleet_cost / slow);
+        // §hull-ladder (Nov 7 2026): the raid fleet is 2.4× dearer (Combat
+        // Freighter 5,957, Interceptor 2,003) and loot is still Hub-priced,
+        // so the payback stretched from under three days to about 3.6.
+        assert!(slow > 0.0 && fleet_cost / slow < 4.0, "slow warp pays, within four days: {:.1}", fleet_cost / slow);
     }
 
     /// §player-styles check 2: the same fleet against a Defense Platform and a
@@ -48322,7 +48712,7 @@ mod tests {
     }
 
     /// §player-styles: a hideout left a day sends its raiders after its
-    /// founder's freighters outside Gun Platform cover, never anyone else's.
+    /// founder's freighters outside Laser Battery cover, never anyone else's.
     #[test]
     fn an_ignored_hideout_hunts_only_its_founders_freighters() {
         let (mut w, owner, _) = styles_founder(2026);

@@ -149,10 +149,10 @@ fn efficient_burns_reduces_physical_burn_and_extends_reported_range() {
             f.transit = transit;
             f.order = FleetOrder::MoveTo { dest: f.pos + Vec2::new(100_000.0, 0.0) };
             f.drive_state = crate::ship::DriveState::Cruising(crate::transit::Regime::Warp);
-            let before = f.propulsion_store();
+            let before = f.energy_aboard();
             let range = f.range_at(crate::transit::WARP_FACTOR);
             for _ in 0..30 { state.integrate_movement(&mut vec![]); }
-            (before - state.fleets[&id].propulsion_store(), range, state.fleets[&id].pos)
+            (before - state.fleets[&id].energy_aboard(), range, state.fleets[&id].pos)
         };
         let (old, old_range, old_pos) = burn(&mut plain);
         let (new, new_range, new_pos) = burn(&mut w);
@@ -175,7 +175,9 @@ fn fuel_research_survives_world_restore_without_filling_the_tank() {
     restored.fixup_after_load();
     let f = &restored.fleets[&id];
     assert_eq!(f.fuel, 73.0);
-    assert!((f.fuel_capacity() - 262.5).abs() < 1e-9);
+    // §reactors-drives: a fusion Colony Ship's tank, with Bunkerage:
+    // 6,000 × 0.035 × 2 / 4 × 1.25.
+    assert!((f.fuel_capacity() - 131.25).abs() < 1e-9);
     assert!((f.range_at(crate::transit::WARP_FACTOR) - w.fleets[&id].range_at(crate::transit::WARP_FACTOR)).abs() < 1e-6);
 }
 
@@ -188,8 +190,8 @@ fn new_hulls_inherit_fuel_research_and_hub_topups_are_still_paid() {
     let pos = Vec2::new(900_000.0, 900_000.0);
     w.fleets.insert(id, Fleet::single(id, owner, ShipKind::Colony, pos, FleetOrder::Idle, None));
     w.step(&[]);
-    assert!((w.fleets[&id].fuel - 210.0).abs() < 1e-9);
-    assert!((w.fleets[&id].fuel_capacity() - 262.5).abs() < 1e-9);
+    assert!((w.fleets[&id].fuel - 105.0).abs() < 1e-9);
+    assert!((w.fleets[&id].fuel_capacity() - 131.25).abs() < 1e-9);
     w.fleets.get_mut(&id).unwrap().pos = w.hub;
     w.players.get_mut(&owner).unwrap().credits = 100_000.0;
     let before = w.players[&owner].credits;
@@ -198,8 +200,10 @@ fn new_hulls_inherit_fuel_research_and_hub_topups_are_still_paid() {
     assert!(w.players[&owner].credits < before);
     // §fuel-overhaul: whole units, rounded UP so the tank fills; the spill
     // (half a unit here) is paid for, never free fuel.
-    assert!((w.fleets[&id].fuel - 262.5).abs() < 1e-9);
+    // §reactors-drives: a fusion Colony Ship's tank with Bunkerage is
+    // 131.25; the 26.25 of room buys 27 whole units.
+    assert!((w.fleets[&id].fuel - 131.25).abs() < 1e-9);
     assert!(events.iter().any(|e| matches!(e.payload, EventPayload::HubFuelPurchased {
-        fleet, commodity: C::Deuterium, units: 53, .. } if fleet == id)));
+        fleet, commodity: C::Deuterium, units: 27, .. } if fleet == id)));
 }
 }

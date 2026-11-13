@@ -1,0 +1,76 @@
+{
+  "name": "life-01",
+  "mode": "built-in image_gen",
+  "source_brief": "docs/research-emblem-sheets.md",
+  "prompt": "Use case: stylized-concept. Asset type: a sheet of six transparent research emblems for Stellar Syndicates, a premium dark sci-fi strategy game. They join an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw SIX new emblems. Do not copy any of Image 1's six motifs, and ignore Image 1's grey backdrop.\nField: Life. Colour, all six badges: fresh leaf green with warm amber lights and silver glass. Everything else stays in the family's navy, charcoal and silver.\nLayout: landscape 1536 x 1024 canvas, three columns and two rows, exactly Image 1's arrangement. Six identical hexagon badges, each about 450 px tall, centred in its own 512 x 512 cell, with clear empty space between badges and around the sheet. Badges never touch or overlap.\nBadge (every one the same): a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. Each motif sits inside its rim, centred, about 70% of the face's width. Nothing crosses a rim.\nMotifs, reading left to right, top row then bottom row:\n1. Top left: Three rows of young green seedlings growing in hydroponic trays under a bar of warm amber grow lights.\n2. Top centre: A medical capsule bed under a curved diagnostic arch, a soft green scan light passing over it.\n3. Top right: A compact block of stacked habitat modules with many small warm-lit windows.\n4. Bottom left: A ration tray with neat portioned compartments of food, one fresh green leaf on top.\n5. Bottom centre: A frosted cryo-sleep pod standing upright, its window glowing soft green, the outline of a sleeper inside.\n6. Bottom right: A green plant sprouting straight up out of a twisting DNA double helix.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. Each motif is one clear subject that still reads at 48 px: a few large forms, restrained small detail. The six must look clearly different from each other at a glance: vary silhouette, scale and composition, never the same object twice.\nBackground: genuinely transparent PNG with real alpha everywhere outside the hexagons. No drop shadow, outer glow, grey backdrop, panel, vignette, cell borders or grid lines.\nConstraints: exactly six badges. No text, letters, numbers, Roman numerals, captions, labels, logos, watermark, frames or UI.",
+  "keys": [
+    "life_hydroponics",
+    "life_med_bays",
+    "life_dense_housing",
+    "life_civic_rations",
+    "life_cryo_berths",
+    "life_gene_crops"
+  ],
+  "references": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png",
+      "sha256": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+    }
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-b4ef04bc-0833-425f-8dc8-20ee22225aa0.png",
+  "edits": [
+    {
+      "prompt": "Use case: precise-object-edit. Correct ONLY the layout and badge scale of this Life research emblem sheet. Preserve all SIX existing motifs exactly, in the same reading order: hydroponic trays, med bay, dense housing, food ration tray, cryo berth, gene-tailored crop helix. Preserve their rendering, navy-black hexagon faces, thin charcoal rims, upper-left bevels, silver/green/amber palette and genuine transparent alpha. The badges are too small in the supplied image (349 pixels tall). On the SAME 1536 x 1024 landscape canvas, ENLARGE every complete badge and motif to about 450 pixels tall. Arrange them in three columns and two rows centered at (256,256), (768,256), (1280,256), (256,768), (768,768), (1280,768). Each badge should be approximately 410 pixels wide, from y=31 to 481 in the top row and y=543 to 993 in the bottom row. Six complete hexagons, no touching, overlap or cropping; clear zero-alpha space between and around them. Do NOT copy the old small badge positions: distribute to these larger cell centres. No text, labels, UI, grid, backdrop, outer glow or shadows. Output one native 1536x1024 RGBA transparent PNG sheet.",
+      "referenced_image_paths": [
+        "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-9b2bf60a-bc5e-4066-abc2-6c45aaf8ee17.png"
+      ],
+      "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-b4ef04bc-0833-425f-8dc8-20ee22225aa0.png"
+    }
+  ],
+  "verification": {
+    "width": 1536,
+    "height": 1024,
+    "hasAlpha": true,
+    "badges": [
+      {
+        "left": 61,
+        "top": 28,
+        "width": 412,
+        "height": 472
+      },
+      {
+        "left": 561,
+        "top": 27,
+        "width": 414,
+        "height": 473
+      },
+      {
+        "left": 1062,
+        "top": 27,
+        "width": 414,
+        "height": 473
+      },
+      {
+        "left": 61,
+        "top": 525,
+        "width": 412,
+        "height": 471
+      },
+      {
+        "left": 561,
+        "top": 525,
+        "width": 414,
+        "height": 471
+      },
+      {
+        "left": 1062,
+        "top": 525,
+        "width": 414,
+        "height": 471
+      }
+    ],
+    "sha256": "20a2c773fa16a3034f6f757c8730086372fbc7b8a5025e3733d42c96a9aefa04",
+    "nativeBytesPreserved": true
+  }
+}

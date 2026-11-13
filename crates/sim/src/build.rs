@@ -185,6 +185,16 @@ pub enum StructureKind {
     /// ([`crate::season::RESOLVE_PER_HALL_HOUR`] a level) from grip II on.
     /// At the Command Center, no slot, no crew, no power; three levels.
     AssemblyHall,
+    /// §veil (Peter, Nov 1 2026: "the defender can turn on an ionised veil
+    /// that destroys any fast or small objects and only large hardened troop
+    /// transports can land"): the VEIL PROJECTOR. Under a HELD war blockade it
+    /// ionises the sky over its world: orbital guns pin nothing, prize crews
+    /// load nothing, and only Troop Transports get down, paying
+    /// [`crate::ground::veil_descent_loss`] of their marines on the way. Fed by
+    /// the world's Fusion Plant reactor ([`crate::power::veil_mw`]), so it
+    /// holds exactly as long as the fuel does. Needs an atmosphere; one per
+    /// world, no slot, no crew; three levels. See `docs/veil.md`.
+    VeilProjector,
 }
 
 impl StructureKind {
@@ -196,11 +206,13 @@ impl StructureKind {
     pub fn research_prerequisite(self) -> Option<&'static str> {
         match self {
             Self::VolatileHarvester | Self::FuelRefinery => Some("prop_bunkerage"),
-            Self::Smelter | Self::ChemicalWorks => Some("mat_enrichment"),
+            // §smelt-from-landing (Peter, Nov 6 2026: "should they start with the
+            // ability to smelt?"): the Smelter needs no research.
+            Self::ChemicalWorks => Some("mat_enrichment"),
             Self::ElectronicsFabricator => Some("comp_signal_libraries"),
             Self::MachineWorks | Self::PrecisionWorks => Some("mat_autoforges"),
             // §fuel-overhaul: local Warp and Fusion Cores wait for Fusion Reactors.
-            Self::DriveWorks => Some(crate::power::FUSION_RESEARCH),
+            Self::DriveWorks => Some("mat_autoforges"),
             Self::AntimatterPlant => Some("mat_foundry_vi_antimatter_synthesis"),
             Self::ArmamentsComplex => Some("weap_munitions_lines"),
             Self::CompositeWorks | Self::HullFabricator => Some("mat_prefab_construction"),
@@ -210,13 +222,15 @@ impl StructureKind {
             Self::OrbitalWarehouse => Some("mat_foundry_iv_orbital_yards"),
             Self::SensorArray => Some("comp_sensor_gain"),
             Self::DefensePlatform | Self::Garrison => Some("weap_fire_control"),
+            // §veil: the Countermeasures school raises the Veil.
+            Self::VeilProjector => Some(VEIL_RESEARCH),
             // §gun-platform: the station's first level needs no research; each
             // level after it is its own unlock (`max_buildable_tier`).
             Self::OrbitalDefense => None,
             Self::MiningComplex | Self::Bioharvester | Self::Agroplex | Self::Shipyard
             | Self::Habitat | Self::Warehouse | Self::Academy | Self::ServiceBerth
             | Self::CommandCenter | Self::LivingTerraces | Self::PowerPlant
-            | Self::UraniumMill | Self::AsteroidQuarry | Self::Vault | Self::AssemblyHall => None,
+            | Self::UraniumMill | Self::AsteroidQuarry | Self::Vault | Self::AssemblyHall | Self::Smelter => None,
         }
     }
 
@@ -231,7 +245,7 @@ impl StructureKind {
 
     /// Every kind, in display order. New kinds go LAST: the client seeds a
     /// planet's first building addresses from this catalogue's order.
-    pub const ALL: [StructureKind; 35] = [
+    pub const ALL: [StructureKind; 36] = [
         StructureKind::MiningComplex,
         StructureKind::VolatileHarvester,
         StructureKind::Bioharvester,
@@ -267,6 +281,7 @@ impl StructureKind {
         StructureKind::AsteroidQuarry,
         StructureKind::Vault,
         StructureKind::AssemblyHall,
+        StructureKind::VeilProjector,
     ];
 
     /// §workforce cap: does this structure do nothing until a crew is posted?
@@ -350,7 +365,9 @@ impl StructureKind {
             // itself out of the same budget that houses and feeds it.
             | StructureKind::Garrison
             // §vault: grouped with the civic utilities; it takes no slot.
-            | StructureKind::Vault | StructureKind::AssemblyHall => SlotPool::Infrastructure,
+            | StructureKind::Vault | StructureKind::AssemblyHall
+            // §veil: civic too, and slot-free like the Power Plant it runs off.
+            | StructureKind::VeilProjector => SlotPool::Infrastructure,
         }
     }
 
@@ -399,6 +416,7 @@ impl StructureKind {
             StructureKind::AsteroidQuarry => "asteroid_quarry",
             StructureKind::Vault => "vault",
             StructureKind::AssemblyHall => "assembly_hall",
+            StructureKind::VeilProjector => "veil_projector",
         }
     }
 
@@ -440,22 +458,29 @@ impl StructureKind {
             StructureKind::AsteroidQuarry => "Asteroid Quarry",
             StructureKind::Vault => "Vault",
             StructureKind::AssemblyHall => "Assembly Hall",
+            StructureKind::VeilProjector => "Veil Projector",
         }
     }
 
     /// §asteroid-quarry: may this kind stand on this body? A belt takes the
     /// Asteroid Quarry and nothing else; the quarry stands only on a belt.
     pub fn suits(self, body: &crate::body::Body) -> bool {
+        // §veil: an ionised sky needs a sky — no belt, gas giant or airless rock.
+        if self == Self::VeilProjector {
+            return body.has_atmosphere();
+        }
         body.is_belt() == (self == Self::AsteroidQuarry)
     }
 }
 
 impl StructureKind {
-    /// §gun-platform: the station stands in orbit and takes no site (the
-    /// charter's Gun Platform must never cost a home its Academy's).
+    /// §gun-platform: the station takes no site (the charter's first level
+    /// must never cost a home its Academy's). §laser-battery: in orbit from
+    /// level 2; the ground Laser Battery keeps its own footprint, like the
+    /// Command Center.
     pub fn uses_slot(self) -> bool {
         !matches!(self, Self::ServiceBerth | Self::CommandCenter | Self::PowerPlant | Self::Vault | Self::AssemblyHall
-            | Self::OrbitalDefense)
+            | Self::OrbitalDefense | Self::VeilProjector)
     }
 
     pub fn tier_title(self, tier: u32) -> &'static str {
@@ -493,6 +518,20 @@ pub const COMMAND_CENTER_RECIPES: [Recipe; 3] = [
 // explicit level ladders. Mirrored by the client's `TIER_CURVE` (market.ts).
 /// Cost multiplier by tier (index 0 = tier I): ×1.6 a tier from III.
 pub const TIER_COST_MULT: [f64; 6] = [1.0, 1.0, 1.6, 2.56, 4.096, 6.5536];
+/// §progression (Peter, Nov 11 2026; docs/balance/progression.md): an income
+/// structure's level costs what it returns. On a typical world each level pays
+/// back its cost in about 2 / 6 / 12 / 24 / 36 / 48 hours of the output it
+/// adds (`production::TIER_THROUGHPUT`), so growth is a decision, not a
+/// formality. Level I stays the basic, cheap one. Tunable.
+pub const PRODUCTION_TIER_COST_MULT: [f64; 6] = [1.0, 3.5, 9.0, 24.0, 44.0, 65.0];
+
+/// Does `kind` earn: an extractor, or a works with a converter line? Its
+/// levels follow [`PRODUCTION_TIER_COST_MULT`].
+pub fn earns(kind: StructureKind) -> bool {
+    matches!(kind, StructureKind::MiningComplex | StructureKind::VolatileHarvester
+        | StructureKind::Bioharvester | StructureKind::AsteroidQuarry)
+        || crate::production::all_converters().any(|c| c.structure == kind)
+}
 /// Build-time multiplier by tier: a 20 s structure takes about 7 minutes at
 /// III, an hour at IV, 5 hours at V and 15 hours at VI.
 pub const TIER_TIME_MULT: [f64; 6] = [1.0, 1.0, 20.0, 180.0, 900.0, 2_700.0];
@@ -526,8 +565,12 @@ pub fn recipe_for_tier(what: BuildKind, tier: u32) -> TierRecipe {
         return TierRecipe::from(base);
     }
     let i = tier.clamp(1, RESEARCHED_MAX_STRUCTURE_TIER) as usize - 1;
+    let curve = match what {
+        BuildKind::Upgrade { upgrade } if earns(upgrade) => PRODUCTION_TIER_COST_MULT,
+        _ => TIER_COST_MULT,
+    };
     TierRecipe {
-        costs: base.costs.iter().map(|&(c, n)| (c, (n * TIER_COST_MULT[i]).round())).collect(),
+        costs: base.costs.iter().map(|&(c, n)| (c, (n * curve[i]).round())).collect(),
         build_ticks: (base.build_ticks as f64 * TIER_TIME_MULT[i]).round() as u64,
     }
 }
@@ -604,6 +647,17 @@ pub struct BuildJob {
     /// = unfitted, so pre-module build jobs complete as stock ships.
     #[serde(default)]
     pub loadout: crate::module::Loadout,
+    /// §reactors-drives: the REACTOR the ship is built with (debited at
+    /// enqueue). serde default = Fission.
+    #[serde(default)]
+    pub reactor: crate::fuel::ReactorGrade,
+    /// The WARP DRIVE the ship is built with. serde default = Zephyr.
+    #[serde(default)]
+    pub drive: crate::fuel::Drive,
+    /// Exactly what was debited at receipt, so a cancel refunds it (empty for
+    /// older jobs, which refund from the recipe).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub charged: Vec<(Commodity, f64)>,
 }
 
 impl BuildJob {
@@ -749,72 +803,142 @@ const HZ: u64 = TICK_HZ as u64;
 // unit. Savings assume useful loads: a half-empty giant is not a free upgrade.
 // Capacities, fuel, upkeep and slower heavy-hull speeds live in ship.rs. Tunable.
 //
-// §fuel-overhaul: no recipe carries fuel (new hulls fill at the yard's dock),
-// and every warp hull carries the Authority's Warp Core — one for small hulls,
-// more for big ones. The Survey Probe's burn-out drive needs none.
+// §fuel-overhaul: no recipe carries fuel (new hulls fill at the yard's dock).
+// §shipbuilding-overhaul (docs/shipbuilding-overhaul-plan.md §2): a hull is a
+// KIT — `ShipKind::engines()` engines, each a reactor and a warp drive of the
+// hull's size (the recipe names rung 1, Fission Reactor + Zephyr Drive, and the
+// yard substitutes the parts the build chose, `BuildJob::reactor` / `drive`),
+// a Nav Computer, the frame (Hull Sections of the hull's size), plating
+// (Composites), systems and the guns. §hull-ladder (Nov 7 2026): engines are
+// half of every hull and the ladder is EVE-shaped — warships ×5 a rung, ×10
+// into the capitals (docs/hull-ladder-plan.md); counts come from its
+// generator. Then: a Nav
+// Computer, Hull Sections (warships ≈ mass/330, civil ≈ mass/660), Cargo Bays
+// (one per 50 units of hold), the guns of `ShipKind::guns()`, and a thin skin
+// of bulk goods (Alloys; Weapon Mounts and Semiconductors on warships) so the
+// Smelter still feeds the yard directly. The Survey Probe's burn-out drive needs
+// no engine. Every part is sold by the Authority. Numbers are starting values.
 
 /// Opening freight hull; the first export fits into its 50-unit mixed hold.
 pub const TINY_FREIGHTER_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 20.0), (Commodity::Machinery, 8.0), (Commodity::Polymers, 8.0),
-        (Commodity::WarpCore, 1.0)],
+    costs: &[
+        (Commodity::FissionReactor, 2.0),
+        (Commodity::ZephyrDrive, 2.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 2.0),
+        (Commodity::CargoBay, 1.0),
+        (Commodity::Composites, 4.0),
+        (Commodity::Electronics, 1.0),
+        (Commodity::Machinery, 1.0),
+    ],
     build_ticks: 12 * HZ,
 };
 pub const SMALL_FREIGHTER_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 45.0), (Commodity::Machinery, 16.0), (Commodity::Polymers, 16.0),
-        (Commodity::WarpCore, 1.0)],
+    costs: &[
+        (Commodity::FissionReactor, 4.0),
+        (Commodity::ZephyrDrive, 4.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 15.0),
+        (Commodity::CargoBay, 3.0),
+        (Commodity::Composites, 30.0),
+        (Commodity::PrecisionComponents, 3.0),
+        (Commodity::Electronics, 8.0),
+        (Commodity::Machinery, 5.0),
+    ],
     build_ticks: 24 * HZ,
 };
 pub const LARGE_FREIGHTER_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 180.0), (Commodity::Machinery, 45.0), (Commodity::Electronics, 25.0), (Commodity::HullSections, 12.0),
-        (Commodity::WarpCore, 3.0)],
+    costs: &[
+        (Commodity::FissionReactor, 40.0),
+        (Commodity::ZephyrDrive, 40.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 133.0),
+        (Commodity::CargoBay, 20.0),
+        (Commodity::Composites, 264.0),
+        (Commodity::PrecisionComponents, 27.0),
+        (Commodity::Electronics, 74.0),
+        (Commodity::Machinery, 41.0),
+    ],
     build_ticks: 100 * HZ,
 };
 pub const HEAVY_FREIGHTER_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 320.0), (Commodity::Machinery, 70.0), (Commodity::HullSections, 30.0), (Commodity::PrecisionComponents, 15.0),
-        (Commodity::WarpCore, 5.0)],
+    costs: &[
+        (Commodity::HeavyFissionReactor, 5.0),
+        (Commodity::HeavyZephyrDrive, 5.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HeavyHullSections, 29.0),
+        (Commodity::CargoBay, 50.0),
+        (Commodity::Composites, 110.0),
+        (Commodity::PrecisionComponents, 40.0),
+        (Commodity::Electronics, 108.0),
+        (Commodity::Machinery, 59.0),
+    ],
     build_ticks: 180 * HZ,
 };
 pub const BULK_FREIGHTER_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 520.0), (Commodity::Machinery, 100.0), (Commodity::HullSections, 60.0),
-        (Commodity::PrecisionComponents, 25.0), (Commodity::WarpCore, 16.0)],
+    costs: &[
+        (Commodity::HeavyFissionReactor, 15.0),
+        (Commodity::HeavyZephyrDrive, 15.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HeavyHullSections, 90.0),
+        (Commodity::CargoBay, 120.0),
+        (Commodity::Composites, 336.0),
+        (Commodity::PrecisionComponents, 109.0),
+        (Commodity::Electronics, 294.0),
+        (Commodity::Machinery, 161.0),
+    ],
     build_ticks: 300 * HZ,
 };
 /// Legacy Convoy identifier now names the Medium Freighter.
 pub const CONVOY_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 90.0),
-        (Commodity::Machinery, 28.0),
-        (Commodity::Polymers, 20.0),
-        (Commodity::Electronics, 10.0),
-        (Commodity::WarpCore, 2.0),
+        (Commodity::FissionReactor, 13.0),
+        (Commodity::ZephyrDrive, 13.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 44.0),
+        (Commodity::CargoBay, 8.0),
+        (Commodity::Composites, 88.0),
+        (Commodity::PrecisionComponents, 9.0),
+        (Commodity::Electronics, 25.0),
+        (Commodity::Machinery, 14.0),
     ],
     build_ticks: 50 * HZ,
 };
 /// Raider (Interceptor): costlier, needs the good frontier materials.
 pub const RAIDER_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 20.0),
-        (Commodity::Electronics, 12.0),
-        (Commodity::Armaments, 15.0),
-        (Commodity::WarpCore, 1.0),
+        (Commodity::FissionReactor, 1.0),
+        (Commodity::ZephyrDrive, 1.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 1.0),
+        (Commodity::PulseLaser, 6.0),
     ],
     build_ticks: 10 * HZ,
 };
 /// §charting: the Survey Probe — a cheap, crewless, one-way drone that charts a
 /// system and is spent doing it. Its burn-out drive needs no Warp Core. Tunable.
 pub const SURVEY_PROBE_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Alloys, 6.0), (Commodity::Electronics, 4.0)],
+    // §shipbuilding-overhaul: a fire-and-forget drone carries no Nav Computer;
+    // its Semiconductors are its brain.
+    costs: &[
+        (Commodity::Alloys, 6.0),
+        (Commodity::Electronics, 4.0),
+    ],
     build_ticks: 10 * HZ,
 };
 /// §belts: the Mining Barge — about a Small Freighter's goods, with the
 /// Electronics of its cutters. No research: the founding charter teaches it.
 pub const MINING_BARGE_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 40.0),
-        (Commodity::Machinery, 20.0),
-        (Commodity::Polymers, 12.0),
-        (Commodity::Electronics, 6.0),
-        (Commodity::WarpCore, 1.0),
+        (Commodity::FissionReactor, 3.0),
+        (Commodity::ZephyrDrive, 3.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 9.0),
+        (Commodity::CargoBay, 1.0),
+        (Commodity::Composites, 18.0),
+        (Commodity::PrecisionComponents, 2.0),
+        (Commodity::Electronics, 5.0),
+        (Commodity::Machinery, 3.0),
     ],
     build_ticks: 30 * HZ,
 };
@@ -823,22 +947,29 @@ pub const MINING_BARGE_RECIPE: Recipe = Recipe {
 /// plating. Shipyard II, no research. Tunable.
 pub const COMBAT_FREIGHTER_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 25.0),
-        (Commodity::Machinery, 10.0),
-        (Commodity::Electronics, 6.0),
-        (Commodity::Armaments, 5.0),
-        (Commodity::WarpCore, 1.0),
+        (Commodity::FissionReactor, 3.0),
+        (Commodity::ZephyrDrive, 3.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 9.0),
+        (Commodity::CargoBay, 1.0),
+        (Commodity::Composites, 18.0),
+        (Commodity::PrecisionComponents, 2.0),
+        (Commodity::Electronics, 5.0),
+        (Commodity::Machinery, 3.0),
     ],
     build_ticks: 20 * HZ,
 };
 /// §belts: the Mining Belt Station, a Shipyard II hull behind Belt Stations.
 pub const MINING_BELT_STATION_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 160.0),
-        (Commodity::Machinery, 50.0),
-        (Commodity::Polymers, 30.0),
-        (Commodity::Electronics, 25.0),
-        (Commodity::WarpCore, 2.0),
+        (Commodity::FissionReactor, 30.0),
+        (Commodity::ZephyrDrive, 30.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 105.0),
+        (Commodity::Composites, 208.0),
+        (Commodity::PrecisionComponents, 22.0),
+        (Commodity::Electronics, 58.0),
+        (Commodity::Machinery, 32.0),
     ],
     build_ticks: 180 * HZ,
 };
@@ -846,19 +977,26 @@ pub const MINING_BELT_STATION_RECIPE: Recipe = Recipe {
 /// acceptable loss).
 pub const SCOUT_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 15.0),
-        (Commodity::Electronics, 8.0),
-        (Commodity::WarpCore, 1.0),
+        (Commodity::FissionReactor, 1.0),
+        (Commodity::ZephyrDrive, 1.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::Alloys, 10.0),
+        (Commodity::Electronics, 6.0),
     ],
     build_ticks: 8 * HZ,
 };
 /// Corvette: **Ore + Alloys** — the dedicated defender; military industry.
 pub const CORVETTE_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 25.0),
-        (Commodity::Electronics, 12.0),
-        (Commodity::Armaments, 12.0),
-        (Commodity::WarpCore, 1.0),
+        (Commodity::FissionReactor, 5.0),
+        (Commodity::ZephyrDrive, 5.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 16.0),
+        (Commodity::PulseLaser, 2.0),
+        (Commodity::Composites, 32.0),
+        (Commodity::PrecisionComponents, 3.0),
+        (Commodity::Electronics, 9.0),
+        (Commodity::Machinery, 5.0),
     ],
     build_ticks: 14 * HZ,
 };
@@ -866,11 +1004,15 @@ pub const CORVETTE_RECIPE: Recipe = Recipe {
 /// instant-claim economics into a physical, raidable investment (§ships part 3).
 pub const COLONY_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 45.0),
-        (Commodity::Machinery, 15.0),
-        (Commodity::Polymers, 20.0),
-        (Commodity::Provisions, 30.0),
-        (Commodity::WarpCore, 2.0),
+        (Commodity::FissionReactor, 10.0),
+        (Commodity::ZephyrDrive, 10.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 33.0),
+        (Commodity::Composites, 66.0),
+        (Commodity::PrecisionComponents, 7.0),
+        (Commodity::Electronics, 18.0),
+        (Commodity::Machinery, 10.0),
+        (Commodity::Provisions, 40.0),
     ],
     build_ticks: 30 * HZ,
 };
@@ -888,64 +1030,84 @@ pub const COLONY_RECIPE: Recipe = Recipe {
 const HOUR_TICKS: u64 = 3600 * HZ;
 pub const DESTROYER_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 40.0),
-        (Commodity::Electronics, 25.0),
-        (Commodity::Armaments, 30.0),
-        (Commodity::Machinery, 10.0),
-        (Commodity::HullSections, 6.0),
-        (Commodity::PrecisionComponents, 4.0),
-        (Commodity::WarpCore, 2.0),
+        (Commodity::FissionReactor, 25.0),
+        (Commodity::ZephyrDrive, 25.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 85.0),
+        (Commodity::PulseLaser, 1.0),
+        (Commodity::BeamBattery, 1.0),
+        (Commodity::Composites, 169.0),
+        (Commodity::PrecisionComponents, 18.0),
+        (Commodity::Electronics, 47.0),
+        (Commodity::Machinery, 26.0),
     ],
     build_ticks: 8 * HOUR_TICKS,
 };
 pub const CRUISER_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 60.0),
-        (Commodity::Electronics, 35.0),
-        (Commodity::Armaments, 55.0),
-        (Commodity::Machinery, 20.0),
-        (Commodity::RareElements, 3.0),
-        (Commodity::HullSections, 16.0),
-        (Commodity::WarpCore, 7.0),
+        (Commodity::HeavyFissionReactor, 5.0),
+        (Commodity::HeavyZephyrDrive, 5.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HeavyHullSections, 33.0),
+        (Commodity::PulseLaser, 1.0),
+        (Commodity::BeamBattery, 2.0),
+        (Commodity::Composites, 124.0),
+        (Commodity::PrecisionComponents, 45.0),
+        (Commodity::Electronics, 121.0),
+        (Commodity::Machinery, 66.0),
+        // §rare-materials: Rare Elements enter the line of battle here and
+        // climb ×5 a rung (the capital economy); a small share of the kit.
+        (Commodity::RareElements, 20.0),
     ],
     build_ticks: 18 * HOUR_TICKS,
 };
 pub const BATTLESHIP_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 95.0),
-        (Commodity::Iridium, 13.0),
-        (Commodity::Electronics, 60.0),
-        (Commodity::Armaments, 120.0),
-        (Commodity::Machinery, 40.0),
-        (Commodity::RareElements, 9.0),
-        (Commodity::HullSections, 40.0),
-        (Commodity::WarpCore, 14.0),
+        (Commodity::HeavyFissionReactor, 25.0),
+        (Commodity::HeavyZephyrDrive, 25.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HeavyHullSections, 179.0),
+        (Commodity::BeamBattery, 4.0),
+        (Commodity::Composites, 400.0),
+        (Commodity::PrecisionComponents, 109.0),
+        (Commodity::Electronics, 294.0),
+        (Commodity::Machinery, 161.0),
+        // §rare-materials: the siege anchors take Iridium.
+        (Commodity::RareElements, 100.0),
+        (Commodity::Iridium, 60.0),
     ],
     build_ticks: 48 * HOUR_TICKS,
 };
 pub const DREADNOUGHT_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 190.0),
-        (Commodity::Iridium, 26.0),
-        (Commodity::Electronics, 130.0),
-        (Commodity::Armaments, 230.0),
-        (Commodity::Machinery, 90.0),
-        (Commodity::RareElements, 22.0),
-        (Commodity::HullSections, 80.0),
-        (Commodity::WarpCore, 31.0),
+        (Commodity::CapitalFissionReactor, 10.0),
+        (Commodity::CapitalZephyrDrive, 10.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::CapitalHullSections, 77.0),
+        (Commodity::PulseLaser, 2.0),
+        (Commodity::BeamBattery, 7.0),
+        (Commodity::Composites, 400.0),
+        (Commodity::PrecisionComponents, 109.0),
+        (Commodity::Electronics, 294.0),
+        (Commodity::Machinery, 161.0),
+        (Commodity::RareElements, 500.0),
+        (Commodity::Iridium, 300.0),
     ],
     build_ticks: 96 * HOUR_TICKS,
 };
 pub const TITAN_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 375.0),
-        (Commodity::Iridium, 65.0),
-        (Commodity::Electronics, 250.0),
-        (Commodity::Armaments, 480.0),
-        (Commodity::Machinery, 200.0),
-        (Commodity::RareElements, 55.0),
-        (Commodity::HullSections, 180.0),
-        (Commodity::WarpCore, 70.0),
+        (Commodity::CapitalFissionReactor, 100.0),
+        (Commodity::CapitalZephyrDrive, 100.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::CapitalHullSections, 781.0),
+        (Commodity::BeamBattery, 12.0),
+        (Commodity::Composites, 400.0),
+        (Commodity::PrecisionComponents, 109.0),
+        (Commodity::Electronics, 294.0),
+        (Commodity::Machinery, 161.0),
+        (Commodity::RareElements, 2_500.0),
+        (Commodity::Iridium, 1_500.0),
     ],
     build_ticks: 192 * HOUR_TICKS,
 };
@@ -1090,12 +1252,12 @@ pub const DEUTERIUM_FUSION_PLANT_RECIPE: Recipe = Recipe {
         (Commodity::Alloys, 30.0),
         (Commodity::Machinery, 12.0),
         (Commodity::Electronics, 8.0),
-        (Commodity::FusionCore, 1.0),
+        (Commodity::FusionReactor, 1.0),
     ],
     build_ticks: 40 * HZ,
 };
 /// §power: each Helium-3 fusion tier (V–VI) — reactor walls of Iridium around
-/// precision field coils and a Fusion Core.
+/// precision field coils and an Advanced Fusion Reactor (§shipbuilding-overhaul).
 pub const FUSION_PLANT_RECIPE: Recipe = Recipe {
     costs: &[
         (Commodity::Alloys, 120.0),
@@ -1103,7 +1265,7 @@ pub const FUSION_PLANT_RECIPE: Recipe = Recipe {
         (Commodity::Electronics, 30.0),
         (Commodity::PrecisionComponents, 10.0),
         (Commodity::Iridium, 12.0),
-        (Commodity::FusionCore, 1.0),
+        (Commodity::AdvancedFusionReactor, 1.0),
     ],
     build_ticks: 90 * HZ,
 };
@@ -1114,7 +1276,7 @@ pub const URANIUM_MILL_RECIPE: Recipe = Recipe {
     build_ticks: 15 * HZ,
 };
 /// §fuel-overhaul: the Antimatter Plant — containment rings of Exotic Matter
-/// around Fusion Cores. The last tech's factory.
+/// around an Antimatter Reactor. The last tech's factory.
 pub const ANTIMATTER_PLANT_RECIPE: Recipe = Recipe {
     costs: &[
         (Commodity::Alloys, 200.0),
@@ -1122,7 +1284,9 @@ pub const ANTIMATTER_PLANT_RECIPE: Recipe = Recipe {
         (Commodity::Electronics, 60.0),
         (Commodity::PrecisionComponents, 30.0),
         (Commodity::ExoticMatter, 20.0),
-        (Commodity::FusionCore, 2.0),
+        // §reactors-drives: one reactor family — the plant's heart is the
+        // Antimatter Reactor (was two Fusion Reactors).
+        (Commodity::AntimatterReactor, 1.0),
     ],
     build_ticks: 120 * HZ,
 };
@@ -1140,8 +1304,10 @@ pub const ASTEROID_QUARRY_RECIPE: Recipe = Recipe {
 };
 /// §asteroid-quarry: a quarry's upkeep per tier, per second: an outpost's
 /// (1.8 Provisions and 0.3 Machinery a minute) for each tier.
-pub const QUARRY_UPKEEP_PER_TIER: [(Commodity, f64); 2] =
-    [(Commodity::Provisions, 0.03), (Commodity::Machinery, 0.005)];
+pub const QUARRY_UPKEEP_PER_TIER: [(Commodity, f64); 2] = [
+    (Commodity::Provisions, 0.03 * crate::production::OUTPUT_SCALE),
+    (Commodity::Machinery, 0.005 * crate::production::OUTPUT_SCALE),
+];
 pub const LIVING_TERRACES_RECIPE: Recipe = Recipe {
     costs: &[
         (Commodity::Alloys, 30.0),
@@ -1201,12 +1367,30 @@ pub const ACADEMY_RECIPE: Recipe = Recipe {
 /// a Garrison, and priced so an invasion is an investment rather than a whim.
 pub const TRANSPORT_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 40.0),
-        (Commodity::Armaments, 30.0),
+        (Commodity::FissionReactor, 15.0),
+        (Commodity::ZephyrDrive, 15.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 51.0),
+        (Commodity::Composites, 101.0),
+        (Commodity::PrecisionComponents, 10.0),
+        (Commodity::Electronics, 28.0),
+        (Commodity::Machinery, 16.0),
         (Commodity::Provisions, 40.0),
-        (Commodity::WarpCore, 2.0),
     ],
     build_ticks: 24 * HZ,
+};
+/// §veil: the research that opens the Veil Projector (Countermeasures III).
+pub const VEIL_RESEARCH: &str = "weap_cm_iii_ionospheric_veil";
+/// §veil: a Veil Projector is emitters and control electronics — a mid-game
+/// defensive build, priced between a Garrison and a station level. Tunable.
+pub const VEIL_PROJECTOR_RECIPE: Recipe = Recipe {
+    costs: &[
+        (Commodity::Alloys, 50.0),
+        (Commodity::Electronics, 40.0),
+        (Commodity::Machinery, 30.0),
+        (Commodity::Polymers, 20.0),
+    ],
+    build_ticks: 30 * HZ,
 };
 pub const GARRISON_RECIPE: Recipe = Recipe {
     costs: &[
@@ -1264,16 +1448,18 @@ pub const POINT_DEFENSE_RECIPE: Recipe = Recipe {
     costs: &[(Commodity::Armaments, 6.0), (Commodity::Electronics, 8.0)],
     build_ticks: MODULE_BUILD_TICKS,
 };
+// §shipbuilding-overhaul: armour takes no Weapon Mounts — the hardware good
+// goes only into things that shoot.
 pub const REFLECTIVE_PLATING_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Armaments, 6.0),
+        (Commodity::Composites, 4.0),
         (Commodity::Silicates, 6.0),
         (Commodity::Electronics, 2.0),
     ],
     build_ticks: MODULE_BUILD_TICKS,
 };
 pub const WHIPPLE_ARMOR_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::Armaments, 12.0), (Commodity::Machinery, 2.0)],
+    costs: &[(Commodity::Alloys, 8.0), (Commodity::Composites, 4.0), (Commodity::Machinery, 2.0)],
     build_ticks: MODULE_BUILD_TICKS,
 };
 pub const EXTENDED_TANKS_RECIPE: Recipe = Recipe {
@@ -1298,8 +1484,11 @@ pub const FUEL_TRANSFER_RIG_RECIPE: Recipe = Recipe {
     build_ticks: MODULE_BUILD_TICKS,
 };
 
+/// §modules-as-goods (Nov 8 2026): the Survey Booster (slug survey_drive). It
+/// took a Fusion Reactor, which read as a second engine; the same value in
+/// Precision Components and Alloys (13 × 92 + 16 × 26 = 1,300 + 12 × 26).
 pub const SURVEY_DRIVE_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::WarpCore, 2.0), (Commodity::Alloys, 12.0)],
+    costs: &[(Commodity::PrecisionComponents, 13.0), (Commodity::Alloys, 16.0)],
     build_ticks: 2 * MODULE_BUILD_TICKS,
 };
 pub const NEBULA_SPECTROMETER_RECIPE: Recipe = Recipe {
@@ -1336,12 +1525,6 @@ pub const INTERDICTION_FIELD_RECIPE: Recipe = Recipe {
         (Commodity::ExoticMatter, 2.0)],
     build_ticks: 2 * MODULE_BUILD_TICKS,
 };
-/// §fuel-overhaul: a fold drive — a Warp Core wrapped in Exotic Matter, and
-/// its antimatter bottle.
-pub const JUMP_DRIVE_RECIPE: Recipe = Recipe {
-    costs: &[(Commodity::WarpCore, 1.0), (Commodity::PrecisionComponents, 4.0), (Commodity::ExoticMatter, 3.0)],
-    build_ticks: 2 * MODULE_BUILD_TICKS,
-};
 
 /// The recipe for one module of `kind`.
 pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
@@ -1363,8 +1546,20 @@ pub fn module_recipe(kind: ModuleKind) -> &'static Recipe {
         ModuleKind::StasisWeb => &STASIS_WEB_RECIPE,
         ModuleKind::WarpStabilizer => &WARP_STABILIZER_RECIPE,
         ModuleKind::InterdictionField => &INTERDICTION_FIELD_RECIPE,
-        ModuleKind::JumpDrive => &JUMP_DRIVE_RECIPE,
     }
+}
+
+/// §shipbuilding-overhaul: the Weapon Mounts (`Commodity::Armaments`) a hull's
+/// recipe carries, the guns' own counted through (`Pulse Laser` one, `Beam
+/// Battery` four — `crate::production::PART_RECIPES`).
+pub fn weapon_mounts_in(kind: ShipKind) -> f64 {
+    recipe_for(BuildKind::Ship { ship: kind }).costs.iter().map(|(c, n)| match c {
+        Commodity::Armaments => *n,
+        Commodity::PulseLaser | Commodity::BeamBattery => n * crate::production::converter_for_output(*c)
+            .and_then(|conv| conv.inputs.iter().find(|(i, _)| *i == Commodity::Armaments).map(|(_, k)| *k))
+            .unwrap_or(0.0),
+        _ => 0.0,
+    }).sum()
 }
 
 /// A SENSOR is the expensive one: it is an instrument, and it is what lets you
@@ -1382,9 +1577,14 @@ static DEEP_SPACE_SENSOR_RECIPE: Recipe = Recipe {
 /// purchase while each emplacement's kit stays the recurring cost.
 static BUILDER_RECIPE: Recipe = Recipe {
     costs: &[
-        (Commodity::Alloys, 60.0),
-        (Commodity::Machinery, 25.0),
-        (Commodity::WarpCore, 1.0),
+        (Commodity::FissionReactor, 4.0),
+        (Commodity::ZephyrDrive, 4.0),
+        (Commodity::NavComputer, 1.0),
+        (Commodity::HullSections, 13.0),
+        (Commodity::Composites, 26.0),
+        (Commodity::PrecisionComponents, 3.0),
+        (Commodity::Electronics, 7.0),
+        (Commodity::Machinery, 4.0),
     ],
     build_ticks: 50 * HZ,
 };
@@ -1495,6 +1695,7 @@ pub fn recipe_for(what: BuildKind) -> &'static Recipe {
             StructureKind::AsteroidQuarry => &ASTEROID_QUARRY_RECIPE,
             StructureKind::Vault => &VAULT_RECIPE,
             StructureKind::AssemblyHall => &ASSEMBLY_HALL_RECIPE,
+            StructureKind::VeilProjector => &VEIL_PROJECTOR_RECIPE,
         },
     }
 }
@@ -1690,12 +1891,22 @@ pub const RESEARCHED_MAX_STRUCTURE_TIER: u32 = 6;
 pub fn max_buildable_tier(kind: StructureKind, research_unlocked_tier: u32) -> u32 {
     if kind == StructureKind::ServiceBerth { return 1; }
     if kind == StructureKind::AssemblyHall { return 3; }
+    // §veil: level I with Ionospheric Veil, II–III with Deep Veil.
+    if kind == StructureKind::VeilProjector { return research_unlocked_tier.min(crate::ground::VEIL_MAX_LEVEL); }
     // §orbital-defense: each station level is its own research unlock, but
-    // the Gun Platform (§gun-platform) needs none; the legacy platform is no
+    // the Laser Battery (§gun-platform) needs none; the legacy platform is no
     // longer built.
     if kind == StructureKind::OrbitalDefense { return research_unlocked_tier.clamp(1, crate::station::MAX_LEVEL); }
     if kind == StructureKind::DefensePlatform { return 0; }
     if kind == StructureKind::CommandCenter { return if research_unlocked_tier >= 3 { 3 } else { 2 }; }
+    // §reactors-drives: Solar I–II need no research; the Deuterium Fusion
+    // Plants III–IV open with Bunkerage (rung 2), the Helium-3 plants V–VI
+    // with Helium-3 Cycle, so no plant shows whose reactor and fuel are hidden.
+    if kind == StructureKind::PowerPlant {
+        return if research_unlocked_tier >= 4 { RESEARCHED_MAX_STRUCTURE_TIER }
+            else if research_unlocked_tier >= 3 { BASE_MAX_STRUCTURE_TIER }
+            else { crate::power::FUSION_CORE_TIER - 1 };
+    }
     if kind.research_prerequisite().is_some() && research_unlocked_tier == 0 {
         return 0;
     }
@@ -1780,20 +1991,21 @@ mod tests {
         use crate::research::{self, Effect, ResearchState};
         // §gaia: Living Terraces need no research; a Gaia world is their gate.
         let starter = [MiningComplex, Bioharvester, Agroplex, Shipyard, Habitat,
-            Warehouse, Academy, LivingTerraces, PowerPlant, UraniumMill, AsteroidQuarry, Vault];
+            Warehouse, Academy, LivingTerraces, PowerPlant, UraniumMill, AsteroidQuarry, Vault, Smelter];
         let gated = [
             (VolatileHarvester, "prop_bunkerage"), (FuelRefinery, "prop_bunkerage"),
-            (Smelter, "mat_enrichment"), (ChemicalWorks, "mat_enrichment"),
+            (ChemicalWorks, "mat_enrichment"),
             (ElectronicsFabricator, "comp_signal_libraries"),
             (MachineWorks, "mat_autoforges"),
             (ArmamentsComplex, "weap_munitions_lines"),
             (CompositeWorks, "mat_prefab_construction"), (HullFabricator, "mat_prefab_construction"),
-            (PrecisionWorks, "mat_autoforges"), (DriveWorks, crate::power::FUSION_RESEARCH),
+            (PrecisionWorks, "mat_autoforges"), (DriveWorks, "mat_autoforges"),
             (AntimatterPlant, "mat_foundry_vi_antimatter_synthesis"),
             (NavalDrydock, "mat_autoforges"), (CapitalSlipway, "hull_line_vii_dreadnought"),
             (OrdnanceFoundry, "hull_drydock_efficiency"), (SensorArray, "comp_sensor_gain"),
             (OrbitalWarehouse, "mat_foundry_iv_orbital_yards"),
             (Garrison, "weap_fire_control"),
+            (VeilProjector, VEIL_RESEARCH),
         ];
         // The legacy platform is no longer built; the station climbs its own
         // research ladder (checked below). §season: the Assembly Hall has its
@@ -1810,7 +2022,7 @@ mod tests {
                 "{}", level.name);
             assert_eq!(max_buildable_tier(OrbitalDefense, level.level), level.level);
         }
-        assert_eq!(max_buildable_tier(OrbitalDefense, 0), 1, "the Gun Platform needs no research");
+        assert_eq!(max_buildable_tier(OrbitalDefense, 0), 1, "the Laser Battery needs no research");
         assert_eq!(ServiceBerth.research_prerequisite(), None);
         assert_eq!(max_buildable_tier(ServiceBerth, 6), 1, "attachment has only one tier");
         // §season: the Assembly Hall needs no research and has three levels.
@@ -1818,7 +2030,8 @@ mod tests {
         assert_eq!(max_buildable_tier(AssemblyHall, 6), 3);
         for kind in starter {
             assert_eq!(kind.research_prerequisite(), None, "{kind:?}: no bootstrap loop");
-            assert_eq!(max_buildable_tier(kind, 0), BASE_MAX_STRUCTURE_TIER);
+            // §reactors-drives: the Power Plant's solar tiers alone need no research.
+            assert_eq!(max_buildable_tier(kind, 0), if kind == PowerPlant { 2 } else { BASE_MAX_STRUCTURE_TIER });
         }
         for (kind, id) in gated {
             assert_eq!(kind.research_prerequisite(), Some(id), "{kind:?}");
@@ -1828,9 +2041,16 @@ mod tests {
             assert_eq!(max_buildable_tier(kind, 0), 0, "{kind:?} starts locked");
             let mut state = ResearchState::default();
             state.completed.insert(id.into());
+            // §veil: the projector climbs its own three-level ladder instead.
+            let ceiling = if kind == VeilProjector { 1 } else { BASE_MAX_STRUCTURE_TIER };
             assert_eq!(max_buildable_tier(kind, research::unlocked_structure_tier(&state, kind)),
-                BASE_MAX_STRUCTURE_TIER, "{kind:?}: completion unlocks the ordinary tier ladder");
+                ceiling, "{kind:?}: completion unlocks the ordinary tier ladder");
         }
+        // §veil: Deep Veil opens levels II–III and nothing opens a fourth.
+        let mut state = ResearchState::default();
+        state.completed.insert(VEIL_RESEARCH.into());
+        state.completed.insert("weap_cm_iv_deep_veil".into());
+        assert_eq!(max_buildable_tier(VeilProjector, research::unlocked_structure_tier(&state, VeilProjector)), 3);
     }
 
     /// The Depot → Orbital Warehouse rename keeps OLD snapshots parsing: the
@@ -1861,41 +2081,28 @@ mod tests {
     }
 
     /// §ladder B6.1 — THE EFFICIENCY INVARIANT (load-bearing): combat weight
-    /// per Armaments spent PEAKS at Destroyer-or-Cruiser, and the Titan is the
+    /// per credit DECLINES every rung up the ladder, and the Titan is the
     /// least efficient spend. Capitals buy presence and role, never efficiency
-    /// — enforced, not hoped. (Battle rules v12 raised the Dreadnought's
-    /// broadside to 15 so it holds its rung between Battleship and Titan in
-    /// battle; that lifts it just past the Battleship here, still under the
-    /// peak.)
+    /// — enforced, not hoped. §hull-ladder (Nov 7 2026): measured in credits
+    /// (the kit at reference prices), since the ladder is ×5 a rung and ×10
+    /// into each capital rung while combat weight grows far slower.
     #[test]
-    fn capital_efficiency_peaks_at_destroyer_or_cruiser_and_declines_up() {
-        let arm = |k: ShipKind| -> f64 {
-            recipe_for(BuildKind::Ship { ship: k })
-                .costs
-                .iter()
-                .find(|(c, _)| *c == Commodity::Armaments)
-                .map(|(_, n)| *n)
-                .expect("every warship recipe carries Armaments")
-        };
-        let eff = |k: ShipKind| (k.attack_weight() + k.defense_weight()) / arm(k);
-        let d = eff(ShipKind::Destroyer);
-        let c = eff(ShipKind::Cruiser);
-        let b = eff(ShipKind::Battleship);
-        let n = eff(ShipKind::Dreadnought);
-        let t = eff(ShipKind::Titan);
-        let peak = d.max(c);
-        assert!(
-            peak >= b && peak >= n && peak >= t,
-            "the ladder peaks at Destroyer/Cruiser"
-        );
-        assert!(
-            b > t && n > t,
-            "the Titan is the least efficient capital ({b:.4}, {n:.4} > {t:.4})"
-        );
-        assert!(
-            peak > t,
-            "a Titan is the LEAST efficient Armaments spend on the ladder"
-        );
+    fn efficiency_declines_every_rung_up_the_ladder() {
+        // §shipbuilding-overhaul: Weapon Mounts counted through the kit's guns
+        // (a Pulse Laser carries one, a Beam Battery four).
+        assert!(crate::ship::ALL_SHIP_KINDS.iter().filter(|k| k.is_combatant()).all(|k| weapon_mounts_in(*k) > 0.0),
+            "every warship recipe carries Weapon Mounts");
+        let value = |k: ShipKind| recipe_for(BuildKind::Ship { ship: k }).costs.iter()
+            .map(|(c, n)| crate::market::base_price(*c) * n).sum::<f64>();
+        let eff = |k: ShipKind| (k.attack_weight() + k.defense_weight()) / value(k);
+        let ladder = [ShipKind::Raider, ShipKind::Corvette, ShipKind::Destroyer, ShipKind::Cruiser,
+            ShipKind::Battleship, ShipKind::Dreadnought, ShipKind::Titan];
+        for w in ladder.windows(2) {
+            assert!(eff(w[0]) > eff(w[1]), "{:?} ({:.5}) buys more weight a credit than {:?} ({:.5})",
+                w[0], eff(w[0]), w[1], eff(w[1]));
+        }
+        assert!(eff(ShipKind::Raider) > 1_000.0 * eff(ShipKind::Titan),
+            "a Titan is the LEAST efficient spend on the ladder, by three orders");
     }
 
     #[test]
@@ -1961,8 +2168,8 @@ mod tests {
             max_buildable_tier(StructureKind::MiningComplex, 0),
             BASE_MAX_STRUCTURE_TIER
         );
-        assert_eq!(max_buildable_tier(StructureKind::Smelter, 0), 0);
-        assert_eq!(max_buildable_tier(StructureKind::Smelter, 1), 4);
+        assert_eq!(max_buildable_tier(StructureKind::ChemicalWorks, 0), 0);
+        assert_eq!(max_buildable_tier(StructureKind::ChemicalWorks, 1), 4);
         // A Tier-IV or Tier-V unlock lifts the ceiling to 6 (the two superlinear
         // prize tiers) — for every kind, uniformly.
         assert_eq!(
@@ -1985,6 +2192,11 @@ mod tests {
                     assert_eq!(max_buildable_tier(kind, unlocked), unlocked.max(1), "one level per unlock past the first");
                 } else if kind == StructureKind::CommandCenter {
                     assert_eq!(max_buildable_tier(kind, unlocked), if unlocked >= 3 { 3 } else { 2 });
+                } else if kind == StructureKind::VeilProjector {
+                    assert_eq!(max_buildable_tier(kind, unlocked), unlocked.min(3), "§veil: three levels, one per unlock");
+                } else if kind == StructureKind::PowerPlant {
+                    // §reactors-drives: Solar I–II free, Deuterium III–IV with Bunkerage, Helium-3 V–VI with Helium-3 Cycle.
+                    assert_eq!(max_buildable_tier(kind, unlocked), if unlocked >= 4 { 6 } else if unlocked >= 3 { 4 } else { 2 });
                 } else if kind.research_prerequisite().is_some() && unlocked == 0 {
                     assert_eq!(max_buildable_tier(kind, unlocked), 0);
                 } else {
@@ -2006,10 +2218,16 @@ mod tests {
             let costs = recipe_for(BuildKind::Ship { ship }).costs;
             assert_eq!(has(costs, C::Iridium), crate::ship::is_siege_anchor(ship), "{ship:?}");
         }
-        let drive = crate::production::converter_for(StructureKind::DriveWorks).unwrap();
+        // §reactors-drives: rung 1 (Fission Reactor, Zephyr Drive) is colony
+        // metal; Iridium enters with the Fusion Reactor.
+        assert!(!has(crate::production::DRIVE_WORKS_PRODUCTS[1].inputs, C::Iridium), "the Zephyr Drive");
+        let drive = &crate::production::DRIVE_WORKS_PRODUCTS[2];
         assert!(has(drive.inputs, C::Iridium));
         let value = |b: &[(C, f64)]| b.iter().map(|(c, n)| crate::market::base_price(*c) * n).sum::<f64>();
-        assert!((value(drive.inputs) - 165.0).abs() < 1e-9, "the Drive Works basket, without its furnace fuel");
+        let fission = &crate::production::DRIVE_WORKS_PRODUCTS[0];
+        // §hull-ladder: the basket sits ~16% under the Hub's 650.
+        assert!(!has(fission.inputs, C::Iridium) && (value(fission.inputs) - 545.54).abs() < 1e-6,
+            "the Fission Reactor basket: Precision Components, Composites and Machinery ({})", value(fission.inputs));
         for module in [ModuleKind::PrismaticLance, ModuleKind::InterdictionField] {
             assert!(has(module_recipe(module).costs, C::ExoticMatter), "{module:?}");
         }
@@ -2024,29 +2242,54 @@ mod tests {
         }
     }
 
+    /// §hull-ladder (docs/hull-ladder-plan.md §2–3, Nov 7 2026): the kits.
+    /// The Interceptor and the Scout stay on the opening economy (no plating,
+    /// no precision parts); from the Corvette up every hull takes Composites
+    /// plating, and the frame and engines come in the hull's size. Values are
+    /// the §2 targets with the assembly fee (`SIZE_ASSEMBLY_FEE`): ×5 a
+    /// warship rung, ×10 into each capital rung.
     #[test]
-    fn component_chains_feed_heavy_hulls_but_leave_opening_hulls_alone() {
+    fn kits_climb_the_ladder_and_leave_the_opening_hulls_alone() {
         use Commodity as C;
-        // §fuel-overhaul: every warp hull carries the Authority's Warp Core, so
-        // the opening economy's components are the colony-made chains.
-        let components = [C::Composites, C::HullSections, C::PrecisionComponents];
-        for ship in [ShipKind::Raider, ShipKind::Scout, ShipKind::Corvette, ShipKind::Convoy,
-            ShipKind::Colony, ShipKind::Builder, ShipKind::Transport] {
+        let components = [C::Composites, C::PrecisionComponents];
+        for ship in [ShipKind::Raider, ShipKind::Scout] {
             assert!(recipe_for(BuildKind::Ship { ship }).costs.iter()
                 .all(|(good, _)| !components.contains(good)), "{ship:?} stays on the opening economy");
         }
-        // Substitutions create demand for a supply network, not a hidden large
-        // price increase on top of the same old recipe. Base values stay ±1%.
-        // §fuel-overhaul: the hulls lost their fuel and the Destroyer gained two
-        // Warp Cores.
-        for (ship, previous) in [(ShipKind::Destroyer, 5756.0), (ShipKind::Cruiser, 10923.0),
-            (ShipKind::Battleship, 23910.0), (ShipKind::Dreadnought, 49265.0), (ShipKind::Titan, 106970.0)] {
+        let value = |ship: ShipKind| recipe_for(BuildKind::Ship { ship }).costs.iter()
+            .map(|(good, units)| crate::market::base_price(*good) * units).sum::<f64>();
+        for (ship, target) in [(ShipKind::Raider, 2_000.0), (ShipKind::Corvette, 10_000.0), (ShipKind::Destroyer, 50_000.0),
+            (ShipKind::Cruiser, 257_000.0), (ShipKind::Battleship, 1_289_000.0), (ShipKind::Dreadnought, 13_042_000.0),
+            (ShipKind::Titan, 130_471_000.0), (ShipKind::TinyFreighter, 2_917.0), (ShipKind::SmallFreighter, 8_943.0),
+            (ShipKind::Convoy, 26_993.0), (ShipKind::LargeFreighter, 80_981.0), (ShipKind::HeavyFreighter, 246_381.0),
+            (ShipKind::BulkFreighter, 741_281.0), (ShipKind::MiningBarge, 5_957.0), (ShipKind::Colony, 19_975.0)] {
             let costs = recipe_for(BuildKind::Ship { ship }).costs;
-            assert!(costs.iter().any(|(good, units)| *good == C::HullSections && *units > 0.0));
-            let core = if ship == ShipKind::Destroyer { C::PrecisionComponents } else { C::WarpCore };
-            assert!(costs.iter().any(|(good, units)| *good == core && *units > 0.0));
-            let value: f64 = costs.iter().map(|(good, units)| crate::market::base_price(*good) * units).sum();
-            assert!((value / previous - 1.0).abs() < 0.01, "{ship:?}: {value} vs {previous}");
+            let size = ship.engine_size();
+            assert!(costs.iter().any(|(good, units)| *good == size.hull_sections() && *units > 0.0), "{ship:?} frame");
+            assert!(costs.iter().any(|(good, units)| *good == size.reactor(crate::fuel::ReactorGrade::Fission)
+                && *units == ship.engines() as f64), "{ship:?} reactors");
+            assert!(costs.iter().any(|(good, units)| *good == size.drive(crate::fuel::Drive::Zephyr)
+                && *units == ship.engines() as f64), "{ship:?} drives");
+            if ship.guns().1 > 0 {
+                assert!(costs.iter().any(|(good, units)| *good == C::BeamBattery && *units == ship.guns().1 as f64));
+            }
+            if ship != ShipKind::Raider {
+                assert!(costs.iter().any(|(good, _)| *good == C::Composites), "{ship:?} plating");
+            }
+            assert!((value(ship) / target - 1.0).abs() < 0.01, "{ship:?}: {} vs {target}", value(ship));
+        }
+        // Engines are half of every hull but the Tiny Freighter (Peter: it
+        // keeps its two).
+        let engines = |ship: ShipKind| {
+            let size = ship.engine_size();
+            ship.engines() as f64 * (crate::market::base_price(size.reactor(crate::fuel::ReactorGrade::Fission))
+                + crate::market::base_price(size.drive(crate::fuel::Drive::Zephyr)))
+        };
+        // (The Scout is placed by role, not on the ladder — Peter: ignore it.)
+        for ship in crate::ship::ALL_SHIP_KINDS.into_iter().filter(|k| k.is_buildable() && k.engines() > 0 && *k != ShipKind::Scout) {
+            let share = engines(ship) / value(ship);
+            let band = if ship == ShipKind::TinyFreighter { 0.65..0.72 } else { 0.44..0.56 };
+            assert!(band.contains(&share), "{ship:?}: engines are {:.0}% of the kit", share * 100.0);
         }
     }
 }

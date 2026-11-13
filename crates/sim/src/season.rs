@@ -59,6 +59,23 @@ pub const REQUISITION_EVERY_S: f64 = 2.0 * 86_400.0;
 pub const REQUISITION_VALUE_FRAC: f64 = 0.04;
 /// …and at least this much, scaled up by the grip.
 pub const REQUISITION_MIN: f64 = 2_000.0;
+/// What a requisition is multiplied by at each grip (none are issued under
+/// the plain charter).
+pub const REQUISITION_SCALE: [f64; 4] = [1.0, 1.0, 1.5, 2.0];
+/// A corporation founded once requisitions run starts with this many
+/// requisitions' worth of extra credits.
+pub const LATE_GRANT_REQUISITIONS: f64 = 2.0;
+
+/// Peter (Nov 10 2026): late joiners meet requisitions from their second day,
+/// mid-tutorial perhaps, so they get "a boost in starting credits" rather than
+/// an exemption: two minimum requisitions at the grip they join under (4,000,
+/// 6,000 and 8,000 Cr at grips II–IV). Nothing under the plain charter.
+pub fn late_charter_grant(grip: Grip) -> f64 {
+    if grip == Grip::Charter {
+        return 0.0;
+    }
+    LATE_GRANT_REQUISITIONS * REQUISITION_MIN * REQUISITION_SCALE[grip as usize]
+}
 /// A refused requisition costs this much standing…
 pub const REFUSAL_STANDING: f64 = 8.0;
 /// …and this many refusals bring an enforcement squadron…

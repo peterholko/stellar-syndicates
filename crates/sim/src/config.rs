@@ -279,7 +279,9 @@ mod light_invariant_tests {
         );
 
         // Sanity: the shipped c really does clear the floor WITH margin, not by a
-        // hair — light outruns the fastest hull (scout) by well over 2×.
+        // hair — light outruns the fastest rated hull (scout) by well over 3×;
+        // §reactors-drives: the drive ladder spends that headroom down to the
+        // 2× floor (a Scout on a Maelstrom).
         assert!(
             playtest.c >= C_SPEED_RATIO * fastest,
             "c {} below floor {}",
@@ -287,9 +289,9 @@ mod light_invariant_tests {
             C_SPEED_RATIO * fastest
         );
         assert!(
-            playtest.light_ratio() > 3.0,
-            "expected comfortable (>3×) margin, got {:.3}",
-            playtest.light_ratio()
+            playtest.c / crate::ship::fastest_rated_speed() > 3.0,
+            "expected comfortable (>3×) margin on the rated table, got {:.3}",
+            playtest.c / crate::ship::fastest_rated_speed()
         );
     }
 

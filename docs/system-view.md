@@ -22,8 +22,44 @@ inputs come from the same light-gated, fog-filtered picture the galaxy map uses.
   rotated to chase the light. Owner-reported population adds settlement lights on the
   night side (a rival's bodies report none).
 - **Rings and stars.** About half of gas giants wear rings. Each star type moves
-  in its own way (binary pairs turn, pulsars sweep, magnetars flare, red giants
-  swell, black holes draw infall). A star inside a public nebula takes its haze.
+  in its own way (pulsars sweep, magnetars flare, red giants swell, black holes
+  draw infall). A star inside a public nebula takes its haze.
+- **A star turns about its north–south axis** (Peter, Nov 9 2026: they spun
+  "as a clock not as if it is pivoting over the north - south axis"). A shader
+  (`src/starroll.ts`, `RollingStar`) rolls the painted surface: features drift
+  left to right across the disc and foreshorten at the limbs. The painted limb,
+  prominences, corona and a magnetar's field loops hold still.
+  - The paintings show one face, so the surface comes from the painting's
+    interior (84% of the disc): four 90° tiles round the star, the painting
+    and its north–south mirror in turn, cross-faded over ±12°. No tile is an
+    east–west mirror of its neighbour (that meets as a butterfly).
+  - Each painting's photosphere is a measured circle (`STAR_SURFACES`, fitted
+    to the opaque disc of `art-src/stars-2026-09-08`); re-measure if the art
+    changes. Periods are the old spin's (yellow 300 s per turn).
+  - A binary's two stars each turn on their own axis (the smaller 1.6× as
+    fast); the pair no longer wheels round its barycentre. A pulsar's beams
+    swing round the axis like a lighthouse seen from the side, and its flash
+    peaks when one faces the viewer, a quarter turn from the painted pose. A
+    black hole doesn't turn.
+  - The same object draws the System View's star, the raid camera's, and the
+    galaxy map's disc on the final dive, at the same wall time. The battle
+    backdrop's icon art isn't measured, so it stays still.
+  - **Flares** (Peter, Nov 9 2026: "animate a bit of the solar flares from
+    the larger stars ... just to make them a little more alive"). The painted
+    flares beyond each limb lift and settle (±22% of their height), sway at
+    their tips and pulse ±28% in light, on four slow waves round the limb
+    (3, 5, 8 and 13 to a turn, phases from the CPU's clock). Every 9–25 s one
+    stretch of limb erupts: its flares rise 70% higher and brighten over
+    2.5 s, hold 1.2 s and settle over 4.5 s (`starEruption`, at a place drawn
+    from the period's number). Per type in `STAR_SURFACES.flare`: strength,
+    reach (where that painting's flares end) and how often it erupts; red
+    dwarfs and magnetars most often, the glowing white stars barely move,
+    none for a pulsar or a black hole. Nothing moves inside a limb or over a
+    binary's other star.
+  - Preview: the Vite dev server's `/scripts/star-roll-fixture.html`
+    (`?turn=90`, `?speed=20`, `?only=yellow_star,red_giant`, `?t=21.5` for
+    the yellow star mid-eruption; `window.__at(t)` holds the clock for frame
+    captures). Test: `npm run test:star-roll`.
 - **Charting.** A system's contents are unknown until you survey it or own it.
   The server sends no planets, moons or belts for an unsurveyed system, so the
   System View shows only the star under "NAME · UNCHARTED · SEND A SCOUT OR
@@ -218,7 +254,7 @@ and the move preview use the same placement (`nearStarPlacement`,
 - Over the same 40×→96× dive the star's lens flare resolves into the System
   View's own disc: the disc opens from a quarter of the star's size, the flare
   fades, and at 96× the galaxy draws the System View's star exactly (art,
-  visible size, anchor, and its turn, `starSpinAngle`). The preview's orbits
+  visible size, anchor, and its turn, `RollingStar.roll`). The preview's orbits
   pass beneath the star, as in the System View.
 - At the doorway the whole orbit preview is the way in, not only the star: the
   outermost orbit and the worlds on it, or 0.6 System View units around an

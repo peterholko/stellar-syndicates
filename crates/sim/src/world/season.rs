@@ -419,8 +419,11 @@ impl World {
                 self.answer_requisition(owner, id, false, true, events);
             }
         }
+        // Requisitions reach a corporation once founder protection ends, its
+        // charter finished or not (Peter, Nov 10 2026: finishing the tutorial
+        // late must not dodge the squeeze).
         let due: Vec<PlayerId> = self.players.iter()
-            .filter(|(id, corp)| corp.founding.stage == crate::founding::FoundingStage::Complete && !self.is_rebel(**id)
+            .filter(|(id, corp)| !corp.founding.protected(now) && !self.is_rebel(**id)
                 && !self.on_leave(**id) && now - corp.last_active <= crate::syndicate::ACTIVE_WINDOW_S)
             .map(|(id, _)| *id)
             .collect();
@@ -438,10 +441,10 @@ impl World {
     }
 
     fn issue_requisition(&mut self, owner: PlayerId, events: &mut Vec<Event>) {
-        use crate::season::{ANSWER_WINDOW_S, REQUISITION_MIN, REQUISITION_VALUE_FRAC};
+        use crate::season::{ANSWER_WINDOW_S, REQUISITION_MIN, REQUISITION_SCALE, REQUISITION_VALUE_FRAC};
         let now = self.time;
         let Some(corp) = self.players.get(&owner) else { return };
-        let scale = [1.0, 1.0, 1.5, 2.0][self.season.grip as usize];
+        let scale = REQUISITION_SCALE[self.season.grip as usize];
         let value = (corp.valuation * REQUISITION_VALUE_FRAC).max(REQUISITION_MIN) * scale;
         self.season.next_requisition += 1;
         let id = self.season.next_requisition;
@@ -1324,13 +1327,16 @@ mod tests {
             "the Hub broadcasts it once it has heard");
     }
 
-    /// A founder past its charter under the levies.
+    /// A founder past its charter and its day of protection, under the levies.
     fn levied() -> (World, PlayerId) {
         let mut w = galaxy();
         let a = PlayerId(1);
         found(&mut w, &[(1, "Alpha")]);
         census(&mut w);
-        w.players.get_mut(&a).unwrap().founding.stage = crate::founding::FoundingStage::Complete;
+        let now = w.time;
+        let f = &mut w.players.get_mut(&a).unwrap().founding;
+        f.stage = crate::founding::FoundingStage::Complete;
+        f.started_at = now - crate::founding::FOUNDER_PROTECTION_S;
         w.season.grip = Grip::Levies;
         // Neither loyal nor a rebel: the plain levy.
         w.season.squeeze.entry(a).or_default().resolve = 0.3;
@@ -1396,6 +1402,42 @@ mod tests {
         census(&mut w);
         assert!(w.season.squeeze[&a].rise.is_none());
         assert!((w.levy_frac(a) - 0.07).abs() < 1e-9, "the default is to accept: 5% + 2%");
+    }
+
+    /// Peter (Nov 10 2026): late joiners get "a boost in starting credits"
+    /// for the requisitions they meet from their second day: two
+    /// requisitions' worth at the grip they found under, said in the log.
+    #[test]
+    fn a_late_charter_starts_with_two_requisitions_in_hand() {
+        for (grip, grant) in [(Grip::Charter, 0.0), (Grip::Levies, 4_000.0), (Grip::Inspections, 6_000.0), (Grip::Martial, 8_000.0)] {
+            let mut w = galaxy();
+            w.season.grip = grip;
+            let events = found(&mut w, &[(7, "Late")]);
+            assert_eq!(w.players[&PlayerId(7)].credits, 2_000.0 + grant, "{grip:?}");
+            let logged = events.iter().any(|e| matches!(&e.payload,
+                EventPayload::CharterStipend { owner, title, credits, .. }
+                    if *owner == PlayerId(7) && title == "Late charter grant" && *credits == grant));
+            assert_eq!(logged, grant > 0.0, "{grip:?}: the grant is in the log");
+        }
+    }
+
+    /// Peter (Nov 10 2026): finishing the tutorial late must not dodge the
+    /// squeeze. Requisitions follow the day of protection, not the charter.
+    #[test]
+    fn requisitions_follow_protection_not_the_charter() {
+        let (mut w, a) = levied();
+        let now = w.time;
+        let issued = |events: &[Event]| events.iter().any(|e| matches!(e.payload, EventPayload::RequisitionIssued { .. }));
+        {
+            let f = &mut w.players.get_mut(&a).unwrap().founding;
+            f.stage = crate::founding::FoundingStage::BuildShipyard;
+            f.started_at = now;
+        }
+        w.players.get_mut(&a).unwrap().last_active = now;
+        w.season.squeeze.entry(a).or_default().next_requisition_at = Some(now);
+        assert!(!issued(&census(&mut w)), "inside its day of protection: none");
+        w.players.get_mut(&a).unwrap().founding.started_at = now - crate::founding::FOUNDER_PROTECTION_S;
+        assert!(issued(&census(&mut w)), "a day on, charter unfinished: requisitioned all the same");
     }
 
     #[test]

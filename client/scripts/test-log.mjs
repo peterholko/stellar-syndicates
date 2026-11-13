@@ -246,9 +246,9 @@ run({ to: "panel", panel: "battle", params: { id: "2", report: "capture" } });
 assert.match(phone.mobileLog.render({ id: "log", props }).html, /data-filter="combat" aria-pressed="true"/, "a capture report falls back to Combat");
 
 // ── Shell wiring ──
-const deckIndex = src("shell/deck/index.ts"), command = src("shell/deck/command.ts"), surfaces = src("shell/mobile/surfaces.ts");
-assert.match(command, /<b>\$\{esc\(decision\.title\)\}<\/b>\$\{decision\.facts \? `<p>\$\{esc\(decision\.facts\)\}<\/p>` : ""\}/, "the digest shows the inbox's facts");
-assert.doesNotMatch(command, /four highest-pressure facts/, "no explanatory subtitle");
+const deckIndex = src("shell/deck/index.ts"), surfaces = src("shell/mobile/surfaces.ts");
+// §command-retired (Peter, Oct 31 2026): no Command page repeats the Inbox.
+assert.doesNotMatch(deckIndex + src("shell/deck/router.ts") + src("shell/deck/markup.ts"), /name: "command"|"command": \{|navButton\("command"/);
 assert.match(surfaces, /case "log": view = this\.log\.render\(entry\); break;/);
 assert.match(surfaces, /if \(action\.startsWith\("log-"\)\) return this\.log\.handleAction\(button\);/);
 assert.doesNotMatch(surfaces, /renderCheckin|arrivedReports|Decision inbox/, "the Check-in sheet is retired");

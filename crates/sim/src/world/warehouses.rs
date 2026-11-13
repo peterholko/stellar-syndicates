@@ -50,6 +50,7 @@ fn colony_landing_includes_a_ground_warehouse() {
         && !w.home_slots.iter().any(|h| h.system == Some(s.id))).unwrap();
     let (id, pos) = (sys.id, sys.pos);
     assert_eq!(sys.storage_cap(), 0.0);
+    w.grant_claim(owner, id);
     let fleet = w.alloc_entity_id();
     w.fleets.insert(fleet, Fleet::single(fleet, owner, ShipKind::Colony, pos, FleetOrder::Idle, None));
     w.resolve_colony_arrivals(&mut Vec::new());

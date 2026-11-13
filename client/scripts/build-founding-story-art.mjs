@@ -35,7 +35,7 @@ export async function buildFoundingStoryArt() {
 export const STORY_EVENT_ART = ["free-trader-inbound", "pirate-raid", "new-colony", "gate-opens", "relics-awaken", "pirate-vendetta",
   "decree-levies", "decree-inspections", "decree-martial", "sabotage-at-the-hub", "convoy-massacre", "quarantine", "relic-seizure",
   "keystone-crackdown", "false-flag-exposed", "sealed-world-found", "authority-spy", "authority-war", "seal-fires", "charter-holds",
-  "chapter-pirates", "chapter-expansion", "chapter-reach"];
+  "chapter-pirates", "chapter-expansion", "chapter-reach", "laser-battery", "den-loot"];
 
 /** §season: the GNN paintings came from ChatGPT at 1536 × 1024 and stay as
  * delivered (art-src/gnn-v1/generation-manifest.json). The build cuts each
@@ -49,6 +49,9 @@ export const STORY_EVENT_BAND = {
   // the privateer's trail and the Hub's glint clear of the top; the den's
   // wreck and its star kept whole.
   "chapter-pirates": 64, "chapter-expansion": 64, "chapter-reach": 0,
+  // For 3:2 replacements; the delivered wide masters use their full frame.
+  "laser-battery": 64,
+  "den-loot": 64,
 };
 
 export async function buildStoryEventArt() {
@@ -62,7 +65,9 @@ export async function buildStoryEventArt() {
     sources++;
     const meta = await sharp(source).metadata();
     const band = STORY_EVENT_BAND[slug];
-    const native = meta.width === 1672 && meta.height === 941;
+    // The Laser Battery arrived one pixel narrower. Preserve its native frame
+    // and cap derivatives at the source width instead of stretching the master.
+    const native = (meta.width === 1672 || meta.width === 1671) && meta.height === 941;
     if (!native && !(band !== undefined && meta.width === 1536 && meta.height === 1024)) throw new Error(`Unexpected story event dimensions: ${source}`);
     for (const width of FOUNDING_STORY_WIDTHS) {
       const output = path.join(outputRoot, `${slug}-${width}.webp`);
@@ -116,6 +121,39 @@ export async function buildPirateCrewArt() {
     written++;
   }
   return { sources, pending: PIRATE_PORTRAIT_ART.length - sources, written };
+}
+
+/** §charter-advisor: the three Authority officers who guide a charter
+ * (client/src/core/derive/advisor.ts; prompts in
+ * docs/charter-advisor-portraits.md). Framed like the trader and pirate
+ * portraits, so the same face crop. */
+export const ADVISOR_PORTRAIT_ART = ["veteran", "lieutenant", "frontier"];
+/** The guide card's header and the coach bubble show the face at 28–40 px,
+ * where the shared crop's shoulders crowd it out: a tighter square around
+ * the head (the three were framed alike, so one crop fits all). */
+export const ADVISOR_FACE_CROP = { left: 0.255, top: 0.12, size: 0.48 };
+export const ADVISOR_FACE_SIZE = 128;
+
+export async function buildAdvisorPortraitArt() {
+  const outputRoot = path.join(clientRoot, "public/art/derived/advisors/v1");
+  await mkdir(outputRoot, { recursive: true });
+  let sources = 0, written = 0;
+  for (const slug of ADVISOR_PORTRAIT_ART) {
+    const source = path.join(clientRoot, `art-src/charter-advisors-v1/${slug}.png`);
+    try { await stat(source); } catch { continue; }
+    sources++;
+    const meta = await sharp(source).metadata();
+    if (meta.width !== meta.height || meta.width < 512) throw new Error(`Advisor portraits are square, at least 512 px: ${source}`);
+    for (const [suffix, cut, size] of [[`${TRADER_PORTRAIT_SIZE}`, TRADER_PORTRAIT_CROP, TRADER_PORTRAIT_SIZE], [`face-${ADVISOR_FACE_SIZE}`, ADVISOR_FACE_CROP, ADVISOR_FACE_SIZE]]) {
+      const output = path.join(outputRoot, `${slug}-${suffix}.webp`);
+      try { if ((await stat(output)).mtimeMs >= Math.max((await stat(source)).mtimeMs, (await stat(fileURLToPath(import.meta.url))).mtimeMs)) continue; } catch { /* first build */ }
+      const side = Math.round(meta.width * cut.size);
+      const crop = { left: Math.round(meta.width * cut.left), top: Math.round(meta.height * cut.top), width: side, height: side };
+      await sharp(source).extract(crop).resize(size, size).webp({ quality: 86, effort: 5 }).toFile(output);
+      written++;
+    }
+  }
+  return { sources, pending: ADVISOR_PORTRAIT_ART.length - sources, written };
 }
 
 export async function buildTraderPortraitArt() {

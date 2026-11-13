@@ -41,10 +41,19 @@ king hierarchy: syndicates stay flat.
   daily allowance (docs/retention-p0.md). Counted per corporation (`ContractBoard.done`), since
   the operations table is pruned at 512.
 - **Retired:** the per-30-second private Survey Office and Market offers.
-- **Client:** a "Contract board" section at the top of Operations (both
-  shells): "2/3 for +1,000 Cr · new in 19h 59m" and today's contracts, open
-  ones first; they're kept out of the other lists. Long deadlines now read in
+- **Client:** a "Contract board" section on Operations (both shells):
+  "2/3 for +1,000 Cr · new in 19h 59m" and today's contracts, open ones
+  first; they're kept out of the other lists. Long deadlines now read in
   days and hours on the deck (they used to read "1440m 0s").
+- **Desktop Operations, top to bottom** (§ops-compact, Peter, Oct 31 2026: the
+  page was 2,714 px in a 779 px panel): the stage name (its sentence on
+  hover); Your next chapter and the Charter ledger, one row a goal with its
+  button (checklist, hull cost and reward, or the goal's sentence, on hover;
+  "Short 5 Alloys" only while the next step builds that hull); Signals;
+  Exploration as one row (Contacts · Journal · Blueprints) whose views open in
+  place of the page, Back returning; the Contract board; then Active ·
+  Available · History as tabs, offers first while nothing is active. Mobile
+  is unchanged (its sheet already had lighter cards and contract tabs).
 - **Wire:** `OperationView.board_day`, `View.board` (`ContractBoardView`).
 - **Bots** don't take operations; they get offers like anyone.
 

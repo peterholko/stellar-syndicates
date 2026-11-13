@@ -13,9 +13,11 @@
 //! so their only counter is reflection. ECM is deliberately ABSENT from v1 so
 //! the counter matrix stays one-to-one (PD owns anti-torpedo alone).
 //!
-//! Modules are physical manufactured items, shipped by raidable freighters.
-//! Military crates use an Armaments Complex and refit at an Ordnance Foundry;
-//! utilities manufacture and refit at a staffed Shipyard I. This module owns
+//! §modules-as-goods (Nov 8 2026): modules are goods (`ModuleKind::good`):
+//! one stockpile with every other good, the Hub book, holds and freight, and
+//! raidable like any of them. Military modules are made at an Armaments
+//! Complex and refit at an Ordnance Foundry; utilities manufacture and refit
+//! at a staffed Shipyard I. This module owns
 //! the CATALOG + the damage-typing math
 //! primitives; `combat.rs` folds them into the pooled Lanchester pipeline and
 //! `ship.rs` carries loadouts on fleets.
@@ -46,22 +48,6 @@ pub const REFLECT_BLUNT: f64 = 0.50;
 /// hotter than Reflective's, because drivers are opt-in while every ship fires
 /// beams. Tune both against the meta, not each other (v12; v1–v11 keep 0.45).
 pub const WHIPPLE_BLUNT: f64 = 0.60;
-
-/// §modules Part B3: how many module CRATES one convoy hauls in a `TransferModules`
-/// run. Crates are dense compared to people, so a hauler moves a healthy batch —
-/// enough to fit out a small squadron in one raidable crossing. Tunable.
-pub const MODULE_CONVOY_BERTHS: u32 = 12;
-
-/// §modules Part B3 (Sol hub): Sol SELLS modules to players at this multiple of
-/// the module's goods-recipe VALUE (its commodity cost priced at Sol's standing
-/// market). The 2× premium means local manufacture at the module's workshop is
-/// always cheaper — Sol is the BOOTSTRAP / fallback, never the efficient path.
-/// Tunable.
-pub const MODULE_BUY_MULT: f64 = 2.0;
-/// §modules Part B3 (Sol hub): Sol BUYS modules back at this multiple of the same
-/// recipe value — a deliberately steep 4× round-trip spread (buy 2×, sell 0.5×)
-/// so modules are for FITTING, not arbitrage. Tunable.
-pub const MODULE_SELL_MULT: f64 = 0.5;
 
 /// The three damage TYPES a weapon deals. Each has exactly one counter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,9 +102,6 @@ pub enum ModuleKind {
     /// Destroyer only: deploys an interdiction field, a temporary gravity well
     /// in open space that drops every fleet crossing it out of warp.
     InterdictionField,
-    /// §fuel-overhaul utility: a jump drive and antimatter bottle for any hull
-    /// but the ships of the line. Unlocked by Antimatter Synthesis.
-    JumpDrive,
     /// §research-wiring Lance Array (Strike III): the line's heavy beam,
     /// destroyers up. Hits harder than any beam, but Reflective Plating blunts
     /// it twice over.
@@ -126,7 +109,7 @@ pub enum ModuleKind {
 }
 
 /// Every module kind, in a fixed deterministic order (menus, iteration).
-pub const MODULE_KINDS: [ModuleKind; 18] = [
+pub const MODULE_KINDS: [ModuleKind; 17] = [
     ModuleKind::MassDriver,
     ModuleKind::TorpedoRack,
     ModuleKind::PointDefenseScreen,
@@ -143,7 +126,6 @@ pub const MODULE_KINDS: [ModuleKind; 18] = [
     ModuleKind::StasisWeb,
     ModuleKind::WarpStabilizer,
     ModuleKind::InterdictionField,
-    ModuleKind::JumpDrive,
     ModuleKind::LanceArray,
 ];
 
@@ -171,13 +153,37 @@ impl ModuleKind {
             ModuleKind::StasisWeb => "stasis_web",
             ModuleKind::WarpStabilizer => "warp_stabilizer",
             ModuleKind::InterdictionField => "interdiction_field",
-            ModuleKind::JumpDrive => "jump_drive",
             ModuleKind::LanceArray => "lance_array",
         }
     }
 
     pub fn from_slug(s: &str) -> Option<Self> {
         MODULE_KINDS.into_iter().find(|m| m.slug() == s)
+    }
+
+    /// §modules-as-goods (Nov 8 2026): the good this module is. A module is
+    /// stored, traded, hauled and raided as the `Commodity` of its own slug.
+    pub fn good(self) -> crate::cargo::Commodity {
+        use crate::cargo::Commodity as C;
+        match self {
+            ModuleKind::MassDriver => C::MassDriver,
+            ModuleKind::TorpedoRack => C::TorpedoRack,
+            ModuleKind::PointDefenseScreen => C::PointDefenseScreen,
+            ModuleKind::ReflectivePlating => C::ReflectivePlating,
+            ModuleKind::WhippleArmor => C::WhippleArmor,
+            ModuleKind::ExtendedTanks => C::ExtendedTanks,
+            ModuleKind::ReconSuite => C::ReconSuite,
+            ModuleKind::CargoPods => C::CargoPods,
+            ModuleKind::EscortDatalink => C::EscortDatalink,
+            ModuleKind::FuelTransferRig => C::FuelTransferRig,
+            ModuleKind::SurveyDrive => C::SurveyDrive,
+            ModuleKind::NebulaSpectrometer => C::NebulaSpectrometer,
+            ModuleKind::PrismaticLance => C::PrismaticLance,
+            ModuleKind::StasisWeb => C::StasisWeb,
+            ModuleKind::WarpStabilizer => C::WarpStabilizer,
+            ModuleKind::InterdictionField => C::InterdictionField,
+            ModuleKind::LanceArray => C::LanceArray,
+        }
     }
 
     pub fn label(self) -> &'static str {
@@ -192,13 +198,13 @@ impl ModuleKind {
             ModuleKind::CargoPods => "Cargo Pods",
             ModuleKind::EscortDatalink => "Escort Datalink",
             ModuleKind::FuelTransferRig => "Fuel Transfer Rig",
-            ModuleKind::SurveyDrive => "Survey Drive",
+            // §modules-as-goods: "drive" means the warp drive; the slug stays.
+            ModuleKind::SurveyDrive => "Survey Booster",
             ModuleKind::NebulaSpectrometer => "Nebula Spectrometer",
             ModuleKind::PrismaticLance => "Prismatic Lance",
             ModuleKind::StasisWeb => "Stasis Web",
             ModuleKind::WarpStabilizer => "Warp Stabilizer",
             ModuleKind::InterdictionField => "Interdiction Field",
-            ModuleKind::JumpDrive => "Jump Drive",
             ModuleKind::LanceArray => "Lance Array",
         }
     }
@@ -219,7 +225,7 @@ impl ModuleKind {
     }
 
     pub fn is_utility(self) -> bool {
-        matches!(self, Self::ExtendedTanks | Self::ReconSuite | Self::CargoPods | Self::EscortDatalink | Self::FuelTransferRig | Self::SurveyDrive | Self::NebulaSpectrometer | Self::JumpDrive)
+        matches!(self, Self::ExtendedTanks | Self::ReconSuite | Self::CargoPods | Self::EscortDatalink | Self::FuelTransferRig | Self::SurveyDrive | Self::NebulaSpectrometer)
     }
 
     pub fn blueprint_only(self) -> bool {
@@ -240,11 +246,6 @@ impl ModuleKind {
             // The line's heavy beam: destroyers up.
             Self::LanceArray => matches!(kind, ShipKind::Destroyer | ShipKind::Cruiser | ShipKind::Battleship
                 | ShipKind::Dreadnought | ShipKind::Titan),
-            // §fuel-overhaul: any hull without built-in drives, bar the ships
-            // of the line (a fold that size needs more than a bottle).
-            Self::JumpDrive => !kind.has_jump_drive() && !kind.is_siege_anchor()
-                && kind.is_buildable()
-                && !matches!(kind, ShipKind::SurveyProbe | ShipKind::MiningBeltStation),
             // A freighter's one berth may take a stabilizer instead of a
             // utility: the blockade runner's fit (§blockade-running).
             Self::WarpStabilizer => true,
@@ -276,7 +277,6 @@ impl ModuleKind {
             ModuleKind::InterdictionField => 3,
             ModuleKind::SurveyDrive | ModuleKind::NebulaSpectrometer => 2,
             ModuleKind::ExtendedTanks | ModuleKind::ReconSuite | ModuleKind::CargoPods | ModuleKind::EscortDatalink | ModuleKind::FuelTransferRig => 2,
-            ModuleKind::JumpDrive => 2,
         }
     }
 
@@ -296,7 +296,6 @@ impl ModuleKind {
             // Control modules ride the screening axis.
             ModuleKind::StasisWeb | ModuleKind::InterdictionField => Family::Interception,
             ModuleKind::ExtendedTanks | ModuleKind::ReconSuite | ModuleKind::CargoPods | ModuleKind::EscortDatalink | ModuleKind::FuelTransferRig => Family::Utility,
-            ModuleKind::JumpDrive => Family::Utility,
         }
     }
 }
@@ -466,8 +465,7 @@ impl Loadout {
 
     pub fn has_spectrometer(&self) -> bool { self.0.contains(&ModuleKind::NebulaSpectrometer) }
 
-    /// §fuel-overhaul: a fitted Jump Drive.
-    pub fn has_jump_drive(&self) -> bool { self.0.contains(&ModuleKind::JumpDrive) }
+
 
     /// Tunable: double commodity capacity on the fitted Freighter only. Its
     /// single utility slot makes this a choice against Extended Tanks.

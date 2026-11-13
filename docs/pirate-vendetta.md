@@ -292,12 +292,13 @@ new field has a default.
 
 Peter, the same day: stolen ore "doesn't seem like an equivalent revenge
 action to losing a nephew"; the pirates should avoid the home planet now that
-step 6 builds a Gun Platform ([founding-charter.md](founding-charter.md), "The
-Gun Platform"); the finale stays at the home world; "keep his forces static,
+step 6 builds a Gun Platform (the Laser Battery since Nov 1;
+[founding-charter.md](founding-charter.md), "The Laser Battery"); the finale stays at the home world; "keep his forces static,
 if the player hasn't built enough defenses, game over and they can restart".
 The charter now has 22 steps: the oath is at step 17 and the finale step 22.
 Since Oct 31 (§charter-crates) "Secure your stores" (a Warehouse and a Vault)
-comes before the finale, so it is step 23 of 23.
+comes before the finale, so it is step 23 of 23. Since Nov 3 (§stash) the den's
+aftermath is steps 13–15, so the oath is at step 20 and the finale step 26 of 26.
 
 **The first strike** (`founding_vendetta.rs`, `launch_strike`). It is decided
 when the raider sets out:
@@ -327,7 +328,7 @@ when the raider sets out:
 **Home is off limits** to the strikes. Ordinary pirate packs also avoid any
 system with a firing station now, as they always did legacy platforms.
 
-**The finale at home, under the Gun Platform.** His force never changes: the
+**The finale at home, under the Laser Battery.** His force never changes: the
 Corvette and four Raiders plus strike survivors, at ×0.28. The platform's
 gun joins any fight in the home's well. With no warship near home, he
 assaults the platform itself (`open_vendetta_assault`, once). It ends three
@@ -349,7 +350,7 @@ Measured over six galaxies, with the platform at home and no captains aboard:
 
 | At home | Won | Fell |
 | --- | ---: | ---: |
-| Gun Platform alone | 0 | 6 |
+| Laser Battery alone | 0 | 6 |
 | + 1 Interceptor | 3 | 3 |
 | + 2 Interceptors | 5 | 1 |
 | + 3 Interceptors (the guide's ask) | 6 | 0 |

@@ -27,8 +27,9 @@ struct ReturnTrip { destination: Vec2, issued_at: f64 }
 // Accounts use positive PostgreSQL i64 ids. This separate, non-sentinel namespace
 // cannot collide with an authenticated account or impersonate an existing player.
 const BOT_ID_BASE: u64 = PlayerId::BOT_BASE;
-/// §fuel-overhaul: the two fuels a bot keeps stocked.
-const FUELS: [C; 2] = [C::Uranium, C::Deuterium];
+/// §shipbuilding-overhaul: the fuels a bot may keep stocked, one per core grade
+/// its hulls ride (a target is zero while nothing burns the fuel).
+const FUELS: [C; 4] = [C::Uranium, C::Deuterium, C::Helium3, C::Antimatter];
 const THINK_SECONDS: f64 = 4.0;
 const NAMES: [&str; 8] = [
     "Atlas Freight", "Cinder Industries", "Pioneer Survey", "Meridian Metals",
@@ -46,6 +47,9 @@ pub(super) struct Bot {
     #[serde(default)]
     survey_started: BTreeSet<EntityId>,
     pub(super) commands_sent: u64,
+    /// The last command issued, for the harness traces.
+    #[serde(default)]
+    pub(super) last_command: String,
     #[serde(default)]
     commitments: Vec<Commitment>,
     #[serde(default)]
@@ -110,18 +114,35 @@ struct Observation {
     account: Option<MarketAccountSample>,
     /// §treasury: the treasury, at the command center: known at once.
     credits: f64,
+    /// §licences: the hull licences whose receipts have come home, and
+    /// whether the syndicate is at war with the Authority (which needs none).
+    licences: BTreeSet<H>,
+    at_war: bool,
+    /// §claims: the Authority's claims held, as heard at home.
+    claims_held: BTreeSet<EntityId>,
+    /// §claims: what the Authority asks for each prospect's claim, as
+    /// reckoned at home (the bot saves for it before ordering).
+    claim_prices: BTreeMap<EntityId, f64>,
     exported: bool,
     founding_stage: sim::FoundingStage,
     local_opening: bool,
     /// §charter-crates: goods the Authority still holds sealed for the
     /// charter (bots collect a crate as it is released).
     sealed_crates: BTreeMap<C, f64>,
+    /// §den-stores: the den's stash until it is home, the one supply on its
+    /// way for the builds before the next crate opens.
+    stash_coming: BTreeMap<C, f64>,
     /// §charter-v4: the charter's land grant has opened the home's other
     /// worlds; until then the bot builds only on its landing world.
     land_grant_open: bool,
     /// §charter-v4: during "Eliminate the privateer den", the den's system
     /// and position, as the privateer's log named it.
     den: Option<(EntityId, Vec2)>,
+    /// §stash: during the den's aftermath (steps 13–15), the den's system and
+    /// position while its loot waits there for a freighter.
+    stash: Option<(EntityId, Vec2)>,
+    /// §stash: fleets the den's blast hurt; the step waits until each is whole.
+    den_wounded: BTreeSet<EntityId>,
     /// §charter-v5: during "Destroy the privateer", the privateer the colony
     /// has tracked since its raid.
     privateer: Option<EntityId>,
@@ -175,6 +196,14 @@ impl GameLoop {
     /// every corporation founded from now on those hulls at home, for testing
     /// before the charter builds them. Read on each start; never saved.
     pub(crate) fn configure_dev_start_ships(&mut self) -> anyhow::Result<()> {
+        // Dev only: `DEV_PVP_SANDBOX=1` founds new corporations past the
+        // charter and without the founder shield, to playtest raids between
+        // new players. Read on each start, with or without DEV_START_SHIPS;
+        // never saved.
+        self.world.dev_pvp_sandbox = std::env::var("DEV_PVP_SANDBOX").is_ok_and(|v| v == "1");
+        if self.world.dev_pvp_sandbox {
+            tracing::warn!("DEV_PVP_SANDBOX: new founders skip the charter and its shield");
+        }
         let Ok(list) = std::env::var("DEV_START_SHIPS") else { return Ok(()); };
         let kinds = list.split(',').map(str::trim).filter(|kind| !kind.is_empty())
             .map(|kind| serde_json::from_value::<sim::ShipKind>(serde_json::Value::String(kind.into()))
@@ -184,13 +213,6 @@ impl GameLoop {
             tracing::warn!(ships = ?kinds, "DEV_START_SHIPS: new founders get these hulls at home");
         }
         self.world.dev_start_ships = kinds;
-        // Dev only: `DEV_PVP_SANDBOX=1` founds new corporations past the
-        // charter and without the founder shield, to playtest raids between
-        // new players. Read on each start; never saved.
-        self.world.dev_pvp_sandbox = std::env::var("DEV_PVP_SANDBOX").is_ok_and(|v| v == "1");
-        if self.world.dev_pvp_sandbox {
-            tracing::warn!("DEV_PVP_SANDBOX: new founders skip the charter and its shield");
-        }
         Ok(())
     }
 
@@ -210,7 +232,7 @@ impl GameLoop {
             let owner = PlayerId(BOT_ID_BASE + slot as u64);
             self.bots.insert(owner, Bot {
                 slot, next_think: self.world.time + 1.0 + slot as f64 * 0.43,
-                waits: BTreeMap::new(), surveys: BTreeMap::new(), survey_started: BTreeSet::new(), commands_sent: 0,
+                waits: BTreeMap::new(), surveys: BTreeMap::new(), survey_started: BTreeSet::new(), commands_sent: 0, last_command: String::new(),
                 commitments: Vec::new(), returns: BTreeMap::new(), avoided: BTreeMap::new(),
                 route_visits: BTreeMap::new(), trade_cycles: 0, expansion: None, status: String::new(), development: None,
                 campaign: None, freight_homes: BTreeMap::new(), economy_turn: 0, supply_dispatches: BTreeMap::new(),
@@ -239,7 +261,7 @@ impl GameLoop {
         // Only geology already surveyed by this corporation may inform a colony
         // choice. Ownership is also an ARRIVED report, never current world truth.
         let intel = self.world.information.intel(owner, cc, c, now);
-        let prospects = corp.surveyed.iter().filter_map(|id| {
+        let prospects: Vec<Prospect> = corp.surveyed.iter().filter_map(|id| {
             let report = self.world.information.site(*id, cc, c, now)?;
             let s = &report.system;
             if s.owner.is_some() || !s.bodies.iter().any(|b| b.habitable) { return None; }
@@ -252,6 +274,14 @@ impl GameLoop {
                 .sum::<f64>();
             Some(Prospect { id: *id, pos: s.pos, score })
         }).collect();
+        let claim_prices: BTreeMap<EntityId, f64> = {
+            let receipt = sim::transit::delay(self.world.hub, cc, c);
+            let held = corp.claims.values().filter(|claim| claim.bought_at + receipt <= now).count();
+            let beyond = self.world.colonies_beyond_home(owner);
+            prospects.iter().filter_map(|p| self.world.systems.iter().find(|s| s.id == p.id).map(|s| (p.id,
+                sim::claims::price(s.claim_cost, beyond, held, corp.tca_standing))))
+                .collect()
+        };
         // §sensors: the same picture a player gets — battles past the noise
         // horizon from this corporation's receivers are not heard.
         let arrays = self.world.known_sensor_sources(owner);
@@ -297,16 +327,50 @@ impl GameLoop {
             owner, capital: home_id, now, cc, hub: self.world.hub, c, siege_secs: self.world.siege_duration_secs(), home, sites, prospects, ghosts, fighting,
             account: self.market_accounts.at(owner, market_time).cloned(),
             credits: corp.credits,
+            licences: {
+                let receipt = sim::transit::delay(self.world.hub, cc, c);
+                corp.licences.iter().filter(|(_, at)| **at + receipt <= now).map(|(k, _)| *k).collect()
+            },
+            at_war: self.world.is_rebel(owner),
+            claims_held: {
+                let receipt = sim::transit::delay(self.world.hub, cc, c);
+                corp.claims.iter().filter(|(_, claim)| claim.bought_at + receipt <= now).map(|(s, _)| *s).collect()
+            },
+            claim_prices,
             exported: corp.founding.sale_report_at.is_some(),
             // These are the same CC tutorial ledger and public candidate ids
             // served in FoundingView, not an early read of survey geology.
             founding_stage: corp.founding.stage,
             local_opening: corp.founding.local_opening,
-            sealed_crates: corp.founding.sealed_goods(),
+            // §stash: the den's stash, until it is home, is supply the builds
+            // ahead can count on, as a sealed crate is.
+            sealed_crates: {
+                let mut goods = corp.founding.sealed_goods();
+                if corp.founding.local_opening && corp.founding.stash_home_at.is_none() {
+                    for (c, n) in self.world.founding_stash(owner) {
+                        *goods.entry(c).or_default() += n as f64;
+                    }
+                }
+                goods
+            },
+            stash_coming: if corp.founding.local_opening && corp.founding.stash_home_at.is_none() {
+                self.world.founding_stash(owner).into_iter().map(|(c, n)| (c, n as f64)).collect()
+            } else {
+                BTreeMap::new()
+            },
             land_grant_open: corp.founding.land_grant_open(),
             den: (corp.founding.stage == sim::FoundingStage::EliminateDen
                     && corp.founding.privateer_report_at.is_some_and(|at| at <= now)
                     && !corp.founding.den_report_at.is_some_and(|at| at <= now))
+                .then_some(corp.founding.den).flatten()
+                .and_then(|id| self.world.systems.iter().find(|s| s.id == id).map(|s| (id, s.pos))),
+            den_wounded: corp.founding.den_wounded.clone(),
+            // §full-speed: the step between the Tiny and the haul is the stash's
+            // too — it is where `charter_stash` throttles the freighter up.
+            stash: (matches!(corp.founding.stage, sim::FoundingStage::RepairInterceptor
+                    | sim::FoundingStage::BuildTinyFreighter | sim::FoundingStage::FullSpeed
+                    | sim::FoundingStage::HaulLoot) && corp.founding.stash_fleet.is_none()
+                    && corp.founding.stash_home_at.is_none() && !corp.founding.stash.is_empty())
                 .then_some(corp.founding.den).flatten()
                 .and_then(|id| self.world.systems.iter().find(|s| s.id == id).map(|s| (id, s.pos))),
             privateer: (corp.founding.stage == sim::FoundingStage::DefeatPrivateer)
@@ -378,6 +442,7 @@ impl GameLoop {
             if let Some(command) = bot.decide(&picture) {
                 debug!(%owner, t = self.world.time as u64, ?command, "bot issued command");
                 bot.commands_sent += 1;
+                bot.last_command = format!("{command:?}").chars().take(160).collect();
                 self.pending.push(command);
             }
             if bot.status != old_status {
@@ -409,6 +474,17 @@ impl Observation {
         2.0 * sim::transit::delay(self.cc, pos, self.c) + THINK_SECONDS * 2.0
     }
 
+    /// §licences: researched, and licensed (or at war, which needs none).
+    fn hull_ready(&self, kind: H) -> bool {
+        (!sim::ship::requires_hull_unlock(kind) || sim::research::has_hull(&self.research, kind))
+            && (!sim::licence::needs_licence(kind) || self.at_war || self.licences.contains(&kind))
+    }
+
+    /// The charter standing heard from the Hub.
+    fn standing(&self) -> f64 {
+        self.account.as_ref().map_or(sim::tca::TCA_STANDING_START, |a| a.standing)
+    }
+
     /// Plan from public geometry and reported tanks. Cargo has mass too; the
     /// empty-hull estimate can strand a fully loaded Tiny on its opening run.
     /// Merge well intersections so overlapping public wells aren't charged twice.
@@ -418,6 +494,8 @@ impl Observation {
             self.chart.iter().map(|(_, p)| *p).chain(std::iter::once(self.hub)))
     }
 
+    /// Units of ORE (the heaviest class, `CARGO_MASS_PER_UNIT`) the tank
+    /// carries to `dest`: lighter goods fit more, so this plan is the safe one.
     fn freight_limit(&self, fleet: &GhostView, dest: Vec2) -> u32 {
         let per_mass = self.fuel_per_mass(fleet.pos, dest) * self.cruise_mult(fleet);
         if per_mass <= 0.0 { return capacity(fleet); }
@@ -427,7 +505,7 @@ impl Observation {
     }
 
     fn enough_fuel(&self, fleet: &GhostView, dest: Vec2) -> bool {
-        let mass = hull_mass(fleet) + cargo_used(fleet) as f64 * sim::ship::CARGO_MASS_PER_UNIT;
+        let mass = hull_mass(fleet) + cargo_mass(fleet);
         fleet.fuel.is_some() && store(fleet) >= self.fuel_per_mass(fleet.pos, dest) * mass * self.cruise_mult(fleet)
     }
 
@@ -442,12 +520,13 @@ impl Observation {
 
     /// The throttle's multiplier on energy per distance, as the sim applies it.
     fn cruise_mult(&self, ghost: &GhostView) -> f64 {
-        self.cruise_mult_on(ghost, on_uranium(ghost))
+        self.cruise_mult_on(ghost, flies_slow(ghost))
     }
 
-    /// The multiplier on one store, weighed hull by hull by mass as the sim
-    /// does (`Fleet::cruise_mult_for`): a quarter on Uranium; Fusion Freight's
-    /// cut for player freighters and their cargo; Torch Regime on warships.
+    /// The multiplier on energy per distance at a throttle, weighed hull by hull
+    /// by mass as the sim does (`Fleet::cruise_mult_for`): a quarter on Slow;
+    /// Fusion Freight's cut for player freighters and their cargo; Torch Regime
+    /// on warships. (`uranium` here means Slow — any core can throttle back.)
     fn cruise_mult_on(&self, ghost: &GhostView, uranium: bool) -> f64 {
         let mods = sim::research::mods(&self.research);
         let freight = mods.get(&sim::research::ModKey::FreighterFusionBurn).copied().unwrap_or(1.0);
@@ -457,7 +536,7 @@ impl Observation {
         let regime = |freighter: bool| if uranium { sim::fuel::SLOW_FUEL_MULT }
             else if freighter { freight } else { 1.0 };
         let stacks = || ghost.composition.iter().flatten().filter(|s| s.count > 0);
-        let cargo = cargo_used(ghost) as f64 * sim::ship::CARGO_MASS_PER_UNIT;
+        let cargo = cargo_mass(ghost);
         let total = hull_mass(ghost) + cargo;
         if total <= 1e-9 {
             return regime(false);
@@ -467,11 +546,17 @@ impl Observation {
         (hulls + cargo * regime(stacks().any(|s| s.kind.is_player_freighter()))) / total
     }
 
-    /// §fuel-overhaul: an escort in formation burns its charge's Uranium regime
-    /// when it can fly it. Returns (its store, its multiplier).
+    /// §fuel-overhaul: an escort in formation flies its charge's throttle.
+    /// Returns (its tank in ENERGY, its multiplier).
     fn escort_burn(&self, guard: &GhostView, charge_slow: bool) -> (f64, f64) {
-        let uranium = charge_slow && slow_capable(guard);
-        (if uranium { guard.uranium } else { guard.fuel }.unwrap_or(0.0), self.cruise_mult_on(guard, uranium))
+        let slow = charge_slow && slow_capable(guard);
+        (store(guard), self.cruise_mult_on(guard, slow))
+    }
+
+    /// The price of one unit of ENERGY for this fleet: its fuel's price over
+    /// the grade's energy a unit.
+    fn price_per_energy(&self, ghost: &GhostView) -> f64 {
+        self.price(regime_fuel(ghost)) / primary_grade(ghost).energy_per_unit()
     }
 
     fn stock(&self, good: C) -> f64 {
@@ -569,8 +654,7 @@ impl Observation {
 
     fn ship(&self, kind: H, desired: u32) -> Option<Project> {
         if kind == H::Colony && !self.expansion_unlocked { return None; }
-        if self.count(kind) >= desired || (sim::ship::requires_hull_unlock(kind)
-            && !sim::research::has_hull(&self.research, kind)) { return None; }
+        if self.count(kind) >= desired || !self.hull_ready(kind) { return None; }
         let (yard, tier) = sim::build::yard_for(kind);
         let body = self.home.system.bodies.iter().max_by_key(|b| b.tier(yard))?;
         if body.tier(yard) < tier || self.home.builds.iter().any(|b| matches!(b.what, BuildKind::Ship { .. })) {
@@ -588,8 +672,20 @@ fn cargo_used(ghost: &GhostView) -> u32 {
     ghost.cargo_manifest.iter().map(|c| c.units).sum()
 }
 
+/// §cargo-mass: what the hold weighs, each good at its own mass
+/// (`Fleet::cargo_mass`).
+fn cargo_mass(ghost: &GhostView) -> f64 {
+    ghost.cargo_manifest.iter().map(|c| c.units as f64 * c.commodity.mass_per_unit()).sum()
+}
+
 fn capacity(ghost: &GhostView) -> u32 {
     ghost.composition.iter().flatten().map(|s| s.kind.cargo_units() * s.count).sum()
+}
+
+/// §shipbuilding-overhaul: a formation with a warp core aboard burns fuel to
+/// move; a Survey Probe has none (it drifts on its launch) and flies for free.
+fn burns_fuel(ghost: &GhostView) -> bool {
+    ghost.composition.as_ref().is_none_or(|ships| ships.iter().any(|s| s.kind.engines() > 0))
 }
 
 fn hull_mass(ghost: &GhostView) -> f64 {
@@ -602,19 +698,49 @@ fn slow_capable(ghost: &GhostView) -> bool {
         && stacks.iter().all(|s| s.count == 0 || !s.kind.is_siege_anchor()))
 }
 
-/// Flying Slow on the fission store.
-fn on_uranium(ghost: &GhostView) -> bool {
+/// Flying Slow (half speed, a quarter of the energy per distance).
+fn flies_slow(ghost: &GhostView) -> bool {
     ghost.transit == Some(sim::ship::TransitMode::Slow) && slow_capable(ghost)
 }
 
-/// The fuel its regime burns.
-fn regime_fuel(ghost: &GhostView) -> C {
-    if on_uranium(ghost) { C::Uranium } else { C::Deuterium }
+/// §reactors-drives: the reactor most of the fleet rides (the owner's
+/// `drives`), else the flagship's default.
+fn primary_grade(ghost: &GhostView) -> sim::fuel::ReactorGrade {
+    ghost.drives.as_ref().and_then(|d| d.iter().max_by_key(|d| d.count).map(|d| d.reactor))
+        .unwrap_or_else(|| ghost.kind.default_engine().0)
 }
 
-/// The reported level of the store its regime burns.
+/// The fuel the fleet's reactors burn.
+fn regime_fuel(ghost: &GhostView) -> C {
+    primary_grade(ghost).fuel()
+}
+
+/// The reported level of the tank for `fuel`, in units.
+fn tank_level(ghost: &GhostView, fuel: C) -> f64 {
+    match fuel {
+        C::Uranium => ghost.uranium,
+        C::Deuterium => ghost.fuel,
+        C::Helium3 => ghost.helium3,
+        C::Antimatter => ghost.antimatter,
+        _ => None,
+    }.unwrap_or(0.0)
+}
+
+/// The reported level of the tank for `fuel`, in units.
+fn tank_capacity(ghost: &GhostView, fuel: C) -> f64 {
+    match fuel {
+        C::Uranium => ghost.uranium_capacity,
+        C::Deuterium => ghost.fuel_capacity,
+        C::Helium3 => ghost.helium3_capacity,
+        C::Antimatter => ghost.antimatter_capacity,
+        _ => None,
+    }.unwrap_or(0.0)
+}
+
+/// The ENERGY aboard in the fleet's own fuel: every leg estimate here is
+/// energy (`route_estimate` of mass × distance), so tanks compare in energy.
 fn store(ghost: &GhostView) -> f64 {
-    if on_uranium(ghost) { ghost.uranium.unwrap_or(0.0) } else { ghost.fuel.unwrap_or(0.0) }
+    tank_level(ghost, regime_fuel(ghost)) * primary_grade(ghost).energy_per_unit()
 }
 
 impl Bot {
@@ -624,6 +750,22 @@ impl Bot {
 
     fn wait(&mut self, key: String, picture: &Observation, pos: Vec2) {
         self.waits.insert(key, picture.now + picture.round_trip(pos));
+    }
+
+    /// §licences: buy the Authority's licence for the next researched hull,
+    /// warship and freighter lines alike, once the treasury covers it twice
+    /// over. One order per hull per round trip to the Hub.
+    fn licence(&mut self, p: &Observation) -> Option<Command> {
+        if p.at_war { return None; }
+        let standing = p.standing();
+        let hull = sim::licence::licensed_hulls().into_iter().find(|&hull| {
+            let researched = !sim::ship::requires_hull_unlock(hull) || sim::research::has_hull(&p.research, hull);
+            sim::licence::offer(hull, standing, researched, p.licences.contains(&hull), false)
+                .is_ok_and(|price| p.credits >= 2.0 * price) && self.ready(&format!("licence:{hull:?}"), p.now)
+        })?;
+        self.wait(format!("licence:{hull:?}"), p, p.hub);
+        self.status = "buying the Authority's licence for a researched hull".into();
+        Some(Command::BuyLicence { player_id: p.owner, hull })
     }
 
     fn project(&self, p: &Observation) -> Option<Project> {
@@ -691,7 +833,8 @@ impl Bot {
         self.refresh_network(p);
         if let Some(cmd) = self.rescue(p).or_else(|| self.recover_military(p)).or_else(|| self.staff(p))
             .or_else(|| self.military(p)).or_else(|| self.charter_privateer(p)).or_else(|| self.charter_den(p))
-            .or_else(|| self.charter_stock_up(p)).or_else(|| self.charter_ore_sale(p)).or_else(|| self.guards(p))
+            .or_else(|| self.charter_stash(p))
+            .or_else(|| self.charter_stock_up(p)).or_else(|| self.charter_sale(p)).or_else(|| self.guards(p))
             .or_else(|| self.officers(p))
             .or_else(|| self.local_opening(p))
             .or_else(|| self.scouts(p)).or_else(|| self.belt_lesson(p)).or_else(|| self.belt_work(p))
@@ -700,6 +843,7 @@ impl Bot {
         let wanted = self.desired_stock(p, project);
         if let Some(cmd) = self.network_routes(p) { return Some(cmd); }
         if let Some(cmd) = self.merchant(p, project, &wanted) { return Some(cmd); }
+        if let Some(cmd) = self.licence(p) { return Some(cmd); }
         if self.ready("build", p.now) && p.home.builds.is_empty() {
             if let Some(project) = project {
                 if self.may_build(p, project) {
@@ -708,7 +852,7 @@ impl Bot {
                     return Some(match project.what {
                         BuildKind::Upgrade { upgrade } => Command::DevelopSystem {
                             player_id: p.owner, system_id: p.home.system.id, upgrade, body_id: Some(project.body) },
-                        BuildKind::Ship { ship } => Command::BuildShip {
+                        BuildKind::Ship { ship } => Command::BuildShip { reactor: Default::default(), drive: Default::default(),
                             player_id: p.owner, system_id: p.home.system.id, ship_kind: ship, join: None, loadout: Default::default() },
                         _ => unreachable!(),
                     });

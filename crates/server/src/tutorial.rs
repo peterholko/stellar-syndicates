@@ -38,14 +38,25 @@ pub enum Step {
     Raid,
     GunPlatform,
     SellOre,
+    /// §smelt-from-landing (Nov 6 2026): after the ore sale, before the Solar
+    /// Array and the Shipyard.
+    Smelter,
     Power,
     Shipyard,
     Interceptor,
     Privateer,
     Den,
+    /// §stash: the den's aftermath, three steps (§full-speed: four).
+    Repair,
+    Freighter,
+    FullSpeed,
+    Loot,
     Shipment,
     Research,
-    Smelter,
+    /// §signals: while the research runs.
+    Signal,
+    /// §freight-frames (Nov 6 2026): the hull the research unlocks.
+    SmallFreighter,
     Expansion,
     Survey,
     Barge,
@@ -57,25 +68,34 @@ pub enum Step {
 }
 
 impl Step {
-    /// §charter-v5: Founded, then the charter's twenty-three steps in play
-    /// order (`FoundingStage::STEPS`).
-    pub const ALL: [Step; 24] = [
+    /// §charter-v5: Founded, then the charter's twenty-nine steps in play
+    /// order (`FoundingStage::STEPS`; §charter-v6 moved the Solar Array before
+    /// the mine, §habitat-first before the farms).
+    pub const ALL: [Step; 30] = [
         Step::Founded,
-        Step::Bioharvester,
+        // §habitat-first (Nov 8 2026): the settlers' home, the Solar Array,
+        // then the food chain on its power; the raid breaks the plan at step 7.
         Step::Habitat,
+        Step::Power,
+        Step::Bioharvester,
         Step::Agroplex,
         Step::Mine,
+        Step::Smelter,
         Step::Raid,
         Step::GunPlatform,
         Step::SellOre,
-        Step::Power,
         Step::Shipyard,
         Step::Interceptor,
         Step::Privateer,
         Step::Den,
+        Step::Repair,
+        Step::Freighter,
+        Step::FullSpeed,
+        Step::Loot,
         Step::Shipment,
         Step::Research,
-        Step::Smelter,
+        Step::Signal,
+        Step::SmallFreighter,
         Step::Expansion,
         Step::Survey,
         Step::Barge,
@@ -101,8 +121,14 @@ impl Step {
             Step::Interceptor => "interceptor",
             Step::Privateer => "privateer",
             Step::Den => "den",
+            Step::Repair => "repair",
+            Step::Freighter => "freighter",
+            Step::FullSpeed => "full_speed",
+            Step::Loot => "loot",
             Step::Shipment => "shipment",
             Step::Research => "research",
+            Step::Signal => "signal",
+            Step::SmallFreighter => "small_freighter",
             Step::Smelter => "smelter",
             Step::Expansion => "expansion",
             Step::Survey => "survey",
@@ -130,16 +156,22 @@ impl Step {
             Step::Agroplex => "Make provisions",
             Step::Mine => "Bring the mine online",
             Step::Raid => "Pirates raid the colony",
-            Step::GunPlatform => "Build a Gun Platform",
-            Step::SellOre => "Sell ore to the trader",
-            Step::Power => "Power the Shipyard",
+            Step::GunPlatform => "Build a Laser Battery",
+            Step::SellOre => "Sell Alloys to the trader",
+            Step::Power => "Build a Solar Array",
             Step::Shipyard => "Build a Shipyard",
             Step::Interceptor => "Build an Interceptor",
             Step::Privateer => "Destroy the privateer",
             Step::Den => "Eliminate the privateer den",
-            Step::Shipment => "Export your ore",
-            Step::Research => "Research Enrichment",
-            Step::Smelter => "Build a Smelter",
+            Step::Repair => "Repair the Interceptor",
+            Step::Freighter => "Build a Tiny Freighter",
+            Step::FullSpeed => "Switch to Full speed",
+            Step::Loot => "Haul back the den's loot",
+            Step::Shipment => "Export your Alloys",
+            Step::Research => "Research Freight Frames",
+            Step::Signal => "Answer a signal",
+            Step::SmallFreighter => "Build a Small Freighter",
+            Step::Smelter => "Smelt your first Alloys",
             Step::Expansion => "Expand mining operations",
             Step::Survey => "Chart a nearby system",
             Step::Barge => "Build a Mining Barge",
@@ -154,10 +186,13 @@ impl Step {
     pub fn chapter(self) -> &'static str {
         match self {
             Step::Founded => "Founding",
-            Step::Bioharvester | Step::Habitat | Step::Agroplex | Step::Mine => "Landfall",
-            Step::Raid | Step::GunPlatform | Step::SellOre | Step::Power | Step::Shipyard => "Raid",
+            // §charter-v6 (Nov 7 2026): the Solar Array, the mine and the Smelter
+            // before the raid.
+            Step::Bioharvester | Step::Habitat | Step::Agroplex | Step::Power | Step::Mine | Step::Smelter => "Landfall",
+            Step::Raid | Step::GunPlatform | Step::SellOre | Step::Shipyard => "Raid",
             Step::Interceptor | Step::Privateer | Step::Den => "Pirates",
-            Step::Shipment | Step::Research | Step::Smelter | Step::Expansion | Step::Survey => "Expansion",
+            Step::Repair | Step::Freighter | Step::FullSpeed | Step::Loot | Step::Shipment | Step::Research | Step::Signal
+                | Step::SmallFreighter | Step::Expansion | Step::Survey => "Expansion",
             Step::Barge | Step::Prospect | Step::BeltMining | Step::Haul => "Reach",
             Step::Stores | Step::Vendetta => "Vendetta",
         }

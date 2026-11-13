@@ -7,7 +7,7 @@
 //! strike raiders that got away. Each countdown runs only while the founder is
 //! online, with a deadline regardless. Over the colony he attacks its
 //! strongest warship, and the founder's other warships at rest in the home's
-//! well join the fight, as does the Gun Platform (§gun-platform); with no
+//! well join the fight, as does the Laser Battery (§gun-platform); with no
 //! warship left he assaults the platform itself. His flagship's death pays a
 //! bounty and lands its salvage at home; a fight the colony's defense survives
 //! sends him off (the charter completes either way). If nothing is left
@@ -185,7 +185,7 @@ impl World {
                 if matches!(fleet.order, FleetOrder::Attack { .. }) {
                     fleet.order = FleetOrder::Idle;
                 }
-                // §gun-platform: no warship left, so the Gun Platform alone.
+                // §gun-platform: no warship left, so the Laser Battery alone.
                 if station && !v.assaulted {
                     self.open_vendetta_assault(id, owner, home_id);
                     self.with_vendetta(owner, |v| v.assaulted = true);
@@ -409,7 +409,10 @@ impl World {
         }
         match s.kind {
             StrikeKind::Mine => {
-                let Some(world) = sys.bodies.iter().any(|b| b.id == s.body).then(|| sys.body_pos(s.body, now)) else {
+                // A quarry's belt is a ring whose body position is the star's
+                // own (a move there means "the system", its main world): the
+                // nearest point on it.
+                let Some(world) = sys.bodies.iter().any(|b| b.id == s.body).then(|| Self::spot_pos(sys, s.body, pos, now)) else {
                     self.break_off_strike(owner, i, fleet, base);
                     return;
                 };
@@ -493,16 +496,17 @@ impl World {
                 (at + ahead * F::STRIKE_BARGE_START_SU, F::STRIKE_MINE_RAIDERS, FleetOrder::Attack { target: s.target.unwrap() })
             }
             StrikeKind::Mine => {
-                let Some(world) = sys.bodies.iter().any(|b| b.id == s.body).then(|| sys.body_pos(s.body, now)) else {
+                if !sys.bodies.iter().any(|b| b.id == s.body) {
                     self.with_strike(owner, i, |s| s.done = true);
                     return;
-                };
+                }
                 let den = self.players[&owner].founding.den
                     .and_then(|d| self.systems.iter().find(|x| x.id == d))
                     .map(|x| x.pos)
                     .filter(|p| p.distance(home) > 1.0);
                 let outward = if home.distance(self.hub) > 1.0 { (home - self.hub).normalized() } else { Vec2::new(1.0, 0.0) };
                 let start = sys.pos + den.map_or(outward, |d| (d - home).normalized()) * self.vendetta_reach();
+                let world = Self::spot_pos(sys, s.body, start, now);
                 (start, F::STRIKE_MINE_RAIDERS, FleetOrder::MoveTo { dest: world })
             }
             StrikeKind::Barge => {
@@ -763,7 +767,7 @@ mod tests {
         }).collect()
     }
 
-    /// §gun-platform: the home's Gun Platform (station level 1) over the
+    /// §gun-platform: the home's Laser Battery (station level 1) on the
     /// Command Center's world, its hardpoint whole.
     fn gun_platform(w: &mut World, home: EntityId) {
         let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
@@ -865,12 +869,12 @@ mod tests {
         }
         assert!(!v.paid && w.players[&owner].credits < crate::founding::VENDETTA_BOUNTY, "no bounty");
         // A fallen colony gives no orders but its restart.
-        w.step(&[Command::BuildShip { player_id: owner, system_id: home, ship_kind: ShipKind::Raider,
+        w.step(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(), player_id: owner, system_id: home, ship_kind: ShipKind::Raider,
             join: None, loadout: Default::default() }]);
         assert!(w.build_queue.iter().all(|j| j.owner != owner), "refused");
     }
 
-    /// §gun-platform: with no warship near home he assaults the Gun Platform
+    /// §gun-platform: with no warship near home he assaults the Laser Battery
     /// itself; alone it can't hold, and the colony falls.
     #[test]
     fn with_only_the_gun_platform_he_assaults_it_and_the_colony_falls() {
@@ -887,7 +891,7 @@ mod tests {
 
     /// The sizing (`VENDETTA_DAMAGE_MULT` 0.28, no captains aboard) for his
     /// flagship and four escorts (§vendetta-campaign), fought at home under
-    /// the Gun Platform (§gun-platform; his force never changes): three
+    /// the Laser Battery (§gun-platform; his force never changes): three
     /// Interceptors kill him in at least five galaxies of six and the colony
     /// never falls; with one, it falls in at least two.
     #[test]
@@ -916,8 +920,9 @@ mod tests {
                     assert_eq!(f.stage, S::Complete, "seed {seed}, {n} Interceptors: it ends");
                 }
                 if won {
-                    let fulfilled = crate::founding::charter_stipend(S::Complete).unwrap().1;
-                    assert_eq!(w.players[&owner].credits, credits + crate::founding::VENDETTA_BOUNTY + fulfilled, "the bounty");
+                    // §three-stipends (Nov 6 2026): the charter's end pays no stipend.
+                    assert!(crate::founding::charter_stipend(S::Complete).is_none());
+                    assert_eq!(w.players[&owner].credits, credits + crate::founding::VENDETTA_BOUNTY, "the bounty");
                     let now = w.systems.iter().find(|s| s.id == home).unwrap().stockpile[&crate::cargo::Commodity::Alloys];
                     assert!(now > alloys, "the salvage lands at home");
                     assert!(!w.fleets.values().any(|f| f.vendetta_pirate), "seed {seed}: no pirate of his lingers");
@@ -1024,6 +1029,33 @@ mod tests {
         w.step(&[]);
         assert!(!w.fleets.contains_key(&fleet) && strike(&w, owner, 0).done);
         assert_eq!(w.players[&owner].founding.vendetta.as_ref().unwrap().strike_survivors, 1, "it rides with him at the end");
+    }
+
+    /// Nov 4 2026: a quarry's belt is a ring and its body position the star's
+    /// own, so a strike on it once flew to the home world instead; it now
+    /// aims at the ring.
+    #[test]
+    fn a_strike_on_a_quarry_flies_to_its_belt_not_the_home_world() {
+        use crate::build::StructureKind as K;
+        let owner = PlayerId(91_015);
+        let (mut w, home, _) = founder(12648430, owner);
+        let sys = w.systems.iter_mut().find(|s| s.id == home).unwrap();
+        let belt = sys.bodies.iter_mut().find(|b| b.is_belt()).expect("the home has a belt");
+        belt.structures.insert(K::AsteroidQuarry, 1);
+        let belt = belt.id;
+        w.online.insert(owner);
+        w.players.get_mut(&owner).unwrap().founding.set_stage(S::ExpandMining, w.time);
+        w.step(&[]);
+        let s = strike(&w, owner, 0);
+        assert_eq!((s.kind, s.body), (StrikeKind::Mine, belt));
+        w.with_strike(owner, 0, |s| s.at = 0.0);
+        w.step(&[]);
+        let fleet = strike(&w, owner, 0).fleet.expect("set out");
+        w.step(&[]);
+        let FleetOrder::MoveTo { dest } = w.fleets[&fleet].order else { panic!("{:?}", w.fleets[&fleet].order) };
+        let sys = w.systems.iter().find(|s| s.id == home).unwrap();
+        assert!(dest.distance(sys.belt_point(belt, dest)) < 1.0, "it aims at the belt's ring");
+        assert!(dest.distance(sys.pos) > 100.0, "not at the star, which means the home world");
     }
 
     /// §gun-platform (Peter: "the first strike be either on the player's
@@ -1137,13 +1169,13 @@ mod tests {
     }
 
     /// Sizing sweep (not a check): `cargo test -p sim --lib vendetta_sizing_sweep -- --ignored --nocapture`.
-    /// §gun-platform: the fight at home, under the Gun Platform.
+    /// §gun-platform: the fight at home, under the Laser Battery.
     #[test]
     #[ignore]
     fn vendetta_sizing_sweep() {
         // §charter-crates: step 22 puts a Vault under the stores he loots.
         for (n, vault) in [0usize, 1, 2, 3, 4].into_iter().flat_map(|n| [(n, false), (n, true)]) {
-            let mut line = format!("{n} Interceptors + Gun Platform{}:", if vault { " + Vault" } else { "" });
+            let mut line = format!("{n} Interceptors + Laser Battery{}:", if vault { " + Vault" } else { "" });
             for seed in [12648430u64, 7, 41, 99, 123, 5150] {
                 let owner = PlayerId(91_200 + n as u64);
                 let (mut w, home, home_pos) = founder(seed, owner);

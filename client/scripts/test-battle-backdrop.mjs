@@ -33,20 +33,26 @@ for (const key of ["moveTo", "lineTo", "closePath", "fill", "stroke", "circle", 
 class Sprite extends Container { constructor(texture) { super(); this.texture = texture; this.anchor = point(); } }
 class Text extends Container { constructor({ text, style }) { super(); this.text = text; this.style = style; this.anchor = point(); } }
 const pendingArt = new Map();
+// The rolling star's mesh pieces (src/starroll.ts): recorded, never drawn.
+class MeshGeometry { constructor(options) { Object.assign(this, options); } destroy() {} }
+class Mesh extends Container { constructor(options) { super(); Object.assign(this, options); } }
+class Shader { constructor(options) { this.resources = { ...options.resources }; } destroy() {} }
+class UniformGroup { constructor(structure) { this.uniforms = Object.fromEntries(Object.entries(structure).map(([k, v]) => [k, v.value])); } }
 const pixi = { Container, Graphics, Sprite, Text, TextStyle: class { constructor(style) { Object.assign(this, style); } },
   Texture: { EMPTY: {} }, Assets: { load(url) {
     return new Promise(resolve => { const pending = pendingArt.get(url) ?? []; pending.push(resolve); pendingArt.set(url, pending); });
-  } } };
+  } }, Mesh, MeshGeometry, Shader, UniformGroup, GlProgram: { from: options => options } };
 const prng = load("prng.ts");
 const stars = load("stars.ts", { "./prng": prng });
 const planetArt = load("planetart.ts", { "./planet-art.generated": load("planet-art.generated.ts") });
 const protocol = load("protocol.ts");
 const layout = load("systemlayout.ts");
 const bodyFx = load("systembodyfx.ts", { "pixi.js": pixi, "./systemlayout": layout });
-const starFx = load("systemstarfx.ts", { "pixi.js": pixi, "./systembodyfx": bodyFx, "./systemlayout": layout });
+const starRoll = load("starroll.ts", { "pixi.js": pixi });
+const starFx = load("systemstarfx.ts", { "pixi.js": pixi, "./systembodyfx": bodyFx, "./systemlayout": layout, "./starroll": starRoll });
 const trafficLayer = load("systemtrafficlayer.ts", { "pixi.js": pixi, "./protocol": protocol, "./systemlayout": layout, "./systembodyfx": bodyFx });
 const systems = load("systemview.ts", { "pixi.js": pixi, "./prng": prng, "./stars": stars, "./planetart": planetArt,
-  "./systemlayout": layout, "./systembodyfx": bodyFx, "./systemstarfx": starFx, "./systemtrafficlayer": trafficLayer,
+  "./systemlayout": layout, "./systembodyfx": bodyFx, "./systemstarfx": starFx, "./starroll": starRoll, "./systemtrafficlayer": trafficLayer,
   "./planet-structure-art": { hasOrbitalShipConstruction: () => false }, "./icons": { label: (s) => s } });
 const backdrop = load("battlebackdrop.ts", { "./systemview": systems, "./stars": stars, "./systemlayout": layout,
   "./systembodyfx": bodyFx, "./prng": prng });
@@ -185,6 +191,8 @@ const reopened = theater.bindProbe(record, state);
 assert.equal(reopened.visual.planets.length, 3, "reopening may use newly received geography");
 assert.equal(reopened.scene, first.scene, "one cached scenery scene for the theater lifetime");
 assert.ok(reopened.scene.starSprite, "reopening uses already loaded, correctly anchored star art");
+// §star-roll: the backdrop's icon art was never measured for a surface; it stays still.
+assert.equal(reopened.scene.starSprite.shader.resources.starRoll.uniforms.uDiscA[3], 0, "the icon star does not roll");
 assert.equal(reopened.scene.root.eventMode, "none");
 assert.equal(reopened.plan.world, null, "a band fight has no world beneath it");
 assert.ok(Math.abs(Math.cos(reopened.plan.starBearing) + 1) < 1e-9, "the star lies back along the fight's bearing");
@@ -207,6 +215,23 @@ assert.doesNotMatch(JSON.stringify(plan), /Freya|metallic_ore|shipyard|999/, "no
 const later = backdrop.battleBackdropPlan({ id: "battle-over-Freya", system: "8", pos: { x: 20_150, y: 40 }, started_at: 5_000 }, state);
 assert.notEqual(later.starBearing, plan.starBearing, "the star's direction follows the world's pose when the fight began");
 assert.equal(backdrop.battleBackdropPlan({ id: "deep", system: null }, state), null, "deep space has no place plan");
+// Peter (Nov 4 2026): a strike on the second world is fought beside it, so the
+// replay stands there, not at the home world; the home's Laser Battery stays home.
+{
+  const home = { ...body(1, "terrestrial"), structures: { orbital_defense: 1 }, population: 0.01, orbit: { radius: 0.6, angle: 0, period: 1e9 } };
+  const second = { ...body(2, "ice"), habitable: false, structures: { mining_complex: 1 }, orbit: { radius: 0.95, angle: Math.PI, period: 1e9 } };
+  const served = { galaxy: { systems: [system] }, systems: [{ id: "8", owner: "1", bodies: [home, second], stockpile: [] }] };
+  const at = b => ({ x: system.pos.x + Math.cos(b.orbit.angle) * b.orbit.radius * layout.SYSTEM_UNIT_SU,
+    y: system.pos.y + Math.sin(b.orbit.angle) * b.orbit.radius * layout.SYSTEM_UNIT_SU });
+  const art = id => systems.buildVisualSystem(system, [home, second]).planets.find(p => p.id === String(id)).kind;
+  assert.notEqual(art(1), art(2), "two worlds, two looks");
+  const strike = backdrop.battleBackdropPlan({ id: "strike", system: "8", pos: at(second), started_at: 0 }, served);
+  assert.equal(strike.world.kind, art(2), "the second world's own art");
+  assert.equal(strike.world.battery, false, "no Laser Battery on it");
+  const finale = backdrop.battleBackdropPlan({ id: "finale", system: "8", pos: at(home), started_at: 0 }, served);
+  assert.equal(finale.world.kind, art(1));
+  assert.equal(finale.world.battery, true, "the battery on its own world");
+}
 // §den (Oct 29 2026): a fight in a system of belts alone (a pirate den's)
 // stands in its asteroid field with its star far off: never a world.
 const denSystem = { id: "9", name: "Tarn", pos: { x: 40_000, y: 0 }, band: "rich" };
@@ -219,6 +244,17 @@ assert.equal(denPlan.world, null, "no world in a belt's field");
 assert.equal(denPlan.belt.kind, "icy", "the belt's own rocks");
 assert.ok(Math.abs(Math.cos(denPlan.starBearing) + 1) < 1e-9, "its star lies back toward the system's centre");
 assert.equal(plan.belt, undefined, "a system with a world keeps its world");
+// §den (Peter, Nov 5 2026): out on the belt's ring, past the defenses' reach,
+// the den's fight is still in the field, not before the star.
+const ringPlan = backdrop.battleBackdropPlan({ ...denRecord, id: "den-ring", pos: { x: 42_600, y: 0 } }, denState);
+assert.equal(ringPlan.belt?.kind, "icy", "2,600 su out, on the ring");
+assert.equal(ringPlan.world, null);
+// The founder's den before its system is charted: still the field, not the star.
+const unchartedPlan = backdrop.battleBackdropPlan({ ...denRecord, id: "den-dark" },
+  { ...denState, systems: [report, { id: "9", owner: null, bodies: [], stockpile: [] }], founding: { den: "9" } });
+assert.ok(unchartedPlan.belt, "the den's fight is in its belt even uncharted");
+assert.equal(backdrop.battleBackdropPlan({ ...denRecord, id: "dark" }, { ...denState, systems: [report] }).belt, undefined,
+  "any other uncharted system keeps its star");
 theater.theaterClose();
 const den = theater.bindProbe(denRecord, denState);
 assert.equal(den.plan.belt.kind, "icy");

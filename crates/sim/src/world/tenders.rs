@@ -39,7 +39,9 @@ mod tests {
         tender.fuel = 50.0;
         tender.add_cargo(C::Deuterium, 40);
         tender.add_cargo(C::MetallicOre, 7);
-        let mut receiver = Fleet::single(target, owner, ShipKind::Raider,
+        // §shipbuilding-overhaul: a fusion Destroyer — a Deuterium tank with
+        // room for the numbers below (17.5 units).
+        let mut receiver = Fleet::single_on(target, owner, ShipKind::Destroyer, (crate::fuel::ReactorGrade::Fusion, crate::fuel::Drive::Zephyr),
             pos + Vec2::new(100.0, 0.0), FleetOrder::Idle, None);
         receiver.fuel = receiver.fuel_capacity() - 10.25;
         w.fleets.insert(id, tender);
@@ -243,24 +245,21 @@ fn terminal(phase: Phase) -> bool {
 /// §fuel-overhaul: a tender pumps any fuel it carries into the matching store:
 /// Helium-3 (once the receiver can burn it) and Deuterium into the fusion tank,
 /// Uranium into the fission store, Antimatter into the bottle — the one way to
-/// refill a bottle away from a dock.
-const TENDER_FUELS: [crate::Commodity; 4] = [crate::Commodity::Helium3, crate::Commodity::Deuterium,
-    crate::Commodity::Uranium, crate::Commodity::Antimatter];
+/// refill a bottle away from a dock. §shipbuilding-overhaul Phase 5: and the
+/// munitions into the magazines, the one way to reload away from a dock.
+const TENDER_SUPPLIES: [crate::Commodity; 7] = [crate::Commodity::Helium3, crate::Commodity::Deuterium,
+    crate::Commodity::Uranium, crate::Commodity::Antimatter,
+    crate::Commodity::Torpedoes, crate::Commodity::Slugs, crate::Commodity::BeamCrystals];
 
 fn carries_fuel(fleet: &Fleet) -> bool {
-    TENDER_FUELS.iter().any(|c| fleet.cargo_amount(*c) > 0)
+    TENDER_SUPPLIES.iter().any(|c| fleet.cargo_amount(*c) > 0)
 }
 
-/// The fuel the tender can pump next into `target`, with the receiver's room.
+/// The supply the tender can pump next into `target`, with the receiver's room.
 fn next_pump_fuel(tender: &Fleet, target: &Fleet) -> Option<(crate::Commodity, f64)> {
-    TENDER_FUELS.into_iter().filter(|c| tender.cargo_amount(*c) > 0).find_map(|c| {
-        let room = match c {
-            crate::Commodity::Helium3 if target.fuel_research.helium3 => target.fusion_room(),
-            crate::Commodity::Helium3 => 0.0,
-            crate::Commodity::Deuterium => target.fusion_room(),
-            crate::Commodity::Uranium => (target.uranium_capacity() - target.uranium).max(0.0),
-            _ => (target.antimatter_capacity() - target.antimatter).max(0.0),
-        };
+    // §shipbuilding-overhaul: one tank per fuel; a hull takes only its core's.
+    TENDER_SUPPLIES.into_iter().filter(|c| tender.cargo_amount(*c) > 0).find_map(|c| {
+        let room = target.room(c);
         (room > 1e-9).then_some((c, room))
     })
 }
@@ -423,12 +422,7 @@ impl World {
                 let source = self.fleets.get_mut(&id).unwrap();
                 let spent = source.remove_cargo(commodity, units);
                 let target = self.fleets.get_mut(&transfer.target).unwrap();
-                transfer.delivered += match commodity {
-                    crate::Commodity::Uranium => target.refuel_uranium(spent as f64),
-                    crate::Commodity::Antimatter => target.refuel_antimatter(spent as f64),
-                    crate::Commodity::Helium3 => target.refuel_helium3(spent as f64),
-                    _ => target.refuel(spent as f64),
-                };
+                transfer.delivered += target.take_fuel(commodity, spent as f64);
                 target.stalled = false;
                 transfer.spent += spent;
                 next_pump = self.time + 1.0 / TRANSFER_UNITS_PER_S;

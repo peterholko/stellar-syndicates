@@ -72,10 +72,12 @@ Sensor Arrays and deep-space sensors also find exploration contacts.
 - §charter-v5: the privateer raids the colony as the mine comes online. It is
   a tracked contact from the moment the colony first sees it (`raid_seen_at`,
   by the shared detection rule; `view::tracked_contacts`): it carries its loot
-  to its den and lurks about 9,750 su out, holding, far below what home
-  sensors can see. The battle estimate and the bots get the same track.
-- The den is still named by the privateer's log; no sensor reveals a pirate
-  base.
+  to its den, far below what home sensors can see. The battle estimate and
+  the bots get the same track.
+- §den-retreat (Nov 12 2026): it docks with its den's garrison, and the den
+  is known as the hunt (step 12) begins, since the colony saw where he went;
+  no sensor reveals a pirate base. Without a den it lurks just outside the
+  colony's sensors.
 - The lesson's fallback belt is picked within 80,000 su of home (the old
   bubble, now a plain distance).
 

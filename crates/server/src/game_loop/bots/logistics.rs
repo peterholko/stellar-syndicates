@@ -76,12 +76,13 @@ impl Observation {
         // §fuel-overhaul: each hull's burn at its own fuel's price; an escort
         // flies its charge's Uranium regime when it can.
         let home = self.home.system.pos;
-        let mut fuel = (self.leg(fleet, home, self.hub, exports.values().sum())
-            + self.leg(fleet, self.hub, home, imports.values().sum())) * self.price(regime_fuel(fleet));
+        // §cargo-mass: the goods at their own weight, ore out and parts back.
+        let weigh = |goods: &BTreeMap<C, u32>| goods.iter().map(|(c, n)| *n as f64 * c.mass_per_unit()).sum::<f64>();
+        let mut fuel = (self.leg_mass(fleet, home, self.hub, weigh(exports))
+            + self.leg_mass(fleet, self.hub, home, weigh(imports))) * self.price_per_energy(fleet);
         if let Some(guard) = escort {
-            let (_, mult) = self.escort_burn(guard, on_uranium(fleet));
-            let escort_fuel = if on_uranium(fleet) && slow_capable(guard) { C::Uranium } else { C::Deuterium };
-            fuel += self.fuel_per_mass(home, self.hub) * hull_mass(guard) * mult * 2.0 * self.price(escort_fuel);
+            let (_, mult) = self.escort_burn(guard, flies_slow(fleet));
+            fuel += self.fuel_per_mass(home, self.hub) * hull_mass(guard) * mult * 2.0 * self.price_per_energy(guard);
         }
         // The return goods are needed regardless of carrier. Count the freight
         // fee saved, not their purchase price, as the backhaul's contribution.
@@ -104,7 +105,9 @@ impl Bot {
             && warfare::composition(g).values().sum::<u32>() == 1) {
             let key = format!("fleet:{}", guard.id);
             if !self.ready(&key, p.now) || p.fighting.contains(&guard.id) || guard.stalled
-                || self.campaign_fleet(guard.id) || guard.damage.unwrap_or(0.0) > 0.2 { continue; }
+                || self.campaign_fleet(guard.id) || guard.damage.unwrap_or(0.0) > 0.2
+                // §stash: a hull the den's blast hurt stays in the yard until whole.
+                || p.den_wounded.contains(&guard.id) { continue; }
             if store(guard) < p.tank(guard) * 0.35 && guard.docked.is_none() {
                 if let Some(cmd) = self.return_for_fuel(p, guard) { return Some(cmd); }
                 continue;
@@ -145,6 +148,17 @@ impl Bot {
 
     pub(super) fn routes(&mut self, p: &Observation, wanted: &BTreeMap<C, f64>) -> Option<Command> {
         if p.opening_local_work() { return None; }
+        // §stash: the charter's first freighter fetches the den's stash first —
+        // through the whole stash chapter, so no Hub run takes it before the
+        // den's report names the stash (§shipbuilding-overhaul, Nov 7 2026:
+        // with fuel no longer critical here, an ore export used to grab it at
+        // "Full speed" and the charter stalled).
+        if p.stash.is_some() || (p.local_opening && matches!(p.founding_stage, sim::FoundingStage::EliminateDen
+            | sim::FoundingStage::RepairInterceptor | sim::FoundingStage::BuildTinyFreighter
+            | sim::FoundingStage::FullSpeed | sim::FoundingStage::HaulLoot))
+        {
+            return None;
+        }
         let account = p.account.as_ref()?;
         for fleet in p.own().filter(|g| g.kind.is_player_freighter()) {
             if self.freight_homes.get(&fleet.id).is_some_and(|id| *id != p.home.system.id) { continue; }
@@ -169,15 +183,19 @@ impl Bot {
             let fleet = &planned;
             let limit = p.safe_load(fleet, p.home.system.pos, p.hub);
             let mut exports = p.exports(wanted, limit);
-            // §charter-v5: until the charter's "Export your ore" is done, a Hub
-            // run carries Ferrite Ore first.
+            // §charter-v5: until the charter's first export is done, a Hub
+            // run carries it first. §charter-v6 (Nov 7 2026): Alloys, the
+            // Smelter's — what the colony can spare past its buffer, or a
+            // token ten so the lesson sails even when the buffer is short.
             if at_home && p.local_opening && p.founding_stage.step() <= sim::FoundingStage::PrepareExport.step() {
-                let ore = (p.home.system.free_stock(C::MetallicOre).floor().max(0.0) as u32).min(limit);
-                if ore > 0 && !exports.contains_key(&C::MetallicOre) {
+                let free = p.home.system.free_stock(C::Alloys).floor().max(0.0);
+                let spare = (free - wanted.get(&C::Alloys).copied().unwrap_or(0.0)).floor().max(0.0) as u32;
+                let ore = spare.max(free.min(10.0) as u32).min(limit);
+                if ore > 0 && !exports.contains_key(&C::Alloys) {
                     let mut room = limit - ore;
                     let mut others: Vec<_> = std::mem::take(&mut exports).into_iter().collect();
                     others.sort_by(|(a, _), (b, _)| p.price(*b).total_cmp(&p.price(*a)));
-                    exports.insert(C::MetallicOre, ore);
+                    exports.insert(C::Alloys, ore);
                     for (good, n) in others {
                         let n = n.min(room);
                         if n > 0 { exports.insert(good, n); room -= n; }
@@ -187,15 +205,20 @@ impl Bot {
             let mut imports = BTreeMap::new();
             let retained: u32 = fleet.cargo_manifest.iter().filter(|c| p.export_reserve(c.commodity, wanted).is_none()).map(|c| c.units).sum();
             let mut room = p.safe_load(fleet, p.hub, p.home.system.pos).saturating_sub(retained);
+            // §hold-room: the hold counts room, each good its own (a capital
+            // part ten). `room` is in whole room units, so quarters here.
+            let mut quarters = room as u64 * sim::cargo::ROOM_SCALE as u64;
             let mut goods: Vec<_> = wanted.iter().collect();
             goods.sort_by_key(|(c, _)| (!FUELS.contains(*c), **c != C::Provisions, **c));
             for (&good, &target) in goods {
                 let need = (target - p.stock(good) - p.inbound(good) as f64 - p.carried_home(good) as f64
                     - self.expected_supply(p, good) as f64).ceil().max(0.0) as u32;
                 let unpromised = account.warehouse.get(&good).copied().unwrap_or(0).saturating_sub(p.pickup_coverage(good));
-                let n = need.min(unpromised).min(room);
-                if n > 0 { imports.insert(good, n); room -= n; }
+                let fits = (quarters / good.room_quarters() as u64).min(u32::MAX as u64) as u32;
+                let n = need.min(unpromised).min(fits);
+                if n > 0 { imports.insert(good, n); quarters -= n as u64 * good.room_quarters() as u64; }
             }
+            room = (quarters / sim::cargo::ROOM_SCALE as u64) as u32;
             // The starter has only the ordinary TWO-stop route permission.
             // Finish exports at the hub, then price a fresh homebound manifest
             // there. Do not wait on a warehouse forecast made a whole trip ago.
@@ -230,7 +253,7 @@ impl Bot {
             if at_home && !fuel_run && (!profitable || exports.values().sum::<u32>() < 10) {
                 if run.is_some() {
                     self.wait(key, p, fleet.pos);
-                    return Some(Command::SetFreightRoute { player_id: p.owner, fleet_id: fleet.id, route: None });
+                    return Some(Command::SetFreightRoute { player_id: p.owner, fleet_id: fleet.id, revise: false, route: None });
                 }
                 if cargo_used(fleet) > 0 && p.home.system.storage_headroom() >= 1.0 {
                     self.wait(key, p, fleet.pos);
@@ -245,7 +268,7 @@ impl Bot {
             let units = if at_hub { imports.values().sum::<u32>() + retained } else { exports.values().sum() };
             if store(fleet) < p.leg(fleet, fleet.pos, dest, units) + p.arrival_reserve(fleet)
                 || escort.is_some_and(|g| {
-                    let (fuel, mult) = p.escort_burn(g, on_uranium(fleet));
+                    let (fuel, mult) = p.escort_burn(g, flies_slow(fleet));
                     fuel < p.fuel_per_mass(fleet.pos, dest) * hull_mass(g) * mult + p.arrival_reserve(g)
                 }) { continue; }
             if at_home && self.cash(p) < p.operating_reserve() { continue; }
@@ -279,7 +302,7 @@ impl Bot {
             self.status = if shopping.is_some() { "bringing fuel home on the return leg" }
                 else if fuel_run { "sending a freighter to the Hub for fuel" }
                 else { "assigning an owned mixed-cargo route with escort and fuel reserve" }.into();
-            return Some(Command::SetFreightRoute { player_id: p.owner, fleet_id: fleet.id, route: Some(FreightRoute {
+            return Some(Command::SetFreightRoute { player_id: p.owner, fleet_id: fleet.id, revise: false, route: Some(FreightRoute {
                 shopping_budget: shopping,
                 name: format!("{} / Market", p.home.system.name), stops, fuel_reserve: p.arrival_reserve(fleet),
                 transit: p.freight_transit(),
@@ -338,7 +361,22 @@ impl Bot {
         let mut goods: Vec<_> = wanted.iter().collect();
         goods.sort_by_key(|(c, _)| (!FUELS.contains(*c) || !p.fuel_critical(), **c != C::Provisions || p.stock(C::Provisions) >= 10.0,
             !project_short(**c), **c));
+        // §hull-ladder (Nov 7 2026): a kit is several Hub goods at once (the
+        // Small Freighter's plating, frame, precision parts, Nav Computer and
+        // bays). One order a light round trip booked them one at a time —
+        // fifty minutes for one hull in the charter harness — so while the
+        // project is still short of OTHER goods, an order holds its cash
+        // without holding the market slot; only the last one waits.
+        let project_shorts = project_costs.keys().filter(|c| project_short(**c)).count();
+        // §habitat-first (Nov 8 2026): during the charter the home's own mine
+        // feeds its Smelter. A Hub buy of that ore (95 Ferrite Ore, ~930 Cr,
+        // right after the trader's sale) left the expansion without cash for
+        // its fuel; the Smelter's buffer still keeps the ore from export.
+        let in_charter = p.local_opening && p.founding_stage != sim::FoundingStage::Complete;
+        let mined_at_home = |c: C| p.home.system.bodies.iter()
+            .any(|b| b.tier(K::MiningComplex) > 0 && b.deposits.iter().any(|d| d.resource == c));
         for (&good, &target) in goods {
+            if in_charter && !project_short(good) && mined_at_home(good) { continue; }
             let essential = FUELS.contains(&good) || good == C::Provisions;
             // §charter-v5: the docked trader covers the project at once; a
             // Hub import of the same goods only waits on the freight.
@@ -357,8 +395,9 @@ impl Bot {
             let booked = need.min(stored).saturating_sub(p.pickup_coverage(good)).min(100);
             let budget = self.spendable(p, essential);
             let fee = sim::tca::freight_fee(booked, p.price(good), p.home.system.pos.distance(p.hub)) * 1.2;
+            let more_for_project = project_short(good) && project_shorts > 1;
             if booked > 0 && budget >= fee {
-                self.spend(p, fee);
+                if more_for_project { self.spend_at_home(p, fee); } else { self.spend(p, fee); }
                 self.status = if essential { "booking essential replenishment" } else { "booking imports without an available owned carrier" }.into();
                 return Some(Command::BookFreightOut { player_id: p.owner, system: home, commodity: good, units: booked });
             }
@@ -370,7 +409,7 @@ impl Bot {
             let units = missing.min(100).min(ticker.available_buy.get(&good).copied().unwrap_or(0))
                 .min(((budget - delivery).max(0.0) / (ceiling * 1.1)).floor() as u32);
             if units > 0 && (essential || !self.recovering(p)) {
-                self.spend(p, units as f64 * ceiling * 1.1);
+                if more_for_project { self.spend_at_home(p, units as f64 * ceiling * 1.1); } else { self.spend(p, units as f64 * ceiling * 1.1); }
                 self.status = if essential { "buying operating supplies before optional projects" } else { "funding the next affordable project" }.into();
                 return Some(Command::MarketBuy { player_id: p.owner, commodity: good, units, max_unit_price: Some(ceiling) });
             }
@@ -392,18 +431,20 @@ impl Bot {
         }).collect();
         if buys.is_empty() { return None; }
         let spendable = self.spendable(p, false);
-        // §charter-v5: short of cash, sell the trader just enough ore to
-        // cover the gap (ore the home wants stays); short of ore too, buy
-        // what the cash covers, selling what ore there is toward the rest.
+        // §charter-v5: short of cash, sell the trader just enough of what it
+        // buys (§sell-alloys: Alloys) to cover the gap (what the home wants
+        // stays); short of those too, buy what the cash covers, selling what
+        // there is toward the rest.
         let mut buys = buys;
         let mut sells = BTreeMap::new();
         let cost = visit.quote(&buys, &BTreeMap::new()).ok()?.cost;
-        if cost > spendable && let Some(price) = visit.buy_price(C::MetallicOre).filter(|p| *p > 0.0) {
-            let keep = wanted.get(&C::MetallicOre).copied().unwrap_or(0.0);
-            let spare = ((p.home.system.free_stock(C::MetallicOre) - keep).floor().max(0.0) as u32).min(visit.ore_room());
+        let good = sim::merchant::BUYS;
+        if cost > spendable && let Some(price) = visit.buy_price(good).filter(|p| *p > 0.0) {
+            let keep = wanted.get(&good).copied().unwrap_or(0.0);
+            let spare = ((p.home.system.free_stock(good) - keep).floor().max(0.0) as u32).min(visit.room());
             let need = ((cost - spendable) / price).ceil() as u32;
-            let sold = if need <= spare { need } else if spare >= 20 { spare } else { 0 };
-            if sold > 0 { sells.insert(C::MetallicOre, sold); }
+            let sold = need.min(spare);
+            if sold > 0 { sells.insert(good, sold); }
             let mut budget = spendable + sold as f64 * price;
             if need > spare {
                 for (c, n) in buys.iter_mut() {
@@ -420,20 +461,20 @@ impl Bot {
         if net > spendable || quote.net_units as f64 > p.home.system.storage_headroom() {
             return None;
         }
-        self.spend(p, net.max(0.0));
+        self.spend_at_home(p, net.max(0.0));
         self.wait("merchant".into(), p, p.home.system.pos);
         self.status = if sells.is_empty() { "buying the project's shortfall from the merchant" }
-            else if buys.is_empty() { "selling ore to the merchant toward the project's shortfall" }
-            else { "selling ore to the merchant for the project's shortfall" }.into();
+            else if buys.is_empty() { "selling Alloys to the merchant toward the project's shortfall" }
+            else { "selling Alloys to the merchant for the project's shortfall" }.into();
         Some(Command::MerchantTrade { player_id: p.owner, buys, sells })
     }
 
     pub(super) fn export_surplus(&mut self, p: &Observation, wanted: &BTreeMap<C, f64>, clear_space: bool) -> Option<Command> {
         // Authority is a genuine bulk/overflow alternative, not the first
         // consumer of every ore unit.
-        // §charter-v5: until the trader has bought its first ore, the ore
-        // waits for it.
-        let ore_for_trader = p.local_opening
+        // §charter-v5: until the trader has made its first purchase, what it
+        // buys (§sell-alloys: Alloys) waits for it.
+        let held_for_trader = p.local_opening
             && p.founding_stage.step() <= sim::FoundingStage::SellOre.step();
         // §fuel: clearing room, the biggest pile goes first. Fifty-unit ore lots
         // never caught up with a full Agroplex, and they took the market slots
@@ -446,7 +487,7 @@ impl Bot {
             if good == C::Provisions && p.local_opening
                 && p.founding_stage.step() <= sim::FoundingStage::BuildAgroplex.step() { continue; }
             // Full storage still wins: imports bounce off a full colony.
-            if ore_for_trader && good == C::MetallicOre && !clear_space { continue; }
+            if held_for_trader && good == sim::merchant::BUYS && !clear_space { continue; }
             let Some(reserve) = p.export_reserve(good, wanted) else { continue; };
             let held = if clear_space { 0 } else { p.own().filter(|f|
                 f.kind.is_player_freighter() && f.industry.is_some() && p.uses_local_port(f)).map(capacity).sum::<u32>() };

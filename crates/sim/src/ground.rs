@@ -44,6 +44,24 @@ use crate::rng::Rng;
 /// the defense it faces.
 pub const MARINES_PER_GARRISON_TIER: f64 = 25.0;
 
+/// §veil: the Veil Projector's top level.
+pub const VEIL_MAX_LEVEL: u32 = 3;
+/// §veil: the share of a landing the Veil shreds on the way down, by projector
+/// level. Transports are hardened and slow enough to get through; nothing
+/// gets through whole. Tunable — the dial on what a Veil level is worth.
+pub const VEIL_DESCENT_LOSS: [f64; 3] = [0.10, 0.15, 0.20];
+
+/// The descent loss a Veil at `level` inflicts (0 for no Veil).
+pub fn veil_descent_loss(level: u32) -> f64 {
+    if level == 0 { 0.0 } else { VEIL_DESCENT_LOSS[(level as usize - 1).min(VEIL_DESCENT_LOSS.len() - 1)] }
+}
+
+/// §veil: how many of `marines` reach the ground through a Veil at `level`.
+/// Whole men, rounded down: the Veil never rounds in the attacker's favour.
+pub fn through_veil(marines: u32, level: u32) -> u32 {
+    (marines as f64 * (1.0 - veil_descent_loss(level))).floor() as u32
+}
+
 /// A landing runs about as long as a fleet action, as a multiple of
 /// `battle_target_secs` — so the two theatres share a sense of scale and one
 /// config dial moves both. Tunable.
@@ -304,6 +322,10 @@ pub struct GroundRecord {
     /// `None` while the landing is still being fought.
     pub ended_tick: Option<u64>,
     pub marines_landed: u32,
+    /// §veil: marines the Veil took in the descent, before `marines_landed`
+    /// stood on the ground. 0 with no Veil. serde default for older records.
+    #[serde(default)]
+    pub descent_losses: u32,
     pub defenders_initial: u32,
     pub garrison_tiers: u32,
     /// Suppression at the moment of the drop — what the attacker committed on.
@@ -333,6 +355,7 @@ impl GroundRecord {
             defenders_initial: a.defenders_initial,
             garrison_tiers: a.garrison_tiers,
             suppression_at_drop,
+            descent_losses: 0,
             rounds: Vec::new(),
             outcome: None,
             round_every: ((expected / GROUND_RECORD_ROUNDS as f64).floor() as u64).max(1),

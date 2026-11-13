@@ -1,0 +1,7 @@
+[Unit]
+Description=Update cloudflared, then restart the stellar-syndicates tunnel replicas one at a time
+
+[Service]
+Type=oneshot
+ExecStart=%h/stellar-syndicates/bin/update-tunnel.sh
+TimeoutStartSec=15min

@@ -37,6 +37,12 @@ export interface Shell {
   /** §raid-focus: take the player to an incoming raid on the galaxy map: the
    * raider selected, framed with the home it closes on. */
   focusRaid?(id: string, homeId: string): void;
+  /** §export-follow: take the player to the first shipment leaving home, the
+   * freighter selected and framed with home, and follow it out of the well. */
+  focusShipment?(id: string, homeId: string): void;
+  /** §privateer-contract: Contracts (Operations), the charter's contract
+   * pinned on top with its Accept ringed. */
+  openContract?(): void;
   onViewTick(): void;
   framePolicy(): FramePolicy;
   cameraRect(): Rect;

@@ -27,7 +27,11 @@ pub enum Command {
     DevelopSettlement { player_id: PlayerId, system_id: EntityId, body_id: u32,
         project: crate::settlement::SettlementProject },
     SetRefiningReserve { player_id: PlayerId, system_id: EntityId, ore: u32, fuel: u32 },
-    SetFreightRoute { player_id: PlayerId, fleet_id: EntityId, route: Option<crate::industry::FreightRoute> },
+    /// `revise` (§route-edit): the player's edit of a run under way; with its
+    /// ports in the same order it keeps its place (`FreightRun::revised`).
+    /// Off, the route starts over at its first stop, as bots expect.
+    SetFreightRoute { player_id: PlayerId, fleet_id: EntityId, route: Option<crate::industry::FreightRoute>,
+        #[serde(default)] revise: bool },
     DeployOutpost { player_id: PlayerId, fleet_id: EntityId, system_id: EntityId, body_id: u32,
         outpost: crate::industry::OutpostKind, commodity: crate::Commodity },
     SkimFuel { player_id: PlayerId, fleet_id: EntityId, system_id: EntityId },
@@ -355,6 +359,31 @@ pub enum Command {
         /// clients omitting it build the stock beam brawler exactly as before.
         #[serde(default)]
         loadout: crate::module::Loadout,
+        /// §reactors-drives: the REACTOR to build with. The yard debits
+        /// `ShipKind::engines()` of that reactor in place of the recipe's
+        /// Fission Reactors. serde default = Fission.
+        #[serde(default)]
+        reactor: crate::fuel::ReactorGrade,
+        /// The WARP DRIVE to build with, in place of the recipe's Zephyr
+        /// Drives; the reactor must power it. serde default = Zephyr.
+        #[serde(default)]
+        drive: crate::fuel::Drive,
+    },
+
+    /// §reactors-drives: refit `n` hulls of `ship` in a docked fleet to
+    /// `reactor` and/or `drive` (None keeps that part) at an owned or allied
+    /// Shipyard. The new parts (`engines()` × n each) come out of that
+    /// system's stockpile and the old ones go back into it. The reactor must
+    /// power the drive, a ship of the line never takes a Maelstrom Drive, and
+    /// an unresearched part is refused. Fuel of a kind no hull burns any more
+    /// goes ashore. Soft-reject otherwise.
+    RefitEngines {
+        player_id: PlayerId,
+        fleet_id: EntityId,
+        ship: crate::ship::ShipKind,
+        reactor: Option<crate::fuel::ReactorGrade>,
+        drive: Option<crate::fuel::Drive>,
+        n: u32,
     },
 
     /// §modules Part B3: MANUFACTURE one module into the system's ledger. Needs
@@ -382,44 +411,6 @@ pub enum Command {
         from: crate::module::Loadout,
         to: crate::module::Loadout,
         n: u32,
-    },
-
-    /// §modules Part B3: ship MODULES between systems by convoy — a crate hauler
-    /// (owned → owned or allied). Mirrors `TransferSpecialists`: the manifest
-    /// clamps to the source ledger and the convoy's module berths; the ledger is
-    /// debited at LOADING (the crates are aboard, not at home); the manifest is
-    /// fogged (broadcast hides it, sensor coverage reveals it) exactly like cargo.
-    /// Delivered into the destination ledger on arrival; lost with the convoy.
-    TransferModules {
-        player_id: PlayerId,
-        from: EntityId,
-        to: EntityId,
-        manifest: std::collections::BTreeMap<crate::module::ModuleKind, u32>,
-    },
-
-    /// §modules Part B3 (Sol hub): BUY `n` modules from Sol — `MODULE_BUY_MULT` ×
-    /// the recipe's goods value, debited NOW (price-certain), then a delivery
-    /// convoy carries the crates hub → `dest_system` (delivery-risky, raidable,
-    /// manifest fogged). Mirrors `HireSpecialist`. Soft-reject unless the player
-    /// owns `dest_system` and can pay.
-    BuyModule {
-        player_id: PlayerId,
-        module: crate::module::ModuleKind,
-        n: u32,
-        dest_system: EntityId,
-    },
-
-    /// §modules Part B3 (Sol hub): SELL `n` modules to Sol — debit them from the
-    /// source ledger NOW (committed to the crossing), a convoy carries them
-    /// `from_system` → hub, and the buy-back price (`MODULE_SELL_MULT` × recipe
-    /// value on ARRIVAL) is credited when it lands. Mirrors `MarketSell`
-    /// (delivery-risky). Soft-reject unless the player owns `from_system` and the
-    /// ledger stocks the modules.
-    SellModule {
-        player_id: PlayerId,
-        module: crate::module::ModuleKind,
-        n: u32,
-        from_system: EntityId,
     },
 
     /// WITHDRAW an engaged fleet from its battle (§battles-take-time). A coarse,
@@ -559,6 +550,11 @@ pub enum Command {
         #[serde(default)]
         refining_ore: Option<crate::cargo::Commodity>,
     },
+
+    /// §veil: whether this system raises its Veil under a held blockade
+    /// (`raise: false` forbids it — the owner wants the batteries firing and
+    /// the fuel kept). Private local administration.
+    SetVeilPolicy { player_id: PlayerId, system_id: EntityId, raise: bool },
 
     /// Set one body's civilian immigration policy. This is private local
     /// administration; it schedules future physical liners but never teleports
@@ -708,6 +704,16 @@ pub enum Command {
     /// the Market Hub is a settlement, and settlement is correlation (§3), not a
     /// courier. Soft-rejects (free, owner-only) if the treasury can't cover it.
     PayReinstatement { player_id: PlayerId, points: f64 },
+    /// §licences (docs/blueprint-licences.md): buy the Authority's licence to
+    /// build `hull` (every Orbital Shipyard and Capital Slipway hull needs
+    /// one). Travels to the Market Hub with its payment; refused there, free,
+    /// for a hull that needs none, one already held, unresearched research,
+    /// a capital below Commissioned, a closed charter or a corporation at war.
+    BuyLicence { player_id: PlayerId, hull: crate::ship::ShipKind },
+    /// §claims: buy the Authority's claim to colonize `system_id`. Travels to
+    /// the Market Hub with its payment; refused there, free, for a system
+    /// already a colony or claimed, a closed charter or a corporation at war.
+    BuyClaim { player_id: PlayerId, system_id: crate::ids::EntityId },
 
     /// §season: answer the Authority's levy rise: accept it, or refuse and see
     /// that good embargoed for you until the arrears are paid. Travels to the
@@ -1035,11 +1041,9 @@ impl Command {
             | Command::EquipGear { player_id, .. }
             | Command::UnequipGear { player_id, .. }
             | Command::BuildShip { player_id, .. }
+            | Command::RefitEngines { player_id, .. }
             | Command::BuildModule { player_id, .. }
             | Command::RefitShips { player_id, .. }
-            | Command::TransferModules { player_id, .. }
-            | Command::BuyModule { player_id, .. }
-            | Command::SellModule { player_id, .. }
             | Command::Withdraw { player_id, .. }
             | Command::SetFleetTransit { player_id, .. }
             | Command::MergeFleets { player_id, .. }
@@ -1051,6 +1055,7 @@ impl Command {
             | Command::CancelBuild { player_id, .. }
             | Command::SetAssignment { player_id, .. }
             | Command::SetMigrationPolicy { player_id, .. }
+            | Command::SetVeilPolicy { player_id, .. }
             | Command::RelocateMigrants { player_id, .. }
             | Command::HireSpecialist { player_id, .. }
             | Command::TrainSpecialist { player_id, .. }
@@ -1064,6 +1069,8 @@ impl Command {
             | Command::HaulToSystem { player_id, .. }
             | Command::RequestFuelRescue { player_id, .. }
             | Command::PayReinstatement { player_id, .. }
+            | Command::BuyLicence { player_id, .. }
+            | Command::BuyClaim { player_id, .. }
             | Command::AnswerLevy { player_id, .. }
             | Command::PayArrears { player_id, .. }
             | Command::AnswerRequisition { player_id, .. }

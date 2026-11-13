@@ -14,25 +14,51 @@ impl Observation {
         self.ticker.as_ref().and_then(|m| m.prices.get(&good)).copied().unwrap_or(20.0)
     }
 
-    /// §fuel-overhaul: the size of the store the fleet's regime burns.
+    /// §shipbuilding-overhaul: the fleet's tank in ENERGY (the same per unit of
+    /// hull mass on every grade), as the sim's `energy_capacity`.
     pub(super) fn tank(&self, fleet: &GhostView) -> f64 {
-        let base = || hull_mass(fleet) * sim::fuel::FUEL_PER_HULL_MASS;
-        if on_uranium(fleet) { fleet.uranium_capacity.unwrap_or_else(base) }
-        else { fleet.fuel_capacity.unwrap_or_else(base) }
+        // §shipbuilding-overhaul: no warp core, no tank (the Survey Probe).
+        if !burns_fuel(fleet) { return 0.0; }
+        let fuel = regime_fuel(fleet);
+        let units = tank_capacity(fleet, fuel);
+        if units > 0.0 { units * primary_grade(fleet).energy_per_unit() }
+        else { hull_mass(fleet) * sim::fuel::FUEL_PER_HULL_MASS }
+    }
+
+    /// The same tank in UNITS of its fuel, for pricing a fill.
+    pub(super) fn tank_units(&self, fleet: &GhostView) -> f64 {
+        self.tank(fleet) / primary_grade(fleet).energy_per_unit()
     }
 
     pub(super) fn arrival_reserve(&self, fleet: &GhostView) -> f64 { self.tank(fleet) * 0.05 }
 
+    /// The burn of a leg with `units` of a planned load aboard, priced at ore
+    /// (the heaviest class): the bots mostly haul ore out, and a heavier guess
+    /// only makes the plan safer. `leg_mass` weighs a known manifest.
     pub(super) fn leg(&self, fleet: &GhostView, from: Vec2, to: Vec2, units: u32) -> f64 {
-        self.fuel_per_mass(from, to) * (hull_mass(fleet) + units as f64 * sim::ship::CARGO_MASS_PER_UNIT)
-            * self.cruise_mult(fleet)
+        self.leg_mass(fleet, from, to, units as f64 * sim::ship::CARGO_MASS_PER_UNIT)
+    }
+
+    /// §cargo-mass: the burn of a leg with `cargo` mass aboard.
+    pub(super) fn leg_mass(&self, fleet: &GhostView, from: Vec2, to: Vec2, cargo: f64) -> f64 {
+        // §shipbuilding-overhaul: no warp core, no burn (the Survey Probe).
+        if !burns_fuel(fleet) { return 0.0; }
+        self.fuel_per_mass(from, to) * (hull_mass(fleet) + cargo) * self.cruise_mult(fleet)
     }
 
     pub(super) fn safe_load(&self, fleet: &GhostView, from: Vec2, to: Vec2) -> u32 {
         let mut full = fleet.clone();
         full.pos = from;
-        let level = Some((self.tank(fleet) - self.arrival_reserve(fleet)).max(0.0));
-        if on_uranium(fleet) { full.uranium = level; } else { full.fuel = level; }
+        // §shipbuilding-overhaul: a freight run flies the freight throttle,
+        // whatever the hull is doing now (the charter leaves the Tiny on Full).
+        full.transit = Some(self.freight_transit());
+        let level = Some((self.tank(fleet) - self.arrival_reserve(fleet)).max(0.0) / primary_grade(fleet).energy_per_unit());
+        match regime_fuel(fleet) {
+            C::Uranium => full.uranium = level,
+            C::Helium3 => full.helium3 = level,
+            C::Antimatter => full.antimatter = level,
+            _ => full.fuel = level,
+        }
         self.freight_limit(&full, to)
     }
 
@@ -54,12 +80,10 @@ impl Observation {
             .is_none_or(|s| s.system.id == id)
     }
 
-    /// §fuel-overhaul: which fuel a fleet draws from its port: its regime's,
-    /// or for an escort its charge's Uranium when it can fly it.
+    /// §shipbuilding-overhaul: which fuel a fleet draws from its port — its
+    /// own cores', whatever its charge flies.
     pub(super) fn port_fuel(&self, fleet: &GhostView) -> C {
-        let charge_slow = fleet.guard_target.and_then(|ward| self.own().find(|f| f.id == ward))
-            .is_some_and(on_uranium);
-        if charge_slow && slow_capable(fleet) { C::Uranium } else { regime_fuel(fleet) }
+        regime_fuel(fleet)
     }
 
     pub(super) fn fuel_target_of(&self, fuel: C) -> f64 {
@@ -70,10 +94,15 @@ impl Observation {
         let mut target = 0.0;
         for fleet in self.own().filter(|f| self.uses_local_port(f) && self.port_fuel(f) == fuel) {
             let cycle = if fleet.kind.is_player_freighter() {
-                self.leg(fleet, home, self.hub, self.safe_load(fleet, home, self.hub))
+                // Priced at the throttle freight flies, not the hull's current one.
+                let mut run = fleet.clone();
+                run.transit = Some(self.freight_transit());
+                self.leg(&run, home, self.hub, self.safe_load(fleet, home, self.hub))
             } else { self.tank(fleet) };
             let deficit = (self.tank(fleet) - store(fleet)).max(0.0);
-            target += cycle + if fleet.docked.as_deref() == Some(self.home.system.id.to_string().as_str()) { deficit } else { 0.0 };
+            // Legs and tanks are energy; the depot holds units of this fuel.
+            let energy = cycle + if fleet.docked.as_deref() == Some(self.home.system.id.to_string().as_str()) { deficit } else { 0.0 };
+            target += energy / primary_grade(fleet).energy_per_unit();
         }
         // Refining is a standing fuel customer too. Size its buffer to the
         // replenishment lead time, with two coverage windows so the low-water
@@ -90,17 +119,24 @@ impl Observation {
                 * a.workers.min(tier) as f64 / tier as f64 * system.staffing_share() * processing
         })).sum::<f64>();
         let lead = self.supply_lead();
-        // Slow freight runs on Uranium, so it keeps a floor; Deuterium only
-        // when something burns it.
-        let floor = if fuel == C::Uranium { 20.0 } else { 0.0 };
+        // §shipbuilding-overhaul: Slow is a throttle on any core, so a fuel
+        // keeps a floor only while a hull of ours burns it (the charter's
+        // Fission hulls: Uranium).
+        let floor = if fuel == C::Uranium && self.own().any(|f| regime_fuel(f) == C::Uranium) { 20.0 } else { 0.0 };
         (target + industrial * lead * 2.0).min(system.storage_cap() * 0.3).max(floor)
     }
 
     /// Either fuel below half its target.
     pub(super) fn fuel_critical(&self) -> bool {
-        FUELS.into_iter().any(|fuel| {
+        self.critical_fuel().is_some()
+    }
+
+    /// The first fuel below half its target, with its stock and target.
+    pub(super) fn critical_fuel(&self) -> Option<(C, f64, f64)> {
+        FUELS.into_iter().find_map(|fuel| {
             let target = self.fuel_target_of(fuel);
-            target > 0.0 && self.stock(fuel) + (self.inbound(fuel) as f64) < target * 0.5
+            let have = self.stock(fuel) + (self.inbound(fuel) as f64);
+            (target > 0.0 && have < target * 0.5).then_some((fuel, have, target))
         })
     }
 
@@ -111,10 +147,10 @@ impl Observation {
         // §fuel-overhaul: priced in the fuel each hull burns.
         let freight = self.own().filter(|f| f.kind.is_player_freighter())
             .map(|f| self.leg(f, home, self.hub, self.safe_load(f, home, self.hub)) * 2.0
-                * self.price(regime_fuel(f)))
+                * self.price_per_energy(f))
             .min_by(f64::total_cmp).unwrap_or(0.0);
         let escort = self.own().filter(|f| f.kind == H::Raider)
-            .map(|f| self.leg(f, home, self.hub, 0) * 2.0 * self.price(self.port_fuel(f))).next().unwrap_or(0.0);
+            .map(|f| self.leg(f, home, self.hub, 0) * 2.0 * self.price_per_energy(f)).next().unwrap_or(0.0);
         let cost = freight + escort;
         cost * 1.25
             + sim::tca::freight_fee((cost / self.price(C::Uranium).max(0.1)).ceil() as u32,
@@ -131,7 +167,7 @@ impl Observation {
                 if !run.route.stops.iter().any(|s| s.port == sim::industry::FreightPort::Hub)))
             .map(|f| {
                 let burn = self.leg(f, f.pos, self.hub, cargo_used(f));
-                (self.tank(f) - store(f) + burn).clamp(0.0, self.tank(f)) * self.price(regime_fuel(f))
+                (self.tank(f) - store(f) + burn).clamp(0.0, self.tank(f)) * self.price_per_energy(f)
             }).sum::<f64>() * 1.25
     }
 
@@ -206,6 +242,15 @@ impl Bot {
         self.wait("market".into(), p, p.hub);
     }
 
+    /// Hold `amount` for an order settled at home — a docked trader — without
+    /// holding the Hub's market slot: the two share no light round trip, and a
+    /// trader topping up a project by the unit must not starve the Hub imports
+    /// (Nov 7 2026: a bot bought one Semiconductor a visit for ten minutes
+    /// while its Uranium sat unbooked in the warehouse).
+    pub(super) fn spend_at_home(&mut self, p: &Observation, amount: f64) {
+        self.commitments.push(Commitment { amount, receiver_at: p.now + DT * 2.0 });
+    }
+
     /// Hold a route's shopping budget for one round trip of light: the
     /// freighter spends it at the Hub, later.
     pub(super) fn hold_for_route(&mut self, p: &Observation, budget: f64) {
@@ -217,7 +262,7 @@ impl Bot {
     pub(super) fn return_for_fuel(&mut self, p: &Observation, fleet: &GhostView) -> Option<Command> {
         let key = format!("fleet:{}", fleet.id);
         if !self.ready(&key, p.now) || self.returns.contains_key(&fleet.id) { return None; }
-        let affordable = self.cash(p) >= p.tank(fleet) * p.price(regime_fuel(fleet)) * 1.25;
+        let affordable = self.cash(p) >= p.tank_units(fleet) * p.price(regime_fuel(fleet)) * 1.25;
         let scout_port = (fleet.kind == H::Scout).then(|| p.sites.iter()
             .map(|s| s.system.pos).chain(affordable.then_some(p.hub))
             .filter(|pos| store(fleet) >= p.scout_leg(fleet, fleet.pos, *pos))
@@ -246,7 +291,7 @@ impl Bot {
     pub(super) fn rescue(&mut self, p: &Observation) -> Option<Command> {
         for fleet in p.own().filter(|f| f.stalled && !f.rescue_inbound && f.docked.is_none()) {
             if !self.ready("market", p.now) || !self.ready(&format!("fleet:{}", fleet.id), p.now) { continue; }
-            let quote = sim::tca::TCA_RESCUE_SERVICE_FEE + p.tank(fleet)
+            let quote = sim::tca::TCA_RESCUE_SERVICE_FEE + p.tank_units(fleet)
                 * p.price(regime_fuel(fleet)) * sim::tca::TCA_RESCUE_FUEL_PRICE_MULT * 1.25;
             if self.cash(p) >= quote + p.operating_reserve() * 0.5 {
                 self.spend(p, quote);
@@ -281,7 +326,9 @@ impl Bot {
                         K::Academy if p.local_opening && p.founding_stage == sim::FoundingStage::FirstResearch => 1,
                         K::Shipyard | K::NavalDrydock | K::CapitalSlipway | K::Garrison
                             if site.builds.iter().any(|job| job.body_id == body.id && matches!(job.what, BuildKind::Ship { .. }) && job.work_yard() == Some(kind)) => 2,
-                        K::Shipyard | K::OrdnanceFoundry if p.own().any(|f| f.damage.unwrap_or(0.0) > 0.05) => 2,
+                        // §stash: and until the den's blast victims are whole.
+                        K::Shipyard | K::OrdnanceFoundry if p.own().any(|f| f.damage.unwrap_or(0.0) > 0.05
+                            || p.den_wounded.contains(&f.id)) => 2,
                         K::Academy => 3,
                         K::VolatileHarvester | K::FuelRefinery | K::UraniumMill => 4,
                         // §fuel-overhaul: refining burns no fuel any more.

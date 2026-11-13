@@ -1,9 +1,9 @@
 // §shipyard-view (Peter, Oct 21 2026): the hulls a system's yards are building,
 // for the Shipyard panel (Deck pop-out, mobile sheet) and its 3D viewer.
-import type { ShipKind, SystemStateView } from "../../protocol";
+import type { GhostView, ShipKind, SystemStateView } from "../../protocol";
 import { HULL_YARD, isYardKind, type YardKind } from "../../shipyard-scene";
 import { progressAt, progressLine, type ProgressLine } from "./construction";
-import { shipKindLabel } from "./fleet";
+import { dockedAtSystem, shipKindLabel } from "./fleet";
 import { YARD_TITLE } from "./market";
 import { isHullJob, yardStatus } from "./worldbuild";
 
@@ -24,6 +24,36 @@ export interface YardJob {
   active: boolean;
   /** Its place among the system's served builds: later is newer. */
   order: number;
+  /** §yard-repair: a hull in for repairs: drawn whole, `progress` is the hull
+   * it has back. */
+  repair?: { fleet: string };
+}
+
+/** §yard-repair (Peter, Nov 5 2026: "the ship being repaired in the ground
+ * based shipyard ... a button to view the shipyard close up"): the world whose
+ * staffed Shipyard (or Ordnance Foundry) mends hulls docked in this system
+ * (sim `build::REPAIR_YARDS`); null without one. */
+export function repairYardBody(system: SystemStateView | undefined): number | null {
+  if (!system) return null;
+  const staffed = (body: number, key: string) => (system.assignments ?? []).some((line) => line.body_id === body && line.structure === key
+    && (line.workers > 0 || Object.values(line.specialists ?? {}).some((n) => (n ?? 0) > 0)));
+  return (system.bodies ?? []).find((body) => ["shipyard", "ordnance_foundry"]
+    .some((key) => (body.structures?.[key] ?? 0) > 0 && staffed(body.id, key)))?.id ?? null;
+}
+
+/** §yard-repair: own hulls docked in this system and mending at its yard, as
+ * yard entries after the builds. */
+export function yardRepairs(ghosts: readonly GhostView[], system: SystemStateView | undefined): YardJob[] {
+  const body = repairYardBody(system);
+  if (!system || body === null) return [];
+  const world = system.bodies.find((entry) => entry.id === body);
+  return (ghosts ?? []).filter((g) => g.own && !g.tca && dockedAtSystem(g, system.id) && (g.damage ?? 0) > 0.0005 && HULL_YARD[g.kind])
+    .map((g, index) => {
+      const hull = 1 - (g.damage ?? 0);
+      return { key: `repair:${g.id}`, kind: g.kind, yard: "shipyard" as YardKind, title: shipKindLabel(g.kind),
+        where: `Repairing${world ? ` · ${world.name}` : ""}`, progress: hull, line: null,
+        status: `${Math.round(hull * 100)}% hull`, active: true, order: system.builds.length + index, repair: { fleet: g.id } };
+    });
 }
 
 /** The system's hulls under construction or waiting, building ones first, in

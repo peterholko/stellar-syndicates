@@ -16,8 +16,10 @@ fn a_new_charter_has_only_founding_done() {
     assert_eq!(time(&reached, Step::Founded), Some(10.0));
 }
 
-/// §charter-v5: the steps before the raid, as one list.
-const BEFORE_RAID: [Step; 5] = [Step::Founded, Step::Bioharvester, Step::Habitat, Step::Agroplex, Step::Mine];
+/// §charter-v5: the steps before the raid, as one list. §charter-v6 (Nov 7
+/// 2026): the Solar Array, the mine and the Smelter; §habitat-first (Nov 8
+/// 2026): the Habitat and the Solar Array before the farms.
+const BEFORE_RAID: [Step; 7] = [Step::Founded, Step::Habitat, Step::Power, Step::Bioharvester, Step::Agroplex, Step::Mine, Step::Smelter];
 
 #[test]
 fn landfall_facts_count_only_once_their_report_has_arrived() {
@@ -45,8 +47,9 @@ fn a_later_stage_proves_the_steps_it_requires() {
     // The reports are not to hand: the Expansion stage still proves Raid and Pirates.
     let reached = reached_steps(&founding, 400.0);
     let mut expected = BEFORE_RAID.to_vec();
-    expected.extend([Step::Raid, Step::GunPlatform, Step::SellOre, Step::Power, Step::Shipyard, Step::Interceptor,
-        Step::Privateer, Step::Den, Step::Shipment]);
+    expected.extend([Step::Raid, Step::GunPlatform, Step::SellOre, Step::Shipyard,
+        Step::Interceptor, Step::Privateer, Step::Den, Step::Repair, Step::Freighter, Step::FullSpeed, Step::Loot,
+        Step::Shipment]);
     assert_eq!(steps(&reached), expected);
     assert_eq!(time(&reached, Step::Mine), Some(40.0));
     assert_eq!(time(&reached, Step::Privateer), Some(300.0));
@@ -63,13 +66,16 @@ fn a_fulfilled_charter_has_every_step_with_a_time() {
     let reached = reached_steps(&founding, 1_000.0);
     assert_eq!(steps(&reached), Step::ALL);
     assert!(reached.iter().all(|(_, at)| at.is_some()));
-    // A step is proved by the stage after it: the Shipyard (step 9) by step 10.
-    assert_eq!(time(&reached, Step::Shipyard), Some(90.0));
-    // §refining + §den-pocket + §gun-platform: the Gun Platform (step 6), the
-    // Smelter (step 15) and the prospecting pass (step 19) push the survey to
-    // 17 and the haul to 21.
-    assert_eq!(time(&reached, Step::Survey), Some(170.0));
-    assert_eq!(time(&reached, Step::Haul), Some(210.0));
+    // A step is proved by the stage after it: the Shipyard (step 10, after
+    // §smelt-from-landing's Smelter) by step 11.
+    assert_eq!(time(&reached, Step::Shipyard), Some(100.0));
+    // §refining + §den-pocket + §gun-platform + §stash + §full-speed +
+    // §signals + §smelt-from-landing + §freight-frames: the Laser Battery
+    // (step 6), the Smelter (10), the den's aftermath (14–17), the signal (20),
+    // the Small Freighter (21) and the prospecting pass (25) push the survey
+    // to 23 and the haul to 27.
+    assert_eq!(time(&reached, Step::Survey), Some(230.0));
+    assert_eq!(time(&reached, Step::Haul), Some(270.0));
 }
 
 #[test]
@@ -78,22 +84,27 @@ fn step_keys_round_trip_and_name_the_guide_checklist() {
         assert_eq!(Step::from_key(step.key()), Some(step));
     }
     assert_eq!(Step::Raid.label(), "Pirates raid the colony");
-    assert_eq!(Step::GunPlatform.label(), "Build a Gun Platform");
+    assert_eq!(Step::GunPlatform.label(), "Build a Laser Battery");
     assert_eq!(Step::GunPlatform.chapter(), "Raid");
-    assert_eq!(Step::SellOre.label(), "Sell ore to the trader");
+    assert_eq!(Step::SellOre.label(), "Sell Alloys to the trader");
     assert_eq!(Step::SellOre.chapter(), "Raid");
-    assert_eq!(Step::Power.label(), "Power the Shipyard");
-    assert_eq!(Step::Power.chapter(), "Raid");
+    // §charter-v6 (Nov 7 2026): the Solar Array at step 4, in Landfall.
+    assert_eq!(Step::Power.label(), "Build a Solar Array");
+    assert_eq!(Step::Power.chapter(), "Landfall");
+    assert_eq!(Step::Smelter.label(), "Smelt your first Alloys");
+    assert_eq!(Step::Smelter.chapter(), "Landfall");
     assert_eq!(Step::Interceptor.chapter(), "Pirates");
-    assert_eq!(Step::Shipment.label(), "Export your ore");
+    assert_eq!(Step::Shipment.label(), "Export your Alloys");
     assert_eq!(Step::Shipment.chapter(), "Expansion");
     assert_eq!(Step::Privateer.label(), "Destroy the privateer");
     assert_eq!(Step::Den.label(), "Eliminate the privateer den");
     assert_eq!(Step::Den.chapter(), "Pirates");
     assert_eq!(Step::Research.chapter(), "Expansion");
-    assert_eq!(Step::Research.label(), "Research Enrichment");
-    assert_eq!(Step::Smelter.label(), "Build a Smelter");
-    assert_eq!(Step::Smelter.chapter(), "Expansion");
+    assert_eq!(Step::Research.label(), "Research Freight Frames");
+    assert_eq!(Step::SmallFreighter.label(), "Build a Small Freighter");
+    assert_eq!(Step::SmallFreighter.chapter(), "Expansion");
+    assert_eq!(Step::Smelter.label(), "Smelt your first Alloys");
+    assert_eq!(Step::Smelter.chapter(), "Landfall");
     assert_eq!(Step::Prospect.label(), "Prospect the belt");
     assert_eq!(Step::Prospect.chapter(), "Reach");
     assert_eq!(Step::Expansion.label(), "Expand mining operations");
@@ -103,7 +114,10 @@ fn step_keys_round_trip_and_name_the_guide_checklist() {
     assert_eq!(Step::Vendetta.label(), "Defeat the privateer's uncle");
     assert_eq!((Step::Stores.label(), Step::Stores.chapter()), ("Secure your stores", "Vendetta"));
     assert_eq!(Step::ALL.len(), S::STEPS.len() + 1, "one funnel step per charter step, after founding");
-    assert_eq!(Stage::all().count(), 26);
+    assert_eq!([Step::Repair, Step::Freighter, Step::FullSpeed, Step::Loot, Step::Signal].map(|s| (s.label(), s.chapter())),
+        [("Repair the Interceptor", "Expansion"), ("Build a Tiny Freighter", "Expansion"), ("Switch to Full speed", "Expansion"),
+            ("Haul back the den's loot", "Expansion"), ("Answer a signal", "Expansion")]);
+    assert_eq!(Stage::all().count(), 32);
     assert_eq!(Step::from_key("beacon"), None, "records from earlier charters are skipped");
     assert_eq!(Step::from_key("semiconductors"), None, "and from the counterfeit charter");
 }
@@ -124,14 +138,14 @@ fn account(signed_up: i64, entered: Option<i64>, done: &[(Step, i64)]) -> Accoun
 fn the_next_step_is_the_first_one_missing_and_waits_since_the_last_progress() {
     let stuck = account(0, Some(5), &[(Step::Founded, 6), (Step::Bioharvester, 7), (Step::Habitat, 8),
         (Step::Agroplex, 9), (Step::Mine, 12), (Step::Raid, 13), (Step::GunPlatform, 14), (Step::SellOre, 16),
-        (Step::Power, 20), (Step::Shipyard, 40)]);
-    assert_eq!(stuck.next(), Some(Stage::Step(Step::Interceptor)));
+        (Step::Power, 20), (Step::Smelter, 40)]);
+    assert_eq!(stuck.next(), Some(Stage::Step(Step::Shipyard)));
     let summary = summary(&stuck, true);
-    assert_eq!(summary.next, Some("interceptor"));
-    assert_eq!(summary.next_label, Some("Build an Interceptor"));
-    assert_eq!((summary.done, summary.total), (10, 24));
+    assert_eq!(summary.next, Some("shipyard"));
+    assert_eq!(summary.next_label, Some("Build a Shipyard"));
+    assert_eq!((summary.done, summary.total), (10, 30));
     assert_eq!(summary.since, Some(at(40)));
-    assert_eq!(summary.steps.len(), 26);
+    assert_eq!(summary.steps.len(), 32);
     assert_eq!(summary.steps[0].key, "signed_up");
     assert!(summary.steps[12].at.is_none());
     assert!(summary_without_steps_is_compact(&stuck));
@@ -158,7 +172,7 @@ fn summary_without_steps_is_compact(account: &AccountTutorial) -> bool {
 fn the_funnel_counts_who_reached_each_step_and_who_stopped_before_it() {
     let lurker = account(0, None, &[]);
     let landed = |founded: i64, mine: i64| vec![(Step::Founded, founded), (Step::Bioharvester, founded),
-        (Step::Habitat, founded), (Step::Agroplex, founded), (Step::Mine, mine)];
+        (Step::Habitat, founded), (Step::Agroplex, founded), (Step::Power, founded), (Step::Mine, mine)];
     let quitter = account(0, Some(10), &landed(20, 50));
     let playing = account(0, Some(30), &landed(40, 60));
     let finished = account(0, Some(5), &Step::ALL.map(|step| (step, 100)));
@@ -169,7 +183,7 @@ fn the_funnel_counts_who_reached_each_step_and_who_stopped_before_it() {
         FunnelAccount { tutorial: &finished, active: true },
     ]);
     let row = |key: &str| funnel.iter().find(|stage| stage.key == key).unwrap();
-    assert_eq!(funnel.len(), 26);
+    assert_eq!(funnel.len(), 32);
     assert_eq!(row("signed_up").reached, 4);
     assert_eq!(row("signed_up").median_seconds, None, "nothing comes before signing up");
     assert_eq!(row("entered").reached, 3);
@@ -180,7 +194,9 @@ fn the_funnel_counts_who_reached_each_step_and_who_stopped_before_it() {
     // Agroplex → mine: 30, 20 and 0 minutes; an even count would average.
     assert_eq!(row("mine").median_seconds, Some(1200.0));
     assert_eq!(row("raid").reached, 1);
-    assert_eq!((row("raid").waiting_active, row("raid").waiting_quiet), (1, 1));
+    // §charter-v6: the two who stopped at the mine wait at the Smelter's step now.
+    assert_eq!((row("smelter").waiting_active, row("smelter").waiting_quiet), (1, 1));
+    assert_eq!((row("raid").waiting_active, row("raid").waiting_quiet), (0, 0));
     assert_eq!(row("haul").reached, 1);
     assert_eq!(funnel.iter().map(|s| s.waiting_active + s.waiting_quiet).sum::<usize>(), 3, "the finisher waits nowhere");
 }

@@ -171,7 +171,7 @@ export class DeckSignalsRoutes {
         ? `<small class="deck-signal-send__note${/Recovering/.test(r.blocked) ? " is-warn" : ""}">${esc(r.blocked)}</small>`
         : `<small class="deck-signal-send__note">${r.risk ? `<span class="is-warn">${esc(r.risk)}</span> · ` : ""}${esc(r.trip ?? "")}</small>`;
       return `<div class="deck-signal-send__row">${face}<span class="deck-signal-send__who"><b>${esc(r.title)}</b><small>${esc(r.sub)}</small></span>${note}`
-        + `<button type="button" class="is-primary" data-deck-act="signal-send" data-signal="${esc(s.id)}" data-fleet="${esc(r.fleet?.id ?? "")}" ${r.blocked || !r.fleet ? "disabled" : ""}>Send</button></div>`;
+        + `<button type="button" class="is-primary" data-deck-act="signal-send" data-coach="signal-send" data-signal="${esc(s.id)}" data-fleet="${esc(r.fleet?.id ?? "")}" ${r.blocked || !r.fleet ? "disabled" : ""}>Send</button></div>`;
     }).join("") : `<div class="deck-empty-inline">No captains yet.</div>`;
     return `<div class="deck-signals__detail">`
       + `<figure class="deck-signal-detail__art">${this.art(s.kind, true)}</figure>`

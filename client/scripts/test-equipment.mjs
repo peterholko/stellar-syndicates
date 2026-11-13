@@ -22,7 +22,7 @@ const fleets = load("core/derive/fleet.ts", { "../../state": clock, "../../proto
 const icons = { label: slug => eq.MODULES.find(m => m.kind === slug)?.name ?? slug, icon: () => "" };
 const market = load("core/derive/market.ts", { "../../state": clock, "../../protocol": protocol, "./fleet": fleets, "./equipment": eq, "../../icons": icons });
 
-assert.equal(eq.MODULES.length, 18);
+assert.equal(eq.MODULES.length, 17, "§shipbuilding-overhaul: the Jump Drive retired; Fold Cores jump");
 // §research-wiring Lance Array: the line's heavy beam, research-made.
 assert.equal(eq.moduleFitsHull("lance_array", "destroyer"), true);
 assert.equal(eq.moduleFitsHull("lance_array", "raider"), false);
@@ -42,10 +42,8 @@ assert.equal(market.fitLegal("raider", ["torpedo_rack", "stasis_web"]), false, "
 for (const kind of ["scout", "raider", "corvette", "convoy"]) assert.equal(market.fitLegal(kind, ["extended_tanks"]), true);
 for (const kind of ["freighter", "builder", "colony", "cruiser", "titan"]) assert.equal(market.fitLegal(kind, ["extended_tanks"]), false);
 // A freighter's one berth: a utility, or a Warp Stabilizer for running blockades.
-for (const m of eq.MODULES) assert.equal(market.fitLegal("convoy", [m.kind]), ["extended_tanks", "cargo_pods", "fuel_transfer_rig", "warp_stabilizer", "jump_drive"].includes(m.kind));
+for (const m of eq.MODULES) assert.equal(market.fitLegal("convoy", [m.kind]), ["extended_tanks", "cargo_pods", "fuel_transfer_rig", "warp_stabilizer"].includes(m.kind));
 // §fuel-overhaul: a Jump Drive fits any hull without built-in drives, bar the ships of the line.
-for (const kind of ["convoy", "corvette", "destroyer", "cruiser"]) assert.equal(market.fitLegal(kind, ["jump_drive"]), true, kind);
-for (const kind of ["raider", "scout", "battleship", "dreadnought", "titan"]) assert.equal(market.fitLegal(kind, ["jump_drive"]), false, kind);
 assert.equal(market.fitLegal("convoy", ["warp_stabilizer", "cargo_pods"]), false, "one berth: the stabilizer or the pods");
 assert.equal(market.fitLegal("raider", ["recon_suite", "extended_tanks"]), true);
 assert.equal(market.fitLegal("raider", ["extended_tanks", "extended_tanks"]), false);
@@ -75,8 +73,10 @@ assert.match(eq.hullUtilitySummary("corvette", ["point_defense_screen"], escortF
 const g = { id: "fleet", own: true, kind: "convoy", composition: [{ kind: "convoy", count: 1 }],
   loadouts: [], fuel: 20, fuel_capacity: 157.5, docked: "E29", vel: { x: 0, y: 0 } };
 const dock = { id: "29", owner: "me", structures: { shipyard: 1 }, bodies: [{ id: 0, structures: { shipyard: 1 } }],
-  assignments: [{ body_id: 0, structure: "shipyard", staffing: 1, skill: 1 }], modules: { extended_tanks: 1, recon_suite: 1 },
-  stockpile: [{ commodity: "alloys", units: 12 }, { commodity: "polymers", units: 8 }, { commodity: "machinery", units: 4 }] };
+  assignments: [{ body_id: 0, structure: "shipyard", staffing: 1, skill: 1 }],
+  // §modules-as-goods: the modules on hand are stockpile goods.
+  stockpile: [{ commodity: "alloys", units: 12 }, { commodity: "polymers", units: 8 }, { commodity: "machinery", units: 4 },
+    { commodity: "extended_tanks", units: 1 }, { commodity: "recon_suite", units: 1 }] };
 st.systems = [dock]; st.ghosts = [g]; st.playerId = "me";
 assert.equal(market.moduleBuildReason(dock, "extended_tanks"), "Research required");
 st.research.programmes.push({ id: eq.utilityProgramme("extended_tanks"), state: "completed" });
@@ -143,11 +143,23 @@ assert.equal(staged[0].type, "RefitShips", "uses the standard confirmation inten
 assert.equal(staged[0].to[0], "extended_tanks");
 assert.equal(g.loadouts.length, 0);
 assert.match(source("shell/mobile/surfaces.ts"), /beginFleetCommand\(\{ type: "RefitShips"/);
-for (const file of ["shell/deck/empire.ts", "shell/deck/market.ts", "shell/mobile/parity.ts", "shell/mobile/surfaces.ts"]) {
-  assert.match(source(file), /import \{ MODULES/);
+// §modules-as-goods: the build sheets list modules; the Market sells them as goods (no module shop).
+for (const file of ["shell/deck/empire.ts", "shell/mobile/parity.ts"]) {
+  assert.match(source(file), /MODULES/);
 }
-for (const path of ["ui_icons/png/64/concept-sensor-range.png", "ui_icons/resource/fuel.png"]) {
-  assert.equal(existsSync(new URL(`../public/art/${path}`, import.meta.url)), true, path);
+for (const file of ["shell/deck/market.ts", "shell/mobile/surfaces.ts"]) {
+  assert.doesNotMatch(source(file), /BuyModule|SellModule/);
+}
+// §modules-as-goods (Nov 8 2026): every module wears its own goods-v1 master,
+// in the fit picker and as a good (docs/shipbuilding-art-prompts.md).
+{
+  const art = load("icons.ts");
+  for (const m of eq.MODULES) {
+    assert.equal(art.ICONS[m.icon].png, `goods-v1/${m.kind}-128`, `${m.kind} wears its own icon`);
+    assert.match(art.commodityIcon(m.kind), new RegExp(`/goods-v1/${m.kind}-64\\.png`));
+    assert.equal(existsSync(new URL(`../public/art/ui_icons/resource/goods-v1/${m.kind}-128.png`, import.meta.url)), true, m.kind);
+  }
+  assert.equal(new Set(eq.MODULES.map(m => m.icon)).size, eq.MODULES.length, "no two modules share an icon");
 }
 assert.equal(market.fitLegal("convoy", ["cargo_pods", "extended_tanks"]), false);
 assert.equal(market.fitLegal("convoy", ["cargo_pods", "cargo_pods"]), false);
@@ -156,7 +168,8 @@ for (const hull of ["scout", "raider", "corvette", "freighter", "builder", "colo
 }
 assert.equal(eq.utilityProgramme("cargo_pods"), "hull_cargo_pods");
 const podded = { ...g, loadouts: [{ kind: "convoy", n: 1, modules: ["cargo_pods"] }],
-  cargo_manifest: [{ commodity: "alloys", units: 100 }, { commodity: "polymers", units: 301 }] };
+  // §hold-room: ore and silicates fill a whole room unit each: 401 room.
+  cargo_manifest: [{ commodity: "metallic_ore", units: 100 }, { commodity: "silicates", units: 301 }] };
 assert.equal(fleets.fleetCargoCapacity(g), 400);
 assert.equal(fleets.fleetCargoCapacity(podded), 800);
 assert.equal(fleets.fleetFuelCapacity(podded), fleets.fleetFuelCapacity(g));
@@ -179,14 +192,14 @@ assert.equal(eq.moduleFitsHull("fuel_transfer_rig", "combat_freighter"), false);
 assert.equal(eq.moduleFitsHull("torpedo_rack", "combat_freighter"), false, "a berth, not a hardpoint");
 assert.equal(market.refitCargoBlocked(podded, "convoy", ["cargo_pods"], [], 1), true);
 assert.equal(market.refitCargoBlocked(podded, "convoy", ["cargo_pods"], ["extended_tanks"], 1), true);
-const atLimit = { ...podded, cargo_manifest: [{ commodity: "alloys", units: 400 }] };
+const atLimit = { ...podded, cargo_manifest: [{ commodity: "metallic_ore", units: 400 }] };
 assert.equal(market.refitCargoBlocked(atLimit, "convoy", ["cargo_pods"], [], 1), false);
 const partial = { ...mixed, loadouts: [{ kind: "convoy", n: 2, modules: ["cargo_pods"] }],
-  cargo_manifest: [{ commodity: "alloys", units: 1201 }] };
+  cargo_manifest: [{ commodity: "metallic_ore", units: 1201 }] };
 assert.equal(market.maxCargoRefitCount(partial, "convoy", ["cargo_pods"], [], 2), 1);
 assert.match(market.refitPreview(g, "convoy", [], ["cargo_pods"], 1), /Cargo 400 → 800/);
 assert.match(market.refitPreview(podded, "convoy", ["cargo_pods"], [], 1), /Unload cargo before removing pods/);
-dock.modules.cargo_pods = 2;
+dock.stockpile.push({ commodity: "cargo_pods", units: 2 }); // §modules-as-goods
 const cargoChoice = market.utilityRefitChoices(g, dock).find(c => c.module === "cargo_pods");
 assert.ok(cargoChoice && !cargoChoice.blocked, "a recovered crate is usable without research");
 assert.equal(market.utilityRefitChoices(podded, dock).find(c => c.module === "cargo_pods").blocked, true);
@@ -211,9 +224,25 @@ for (const [index, capacity] of [50, 150, 400, 1000, 2500, 6000].entries()) {
   assert.equal(market.fitLegal(kind, ["fuel_transfer_rig"]), true);
   assert.equal(market.fitLegal(kind, ["mass_driver"]), false);
   const loaded = { ...hull, loadouts: [{ kind, n: 1, modules: ["cargo_pods"] }],
-    cargo_manifest: [{ commodity: "alloys", units: capacity + 1 }] };
+    cargo_manifest: [{ commodity: "metallic_ore", units: capacity + 1 }] }; // §hold-room: a room unit each
   assert.equal(fleets.fleetCargoCapacity(loaded), capacity * 2);
   assert.equal(market.refitCargoBlocked(loaded, kind, ["cargo_pods"], [], 1), true);
+}
+// §hold-room (Nov 10 2026): the client mirrors Commodity::room_quarters, by
+// the counts the sim pins (cargo.rs hold_room_by_class), and reads room in
+// quarter glyphs.
+{
+  const all = market.COMMODITIES, count = q => all.filter(c => fleets.commodityRoom(c) === q).length;
+  assert.equal(all.length, 82);
+  assert.deepEqual([count(4), count(2), count(1), count(40)], [14, 17, 42, 9]);
+  assert.deepEqual(["metallic_ore", "alloys", "deuterium", "electronics", "heavy_fission_reactor", "heavy_hull_sections", "torpedoes", "mass_driver",
+    "capital_fission_reactor", "capital_zephyr_drive", "capital_hull_sections"]
+    .map(fleets.commodityRoom), [4, 2, 2, 1, 1, 2, 1, 1, 40, 40, 40], "capital parts take ten room units");
+  assert.deepEqual([0, 2, 167, 200, 4_003].map(fleets.fmtRoom), ["0", "0.5", "41.75", "50", "1,000.75"], "decimals, not fractions");
+  const tiny = { ...g, kind: "tiny_freighter", composition: [{ kind: "tiny_freighter", count: 1 }], loadouts: [],
+    cargo_manifest: [{ commodity: "alloys", units: 99 }] };
+  assert.deepEqual([fleets.fleetHoldUsed(tiny), fleets.tradeRoomFits(tiny, "alloys"), fleets.tradeRoomFits(tiny, "metallic_ore"),
+    fleets.tradeRoomFits(tiny, "electronics")], [198, 1, 0, 2], "half a room unit left: one Alloy, no ore, two Semiconductors");
 }
 const mixedSizes = { ...g, kind: "raider", loadouts: [],
   composition: [{ kind: "raider", count: 1 }, ...protocol.PLAYER_FREIGHTERS.map(kind => ({ kind, count: 1 }))] };
@@ -223,7 +252,7 @@ assert.equal(protocol.isPlayerFreighter("freighter"), false, "Authority freight 
 
 const pdCorvette = { ...g, kind: "corvette", composition: [{ kind: "corvette", count: 1 }],
   loadouts: [{ kind: "corvette", modules: ["point_defense_screen"], n: 1 }] };
-dock.modules.escort_datalink = 1;
+dock.stockpile.push({ commodity: "escort_datalink", units: 1 }); // §modules-as-goods
 st.ghosts.push(pdCorvette);
 const linkChoice = market.utilityRefitChoices(pdCorvette, dock).find(c => c.module === "escort_datalink");
 assert.ok(linkChoice && !linkChoice.blocked, "existing PD can receive a physical link at a staffed yard");
@@ -236,11 +265,9 @@ assert.equal(staged.at(-1).type, "RefitShips");
 assert.equal(staged.at(-1).to.join("+"), escortFit.join("+"));
 assert.equal(pdCorvette.loadouts[0].modules.length, 1, "confirmation does not mutate served equipment");
 assert.equal(eq.sensorMultiplier({ ...pdCorvette, loadouts: [{ kind: "corvette", modules: escortFit, n: 1 }] }), eq.sensorMultiplier(pdCorvette));
-assert.equal(existsSync(new URL("../public/art/ui_icons/panel/action-escort.png", import.meta.url)), true);
 const sent = staged.length;
 const removalRow = { ...cargoRow, dataset: { ship: "convoy", from: "cargo_pods" },
   querySelector: selector => selector === "[data-refit-target]" ? { value: "" } : { max: "1", value: "1" } };
 panel.refit({ closest: () => removalRow }, podded);
 assert.equal(staged.length, sent, "a changed manifest is rechecked before staging removal");
-assert.equal(existsSync(new URL("../public/art/ui_icons/panel/concept-manifest.png", import.meta.url)), true);
 console.log("Equipment: fitting limits, workforce/research/stock, per-hull cargo/fuel, safe partial refits, delayed reports and confirmation controls passed.");

@@ -49,7 +49,7 @@ impl TacticalState {
     /// recording checkpoint (and before `place_world`, which groups them with
     /// any platforms). Only v15 battles field stations.
     pub fn add_station(&mut self, side: u8, mounts: &[MountSpec]) {
-        if mounts.is_empty() || !matches!(self.rules, Rules::V15 { .. } | Rules::V16 { .. }) {
+        if mounts.is_empty() || !matches!(self.rules, Rules::V15 { .. } | Rules::V16 { .. } | Rules::V17 { .. }) {
             return;
         }
         assert_eq!(self.step, 0);

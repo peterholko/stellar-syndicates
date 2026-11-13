@@ -1,0 +1,66 @@
+{
+  "name": "hulls-04",
+  "mode": "built-in image_gen",
+  "source_brief": "docs/research-emblem-sheets.md",
+  "prompt": "Use case: stylized-concept. Asset type: a sheet of four transparent research emblems for Stellar Syndicates, a premium dark sci-fi strategy game. They join an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw FOUR new emblems. Do not copy any of Image 1's six motifs, and ignore Image 1's grey backdrop.\nField: Hulls. Colour, all four badges: cool steel grey and silver; the only colour is a faint cyan engine glow where a ship has engines. Everything else stays in the family's navy, charcoal and silver.\nLayout: square 1024 x 1024 canvas, two columns and two rows. Four identical hexagon badges, each about 450 px tall, centred in its own 512 x 512 cell, with clear empty space between badges and around the sheet. Badges never touch or overlap.\nBadge (every one the same): a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. Each motif sits inside its rim, centred, about 70% of the face's width. Nothing crosses a rim.\nMotifs, reading left to right, top row then bottom row:\n1. Top left: A boarding tube clamped onto a freighter's side hatch.\n2. Top right: The Battleship from Image 2.\n3. Bottom left: The Dreadnought from Image 3.\n4. Bottom right: The Titan from Image 4, filling the badge: the largest ship in the family.\nImage 2 is the game's own render of the Battleship: use it ONLY for that design's silhouette and details, drawn once, in an elevated three-quarter view, as motif 2, in Image 1's emblem rendering. Ignore its own lighting and background.\nImage 3 is the game's own render of the Dreadnought: use it ONLY for that design's silhouette and details, drawn once, in an elevated three-quarter view, as motif 3, in Image 1's emblem rendering. Ignore its own lighting and background.\nImage 4 is the game's own render of the Titan: use it ONLY for that design's silhouette and details, drawn once, in an elevated three-quarter view, as motif 4, in Image 1's emblem rendering. Ignore its own lighting and background.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. Each motif is one clear subject that still reads at 48 px: a few large forms, restrained small detail. The four must look clearly different from each other at a glance: vary silhouette, scale and composition, never the same object twice.\nBackground: genuinely transparent PNG with real alpha everywhere outside the hexagons. No drop shadow, outer glow, grey backdrop, panel, vignette, cell borders or grid lines.\nConstraints: exactly four badges. No text, letters, numbers, Roman numerals, captions, labels, logos, watermark, frames or UI.",
+  "keys": [
+    "hull_corsair_v_boarding_parties",
+    "hull_line_vi_battleship",
+    "hull_line_vii_dreadnought",
+    "hull_line_viii_titan"
+  ],
+  "references": [
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png",
+      "sha256": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+    },
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/battleship-768.webp",
+      "sha256": "e90a46c1b7a39cde8c6d21a28cb36f6d7640353c7d5a21f75116418978f13524"
+    },
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/dreadnought-768.webp",
+      "sha256": "1031b176d91d9e4806032638f4ee573b621d4c311dbcf9a51796056469d91890"
+    },
+    {
+      "path": "/Users/peter/projects/stellar-syndicates/client/public/art/derived/ships/models-v1/previews/titan-768.webp",
+      "sha256": "6cbeda311d8bced85ca4e93963c9b9059e2bc490f652b32cd09746c5b1ddc14d"
+    }
+  ],
+  "transparent_background": true,
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-e3cf10f7-7434-42ba-82ee-989fb237dfb7.png",
+  "edits": [],
+  "verification": {
+    "width": 1254,
+    "height": 1254,
+    "hasAlpha": true,
+    "badges": [
+      {
+        "left": 71,
+        "top": 43,
+        "width": 489,
+        "height": 566
+      },
+      {
+        "left": 694,
+        "top": 43,
+        "width": 489,
+        "height": 566
+      },
+      {
+        "left": 71,
+        "top": 646,
+        "width": 489,
+        "height": 566
+      },
+      {
+        "left": 694,
+        "top": 646,
+        "width": 489,
+        "height": 566
+      }
+    ],
+    "sha256": "599363c8dc940f6e04aad42739a7252c2bce8802d700af298705d7e8e9351665",
+    "nativeBytesPreserved": true
+  }
+}

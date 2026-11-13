@@ -1,0 +1,50 @@
+{
+  "id": "weap_cm_iii_ionospheric_veil",
+  "mode": "built-in image_gen",
+  "prompt": "Use case: stylized-concept. Asset type: one transparent research emblem for Stellar Syndicates, a premium dark sci-fi strategy game. It joins an existing emblem family: Image 1 is the approved sheet of six research field emblems, attached ONLY for the badge shape, rim, face, rendering, lighting and finish. Draw ONE new emblem. Do not copy any of the six motifs.\nEmblem: Ionospheric Veil, a Weapons research programme.\nMotif: A curved planet horizon across the lower face with one slender ground emitter mast on it; a shimmering aurora curtain hangs across the sky above; one small falling shell breaks apart in the curtain with a red flash.\nBadge: exactly Image 1's badge: a hexagon with one point at the top, one at the bottom and flat vertical sides; a deep navy-black face, slightly lighter toward its centre; a thin dark charcoal rim with a faint bevelled highlight along its upper-left edges. The motif sits inside the rim, centred, about 70% of the face's width. Nothing crosses the rim.\nColour: silver metal with a signal-red accent and a small orange-yellow flash; the aurora curtain alone is a pale green-cyan glow (#7DF9C6). Everything else stays in the family's navy, charcoal and silver.\nFraming: square 1:1 canvas, 1254 x 1254 pixels. The hexagon is centred: its top and bottom points about 6% from the canvas edges (88% of the canvas height), its flat sides about 80% of the canvas width apart.\nStyle: Image 1's crisp, painterly game-emblem rendering: bold simple shapes, clean edges, soft light from the upper left, glow only where the colour line asks for it. One clear motif that still reads at 48 px: a few large forms, restrained small detail.\nBackground: genuinely transparent PNG with real alpha outside the hexagon. No drop shadow, outer glow, grey backdrop or vignette around the badge.\nConstraints: exactly one badge. No text, letters, numbers, Roman numerals, labels, logos, watermark, second badge, frame or UI.",
+  "referenced_image_paths": [
+    "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png"
+  ],
+  "reference_sha256": {
+    "/Users/peter/projects/stellar-syndicates/client/art-src/research-topics-icons/research-topics-icons.png": "aec0dc3619a571864bcf27f8905fcc5923c5d660ff379eb994db86f51bf594f5"
+  },
+  "transparent_background": true,
+  "initial_generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8e99de4a-5bfb-4fdf-832e-d993e95d8332.png",
+  "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-066ec28a-a73c-4700-bf07-5030adce43ca.png",
+  "file": "weap_cm_iii_ionospheric_veil.png",
+  "source_brief": "docs/veil-art-prompt.md",
+  "verification": {
+    "size": [
+      1254,
+      1254
+    ],
+    "mode": "RGBA",
+    "fullyTransparentPixels": 778315,
+    "partiallyTransparentPixels": 792959,
+    "solidBounds": {
+      "left": 147,
+      "top": 76,
+      "right": 1104,
+      "bottom": 1167
+    },
+    "solidWidthFraction": 0.7639553429027113,
+    "lowestSolidFraction": 0.9314194577352473,
+    "sha256": "41d1440be2df072cd82766269563ade5ca99376a672b922e7704983e0ac5450a",
+    "nativeBytesPreserved": true,
+    "visualCheck": {
+      "auroraGreenCyan": true,
+      "redOnlyOnImpactObject": true,
+      "oneBadge": true,
+      "noText": true
+    }
+  },
+  "edits": [
+    {
+      "prompt": "Use case: precise-object-edit. Edit Image 1, the Ionospheric Veil research emblem. Change ONLY the two red illuminated details on the slender ground emitter mast to neutral SILVER-WHITE metal highlights, with no coloured glow. Keep the red/orange impact flash and red trail on the breaking shell exactly as they are: red belongs exclusively to the object breaking up in the curtain. Preserve the green-cyan (#7DF9C6) aurora curtain, curved silver-blue planet horizon, silver mast silhouette, breaking shell and fragments, dark navy face, hexagonal badge shape, thin bevelled rim, composition, lighting and finish unchanged. Output the same 1254 x 1254 square transparent PNG, with genuine zero-alpha outside the badge. No new objects, no text, no outer glow or shadow.",
+      "referenced_image_paths": [
+        "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-8e99de4a-5bfb-4fdf-832e-d993e95d8332.png"
+      ],
+      "generated_source": "/Users/peter/.codex/generated_images/01a19fd9-3d7d-7210-985a-1077cbc898a3/exec-066ec28a-a73c-4700-bf07-5030adce43ca.png"
+    }
+  ]
+}

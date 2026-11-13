@@ -38,6 +38,7 @@ mod v13;
 mod v14;
 mod v15;
 mod v16;
+mod v17;
 #[cfg(test)]
 mod fingerprint;
 
@@ -52,7 +53,7 @@ pub use v12::{guns, LINE_REACH, REFLECT_BLUNT, WHIPPLE_BLUNT};
 pub use v13::{fortune, tracks_poorly, CAPITAL_TRACKING, FORTUNE, TACKLER_TRACKING, TRACKING_MASS};
 pub use v14::{WorldBody, WORLD_OFFSET, WORLD_RADIUS};
 pub use v15::{Mount, NETFIRE_RADIUS, SIEGE_BONUS};
-pub use v16::{project_distribution, project_distribution_at_world, project_distribution_with_missions, simulate_engagement};
+pub use v17::{project_distribution, project_distribution_at_world, project_distribution_with_missions, simulate_engagement};
 
 /// Captured once at battle open. Missing in pre-v2 saves means v1, including
 /// an already-running fight; loading a save must never rebalance its replay.
@@ -97,13 +98,17 @@ enum Rules {
     /// Every sin, cos, atan2 and powf in software (`Math::Soft`); v15
     /// otherwise.
     V16 { maneuver_seed: u64 },
+    /// Player fleets fight from their magazines: torpedoes and slugs run out
+    /// (a dry rack falls back to the kit beams), beam crystals wear; v16
+    /// otherwise.
+    V17 { maneuver_seed: u64 },
 }
 
 impl Rules {
     fn is_v1(&self) -> bool { *self == Self::V1 }
 
     fn math(self) -> Math {
-        if matches!(self, Rules::V16 { .. }) { Math::Soft } else { Math::Platform }
+        if matches!(self, Rules::V16 { .. } | Rules::V17 { .. }) { Math::Soft } else { Math::Platform }
     }
 }
 
@@ -205,6 +210,7 @@ impl TacticalState {
             Rules::V14 { .. } => 14,
             Rules::V15 { .. } => 15,
             Rules::V16 { .. } => 16,
+            Rules::V17 { .. } => 17,
         }
     }
 
@@ -224,9 +230,11 @@ mod tests {
             assert_eq!(super::rules_v1::hull_mass(kind), kind.hull_mass());
             assert_eq!(super::rules_v1::max_speed(kind), kind.max_speed());
             assert_eq!(super::v12::attack_weight(kind), kind.attack_weight());
+            // The warship ladder. §research-locked (Nov 11 2026): the
+            // Corvette's research gate is a build gate, not a rung; v1 is frozen.
             assert_eq!(
                 super::rules_v1::featured(kind),
-                kind.is_combatant() && crate::ship::requires_hull_unlock(kind)
+                kind.is_combatant() && crate::ship::requires_hull_unlock(kind) && kind != crate::ship::ShipKind::Corvette
             );
             for family in [
                 crate::module::Family::Beam,

@@ -5,10 +5,11 @@ import { fleetCargoManifest } from "../protocol";
 import { foundingHomeSystemId } from "../core/derive/geo";
 import { FOUNDING_STEP } from "../core/derive/founding";
 import { commodityIcon, icon, ICONS, label, type IconKey } from "../icons";
-import { COMMODITIES, MINERAL_DEPOSITS } from "../core/derive/market";
-import { fleetFuelCapacity, fleetTradeCapacity, guardCapable, PROSPECT_SECS, shipKindLabel, transitLabel } from "../core/derive/fleet";
+import { knownCommodities, MINERAL_DEPOSITS } from "../core/derive/market";
+import { GOODS_TAB_LABEL, goodsTab, goodsTabsOf, isGoodsTab, pickGoodsTab, type GoodsTab } from "../core/derive/goods";
+import { basketRoom, commodityRoom, fleetFuelCapacity, fleetTradeCapacity, fmtRoom, guardCapable, HOLD_ROOM_TIP, PROSPECT_SECS, ROOM_SCALE, roomFits, shipKindLabel, transitLabel } from "../core/derive/fleet";
 import { availableStock, colonyProjectReason, firstShipmentRoute, freightRouteReason, hubQuote, openingImportPlan, productionPlan, projectName,
-  routeAboard, routeCruiseSpeed, routeHubEstimate, routeLegSeconds, routePortId, routePortPosition, type OpeningInvestment } from "../core/derive/industry";
+  routeAboardFrom, routeCruiseSpeed, routeHubEstimate, routeLegSeconds, routePortId, routePortPosition, routeResume, type OpeningInvestment } from "../core/derive/industry";
 import { planetArtUrl, planetArtwork, type PlanetArtKind } from "../planetart";
 import { HUB_MODEL } from "../hub-model.generated";
 import type { FleetCommand } from "../core/fleetorders";
@@ -45,6 +46,10 @@ type Ui = { owner: string | null; tab: string; fleet: string; system: string; ro
   outpostSystem: string; outpostBody: number; outpostKind: OutpostKind; builder: string; skimSystem: string; skimFleet: string; feedback: string;
   /** §logistics: the route editor is open over the selected Freighter's plan or status. */
   editing: boolean; advanced: boolean; picker: { stop: number; side: Side } | null;
+  /** §route-picker: the picker's goods list is open, on this tab. */
+  goodsOpen: boolean; goodsTab: GoodsTab;
+  /** §route-edit: the editor holds an edit of the run under way ("Edit route"). */
+  revising: boolean;
   /** A staged route order: once its pending report is seen and then clears, the editor closes. */
   sent: { fleet: string; seen: boolean } | null;
   /** The first shipment's return basket once the player changes it, and its Hub spending cap. */
@@ -58,7 +63,7 @@ function ui(st: ViewState): Ui {
     v = { owner: st.playerId, tab: "routes", fleet: "", system: "", route: supplyDraft(st),
       good: "metallic_ore", qty: 25, output: "alloys", rate: 10, project: "agricultural_export", body: 0, resource: "metallic_ore",
       outpostSystem: "", outpostBody: 0, outpostKind: "extraction", builder: "", skimSystem: "", skimFleet: "", feedback: "",
-      editing: false, advanced: false, picker: null, sent: null, basket: null, cap: 3000,
+      editing: false, advanced: false, picker: null, goodsOpen: false, goodsTab: "resources", revising: false, sent: null, basket: null, cap: 3000,
       depotSystem: "", depotFuel: "deuterium", depotTarget: 50 };
     const home = st.systems.find(s => s.owner === st.playerId);
     if (home) v.system = home.id;
@@ -84,7 +89,7 @@ export const showStandingIndustry = (st: ViewState): void => { ui(st).tab = "sta
 /** Open the Routes tab on one Freighter: its trip, plan or editor. */
 export function focusIndustryFleet(st: ViewState, id: string): void {
   const v = ui(st);
-  Object.assign(v, { tab: "routes", fleet: id, editing: false, picker: null });
+  Object.assign(v, { tab: "routes", fleet: id, editing: false, picker: null, revising: false });
 }
 export const industryStandingVisible = (st: ViewState): boolean => ui(st).tab === "standing";
 const sysName = (st: ViewState, id: string) => st.galaxy?.systems.find(s => s.id === id)?.name ?? id;
@@ -118,7 +123,7 @@ function homeSystem(st: ViewState): SystemStateView | undefined {
   return st.systems.find(s => s.owner === st.playerId && s.id === foundingHomeSystemId()) ?? st.systems.find(s => s.owner === st.playerId);
 }
 /** The charter export, until its departure is reported. §charter-v5: step 12,
- * "Export your ore", after the den (the other stages are retired). */
+ * "Export your Alloys", after the den (the other stages are retired). */
 const SHIPMENT_STAGES = ["build_freighter", "build_convoy", "local_recovery", "prepare_export", "export_production"];
 const firstShipmentPending = (st: ViewState) => {
   const f = st.founding;
@@ -188,7 +193,7 @@ function routesHtml(st: ViewState, v: Ui): string {
   if (v.sent && fleet && v.sent.fleet === fleet.id) {
     const pending = routeOrderPending(st, fleet.id);
     if (pending) v.sent.seen = true;
-    else if (v.sent.seen) { v.sent = null; v.editing = false; v.picker = null; }
+    else if (v.sent.seen) { v.sent = null; v.editing = false; v.picker = null; v.revising = false; }
   }
   const main = !fleet ? `<div class="lx-empty"><b>No Freighter yet</b><p>Build a Freighter at a Shipyard to run cargo routes.</p></div>`
     : v.editing || (!run && !opening) ? editorHtml(st, v, fleet, names, !v.editing)
@@ -260,7 +265,8 @@ function planHtml(st: ViewState, v: Ui, fleet: GhostView, home: SystemStateView,
   const basket = v.basket ?? plan.manifest;
   const escort = defaultEscort(st, fleet);
   const route = firstShipmentRoute(home, fleet, escort?.id ?? null, basket, v.cap);
-  const hold = fleetTradeCapacity(fleet), held = total(basket);
+  // §hold-room: the basket against the hold, in quarters of a room unit.
+  const hold = fleetTradeCapacity(fleet) * ROOM_SCALE, held = basketRoom(basket);
   const legs = routeLegSeconds(st, fleet, route), trip = legs.every(s => s != null) ? legs.reduce((a, b) => a! + b!, 0)! : null;
   const money = routeHubEstimate(st, route);
   const reason = freightRouteReason(st, fleet, route);
@@ -268,34 +274,35 @@ function planHtml(st: ViewState, v: Ui, fleet: GhostView, home: SystemStateView,
   const kit = label(plan.key), need = total(plan.deficit);
   const covered = listed(plan.deficit).reduce((n, [c, d]) => n + Math.min(d, basket[c] ?? 0), 0);
   const short = listed(plan.deficit).map(([c, d]) => [c, d - Math.min(d, basket[c] ?? 0)] as [Commodity, number]).filter(([,n]) => n > 0);
-  const ore = route.stops[0].load.metallic_ore ?? 0, oreHere = Math.floor(availableStock(home, "metallic_ore"));
+  // §charter-v6 (Nov 7 2026): the first cargo is the Smelter's Alloys.
+  const ore = route.stops[0].load.alloys ?? 0, oreHere = Math.floor(availableStock(home, "alloys"));
   const rows = [...new Set<Commodity>([...listed(plan.deficit).map(([c]) => c), ...listed(basket).map(([c]) => c), "uranium"])];
   const basketRows = rows.map(c => {
     const n = basket[c] ?? 0, price = hubQuote(st, c, n, "buy");
     return `<div class="lx-good">${commodityIcon(c)}<span>${esc(label(c))}${plan.deficit[c] ? ` <small>need ${plan.deficit[c]}</small>` : ""}</span><small>${price != null && n > 0 ? `≈ ${cr(price)}` : ""}</small>`
       + `<span class="lx-stepper"><button type="button" ${act("basket", `data-good="${c}" data-step="-1"`)} aria-label="One less ${esc(label(c))}" ${n <= 0 ? "disabled" : ""}>−</button><b>${n}</b>`
-      + `<button type="button" ${act("basket", `data-good="${c}" data-step="1"`)} aria-label="One more ${esc(label(c))}" ${held >= hold ? "disabled" : ""}>+</button></span></div>`;
+      + `<button type="button" ${act("basket", `data-good="${c}" data-step="1"`)} aria-label="One more ${esc(label(c))}" ${held + commodityRoom(c) > hold ? "disabled" : ""}>+</button></span></div>`;
   }).join("");
   const shortText = short.map(([c, n]) => `${n} ${label(c)}`).join(", "), shortUnits = short.reduce((a, [,n]) => a + n, 0);
   const coverage = !need ? `${esc(sysName(st, home.id))} already holds the ${esc(kit)} materials.`
     : !short.length ? `Covers all ${need} ${esc(kit)} goods you lack.`
-    : `Covers <b>${covered}</b> of the ${need} ${esc(kit)} goods you lack. ${held < hold ? `Room for ${hold - held} more: add the last ${shortUnits} (${esc(shortText)}).`
+    : `Covers <b>${covered}</b> of the ${need} ${esc(kit)} goods you lack. ${held < hold ? `Room for ${fmtRoom(hold - held)} more: add the last ${shortUnits} (${esc(shortText)}).`
       : `The last ${shortUnits} (${esc(shortText)}) don't fit; buy them at the Market and book Authority freight home. <button type="button" class="lx-link" data-deck-act="logistics-market" data-mobile-act="hub-market">Open Market</button>`}`;
   const overCap = money != null && money.bought > v.cap;
   const net = money ? money.sold - money.bought : 0;
-  const notes: Record<number, string> = oreHere < ore ? { 0: `<p class="lx-stop__note is-warn">Waits for ${ore} ore · ${oreHere} in stock</p>` } : {};
+  const notes: Record<number, string> = oreHere < ore ? { 0: `<p class="lx-stop__note is-warn">Waits for ${ore} Alloys · ${oreHere} in stock</p>` } : {};
   const escortName = escort ? names.get(escort.id) ?? shipKindLabel(escort.kind) : "";
   const fleetDock = dockName(st, fleet);
-  return `<div class="lx-lead"><div><span class="lx-label">${esc(charterStep(st))}</span><h3>${st.founding?.stage === "defeat_privateer" ? "Send the escorted export" : "Send your first shipment"}</h3><p>Sell ore at the Market Hub and bring ${esc(kit)} materials home.</p></div><span class="lx-chip is-accent">${escort ? "Escorted" : "Unescorted"} · one trip</span></div>`
+  return `<div class="lx-lead"><div><span class="lx-label">${esc(charterStep(st))}</span><h3>${st.founding?.stage === "defeat_privateer" ? "Send the escorted export" : "Send your first shipment"}</h3><p>Sell Alloys at the Market Hub and bring ${esc(kit)} materials home.</p></div><span class="lx-chip is-accent">${escort ? "Escorted" : "Unescorted"} · one trip</span></div>`
     + itineraryHtml(st, route, legs, null, notes)
-    + `<div class="lx-split"><section class="lx-box" aria-label="Return basket"><h4>Return basket <small>${held} / ${hold} hold</small></h4><div class="lx-goods">${basketRows}</div>`
-    + `<div class="lx-meter${held >= hold ? " is-full" : ""}"><span><span>Hold</span><span>${held} / ${hold}</span></span><i><b style="width:${Math.min(100, held / Math.max(1, hold) * 100).toFixed(0)}%"></b></i></div>`
+    + `<div class="lx-split"><section class="lx-box" aria-label="Return basket"><h4>Return basket <small title="${HOLD_ROOM_TIP}">${fmtRoom(held)} / ${fmtRoom(hold)} hold</small></h4><div class="lx-goods">${basketRows}</div>`
+    + `<div class="lx-meter${held >= hold ? " is-full" : ""}"><span><span>Hold</span><span>${fmtRoom(held)} / ${fmtRoom(hold)}</span></span><i><b style="width:${Math.min(100, held / Math.max(1, hold) * 100).toFixed(0)}%"></b></i></div>`
     + `<p class="lx-note">${coverage}</p></section>`
     + `<section class="lx-box" aria-label="Trip"><h4>Trip</h4><dl class="lx-facts">`
     + `<dt>Freighter</dt><dd>${hullIcon(fleet)}<span>${esc(names.get(fleet.id) ?? shipKindLabel(fleet.kind))}${fleetDock ? ` · ${esc(fleetDock)}` : ""}</span></dd>`
     + `<dt>Escort</dt><dd>${escort ? `${hullIcon(escort)}<span>${esc(escortName)}</span><span class="lx-chip">guards it</span>` : st.founding?.stage === "defeat_privateer" ? `<span class="is-warn">No Interceptor ready. Pirates turn unescorted Freighters back.</span>` : `<span>None</span>`}</dd>`
     + `<dt>Spending cap</dt><dd><input type="number" min="0" max="1000000000" step="100" value="${v.cap}" aria-label="Spending cap in credits" ${field("plan-cap")}><small>Skips what it can't afford.</small></dd></dl>`
-    + (money ? `<div class="lx-money" aria-label="Expected money"><span>Ore sale</span><span class="is-good">+${cr(money.sold)}</span><span>Basket</span><span class="is-warn">−${cr(money.bought)}</span>`
+    + (money ? `<div class="lx-money" aria-label="Expected money"><span>${esc(saleLabel(route))}</span><span class="is-good">+${cr(money.sold)}</span><span>Basket</span><span class="is-warn">−${cr(money.bought)}</span>`
       + `<span class="lx-money__net">Net</span><span class="lx-money__net ${net >= 0 ? "is-good" : "is-warn"}">${net >= 0 ? "+" : "−"}${cr(Math.abs(net))}</span></div>` : `<p class="lx-note">Prices arrive with the next Hub report.</p>`)
     + `<p class="lx-note">You can log off once it departs. Sales show up when their report arrives.</p></section></div>`
     + `<footer class="lx-actions"><button type="button" ${act("customize")}>Customize route</button><span class="lx-actions__note">${reason ? `<span class="is-warn">${esc(reason)}</span>`
@@ -346,25 +353,91 @@ function statusHtml(st: ViewState, fleet: GhostView, run: Extract<NonNullable<Gh
     + `</footer>`;
 }
 
-function goodsOptions(st: ViewState, stop: RouteStop, current: Commodity): string {
-  const system = stop.port.kind === "system" ? st.systems.find(s => stop.port.kind === "system" && s.id === stop.port.id) : undefined;
-  // §belts: a station stop lists what its hold carries.
-  const station = stop.port.kind === "station" ? st.ghosts.find(g => stop.port.kind === "station" && g.id === stop.port.id) : undefined;
-  const held = station ? fleetCargoManifest(station) : [];
-  const here = (c: Commodity) => station ? held.find(h => h.commodity === c)?.units ?? 0 : system ? Math.floor(availableStock(system, c)) : 0;
-  const price = (c: Commodity) => st.market?.prices.find(p => p.commodity === c)?.price;
-  return [...COMMODITIES].sort((a, b) => Number(here(b) > 0) - Number(here(a) > 0)).map(c => {
-    const hint = system ? (here(c) > 0 ? ` · ${here(c)} here` : "") : price(c) != null ? ` · ${Math.round(price(c)!)} cr` : "";
-    return option(c, `${label(c)}${hint}`, current);
-  }).join("");
+/** What a stop's port holds of `c`: a world's free stock, or (§belts) a
+ * station's hold; nothing at the Hub. */
+function stockAt(st: ViewState, stop: RouteStop, c: Commodity): number {
+  if (stop.port.kind === "station") {
+    const id = stop.port.id;
+    const station = st.ghosts.find(g => g.id === id);
+    return station ? fleetCargoManifest(station).find(h => h.commodity === c)?.units ?? 0 : 0;
+  }
+  if (stop.port.kind === "system") {
+    const id = stop.port.id;
+    const system = st.systems.find(s => s.id === id);
+    return system ? Math.floor(availableStock(system, c)) : 0;
+  }
+  return 0;
+}
+
+/** §route-picker (Peter, Nov 11 2026: "the drop down should just be for the
+ * item and not include the price, calculate the price after the player has
+ * picked the item"; then "can we have the dropdown styled in the stellar
+ * syndicate game style instead of a native html dropdown?"): the picked good
+ * as a button; open, the goods research has opened as icon rows under
+ * Resources · Parts · Modules, the ones this port holds first. Names only, so
+ * a report never changes the list under you; it opens in place, so a
+ * scrolling stop column never clips it. */
+function goodsPicker(st: ViewState, v: Ui, stop: RouteStop): string {
+  const button = `<button type="button" class="lx-goodpick__button" aria-haspopup="listbox" aria-expanded="${v.goodsOpen}" ${act("goods-menu")}>`
+    + `${commodityIcon(v.good)}<span>${esc(label(v.good))}</span><i aria-hidden="true">▾</i></button>`;
+  if (!v.goodsOpen) return `<div class="lx-goodpick">${button}</div>`;
+  const held = (c: Commodity) => Number(stockAt(st, stop, c) > 0);
+  const goods = knownCommodities().sort((a, b) => held(b) - held(a));
+  const tabs = goodsTabsOf(goods);
+  const tab = pickGoodsTab(v.goodsTab, tabs);
+  const strip = tabs.length > 1 ? `<nav class="lx-goodpick__tabs" aria-label="Goods">${tabs.map(t =>
+    `<button type="button" aria-selected="${t === tab}" ${act("goods-tab", `data-goods-tab="${t}"`)}>${GOODS_TAB_LABEL[t]}</button>`).join("")}</nav>` : "";
+  const rows = goods.filter(c => goodsTab(c) === tab).map(c =>
+    `<button type="button" role="option" aria-selected="${c === v.good}" class="lx-goodpick__item" ${act("pick-good", `data-good="${c}"`)}>`
+    + `${commodityIcon(c)}<span>${esc(label(c))}</span></button>`).join("");
+  return `<div class="lx-goodpick is-open">${button}<div class="lx-goodpick__menu">${strip}`
+    + `<div class="lx-goodpick__list" role="listbox" aria-label="Commodity">${rows}</div></div></div>`;
+}
+
+/** §route-picker: Escape closes an open goods list before anything else. */
+export function closeIndustryMenu(st: ViewState): boolean {
+  const v = views.get(st);
+  if (!v?.goodsOpen) return false;
+  v.goodsOpen = false;
+  return true;
+}
+
+/** The picked good beside the dropdown. At the Hub, what the units typed
+ * cost at the latest prices when the route buys there (only what the
+ * warehouse lacks: it loads first), or fetch when the stop sells; otherwise
+ * what the warehouse holds. Elsewhere what the port holds. */
+function pickerQuote(st: ViewState, route: FreightRoute, stop: RouteStop, side: Side, good: Commodity, qty: number): string {
+  if (stop.port.kind !== "hub") return `${stockAt(st, stop, good).toLocaleString()} here`;
+  const stored = Math.floor(st.wallet?.warehouse?.find(slot => slot.commodity === good)?.units ?? 0);
+  const warehouse = `${stored.toLocaleString()} in the warehouse`;
+  if (side === "load") {
+    const buy = Math.max(0, qty - stored);
+    const total = route.shopping_budget != null && buy > 0 ? hubQuote(st, good, buy, "buy") : null;
+    return total == null ? warehouse : `≈ −${cr(total)}${stored > 0 ? ` · ${warehouse}` : ""}`;
+  }
+  const total = stop.sell ? hubQuote(st, good, Math.max(1, qty), "sell") : null;
+  return total == null ? warehouse : `≈ +${cr(total)}`;
+}
+
+/** The money row's sale: what the route sells at the Hub ("Alloys sale"), or
+ * "Sales" for several goods. Peter (Nov 11 2026): it said "Ore sale" for the
+ * charter's Alloys. */
+function saleLabel(route: FreightRoute): string {
+  const goods = [...new Set(route.stops.filter(s => s.port.kind === "hub" && s.sell)
+    .flatMap(s => Object.keys(s.unload) as Commodity[]))];
+  return goods.length === 1 ? `${label(goods[0])} sale` : "Sales";
 }
 
 function editorHtml(st: ViewState, v: Ui, fleet: GhostView, names: Map<string, string>, standalone: boolean): string {
   const route = v.route, cap = fleetTradeCapacity(fleet), n = route.stops.length;
-  const after = routeAboard(route, aboard(fleet));
+  // §route-edit: an edit of the trip under way counts from where it is, not
+  // from the first stop again on top of the cargo already aboard.
+  const served = fleet.industry?.kind === "route" ? fleet.industry.run : null;
+  const resume = v.revising ? routeResume(served, route) : null;
+  const after = routeAboardFrom(route, aboard(fleet), resume);
   const reason = freightRouteReason(st, fleet, route);
   // Hub shopping only buys what fits; anywhere else an overfull load stalls the Freighter.
-  const overflow = after.findIndex((units, i) => units > cap && !(route.stops[i].port.kind === "hub" && route.shopping_budget != null));
+  const overflow = after.findIndex((units, i) => units != null && units > cap && !(route.stops[i].port.kind === "hub" && route.shopping_budget != null));
   const legs = routeLegSeconds(st, fleet, route), run = legs.every(s => s != null) ? legs.reduce((a, b) => a! + b!, 0)! : null;
   const money = routeHubEstimate(st, route);
   const maxStops = stopCap(st);
@@ -375,25 +448,28 @@ function editorHtml(st: ViewState, v: Ui, fleet: GhostView, names: Map<string, s
   const rows = (m: Manifest, stop: number, side: Side) => {
     const entries = Object.entries(m) as [Commodity, number][];
     return entries.length ? `<div class="lx-cargo">${entries.map(([c, units]) => `<div class="lx-cargo__row">${commodityIcon(c)}<span>${esc(label(c))}</span>`
-      + `<input type="number" min="0" max="${cap}" value="${units}" aria-label="${side === "load" ? "Load" : "Unload"} ${esc(label(c))} at stop ${stop + 1}" ${field("manifest", `data-stop="${stop}" data-side="${side}" data-good="${c}"`)}>`
+      + `<input type="number" min="0" max="${roomFits(c, cap, 0)}" value="${units}" aria-label="${side === "load" ? "Load" : "Unload"} ${esc(label(c))} at stop ${stop + 1}" ${field("manifest", `data-stop="${stop}" data-side="${side}" data-good="${c}"`)}>`
       + `<button type="button" class="lx-x" ${act("drop-cargo", `data-stop="${stop}" data-side="${side}" data-good="${c}"`)} aria-label="Remove ${esc(label(c))}">×</button></div>`).join("")}</div>`
       : `<p class="lx-none">Nothing</p>`;
   };
   const picker = (stop: number, side: Side) => v.picker?.stop === stop && v.picker.side === side
-    ? `<div class="lx-picker" role="group" aria-label="Add cargo"><select aria-label="Commodity" ${field("good")}>${goodsOptions(st, route.stops[stop], v.good)}</select>`
-      + `<input type="number" min="1" max="${cap}" value="${v.qty}" aria-label="Units" ${field("qty")}><button type="button" class="lx-primary" ${act("add-cargo", `data-stop="${stop}" data-side="${side}"`)}>Add</button>`
+    ? `<div class="lx-picker" role="group" aria-label="Add cargo">${goodsPicker(st, v, route.stops[stop])}`
+      + `<small class="lx-picker__quote" aria-live="polite">${esc(pickerQuote(st, route, route.stops[stop], side, v.good, v.qty))}</small>`
+      + `<input type="number" min="1" max="${cap * ROOM_SCALE}" value="${v.qty}" aria-label="Units" ${field("qty")}><button type="button" class="lx-primary" ${act("add-cargo", `data-stop="${stop}" data-side="${side}"`)}>Add</button>`
       + `<button type="button" class="lx-quiet" ${act("close-pick")}>Cancel</button></div>`
     : `<button type="button" class="lx-add" ${act("open-pick", `data-stop="${stop}" data-side="${side}"`)}>+ Add</button>`;
   const columns = route.stops.map((stop, i) => {
     const hub = stop.port.kind === "hub", station = stop.port.kind === "station";
-    return `<article class="lx-estop${after[i] > cap ? " is-over" : ""}" aria-label="Stop ${i + 1}"><header><span class="lx-estop__n">${i + 1}</span>`
+    const held = after[i];
+    return `<article class="lx-estop${held != null && held > cap ? " is-over" : ""}" aria-label="Stop ${i + 1}"><header><span class="lx-estop__n">${i + 1}</span>`
       + `<select aria-label="Stop ${i + 1} port" ${field("port", `data-stop="${i}"`)}>${ports(routePortId(stop.port))}</select>`
       + `${n > 2 ? `<button type="button" class="lx-x" ${act("remove-stop", `data-stop="${i}"`)} aria-label="Remove stop ${i + 1}">×</button>` : ""}</header>`
       // §belts: a station stop only loads.
       + (station ? "" : `<h5>${hub && stop.sell ? "Unload and sell" : "Unload"}</h5>${rows(stop.unload, i, "unload")}${picker(i, "unload")}`)
       + `<h5>${hub ? (shopping ? "Buy and load" : "Load from the warehouse") : station ? "Load from the station" : "Load"}</h5>${rows(stop.load, i, "load")}${picker(i, "load")}`
       + `${hub ? `<label class="lx-check"><input type="checkbox" ${field("sell", `data-stop="${i}"`)} ${stop.sell ? "checked" : ""}> Sell what it unloads here</label>` : ""}`
-      + `<p class="lx-aboard"><span>Aboard after</span><b class="${after[i] > cap ? "is-warn" : ""}">${amount(after[i])} / ${amount(cap)}</b></p></article>`;
+      + (held == null ? `<p class="lx-aboard"><span>Done this trip</span></p></article>`
+        : `<p class="lx-aboard"><span>Aboard after</span><b class="${held > cap ? "is-warn" : ""}" title="${HOLD_ROOM_TIP}">${fmtRoom(held * ROOM_SCALE)} / ${amount(cap)}</b></p></article>`);
   }).join("");
   const escorts = st.ghosts.filter(g => g.id !== fleet.id && guardCapable(g));
   const settings = `<section class="lx-settings" aria-label="Route settings">`
@@ -408,7 +484,7 @@ function editorHtml(st: ViewState, v: Ui, fleet: GhostView, names: Map<string, s
       + `<label>Route name<input maxlength="48" value="${esc(route.name)}" ${field("name")}></label></div>` : "")
     + `</section>`;
   const note = reason ? `<span class="is-warn">${esc(reason)}</span>`
-    : overflow >= 0 ? `<span class="is-warn">After stop ${overflow + 1} the hold would carry ${amount(after[overflow])} of ${amount(cap)}. Unload more first.</span>`
+    : overflow >= 0 ? `<span class="is-warn">After stop ${overflow + 1} the hold would carry ${fmtRoom((after[overflow] ?? 0) * ROOM_SCALE)} of ${amount(cap)}. Unload more first.</span>`
     : [run != null ? `≈ ${dur(run)} per run` : "", money && money.sold > 0 ? `sells ≈ ${cr(money.sold)}` : "", money && money.bought > 0 ? `buys ≈ ${cr(money.bought)}` : ""].filter(Boolean).join(" · ")
       || "Departs when the cargo, fuel and escort are ready.";
   return `<div class="lx-lead"><div><span class="lx-label">Route editor</span><h3>${esc(route.name || "Route")}</h3><p>${route.stops.map(s => esc(portName(st, s.port))).join(" → ")} · ${route.repeat ? "repeats" : "one trip"}</p></div>`
@@ -428,7 +504,7 @@ function plannerHtml(st: ViewState, v: Ui): string {
   const limits = [p.capacityLimited && "Processing capacity", p.workforceLimited && "Workforce", p.feedstockLimited && "Feedstock", p.freightLimited && "Freight"].filter(Boolean);
   return `<section class="industry-panel"><h3>Production planner</h3><div class="industry-grid">
     <label>Colony<select ${field("system")}>${sites.map(s => option(s.id,sysName(st,s.id),v.system)).join("")}</select></label>
-    <label>Output<select ${field("output")}>${COMMODITIES.map(c => option(c,label(c),v.output)).join("")}</select></label>
+    <label>Output<select ${field("output")}>${knownCommodities().map(c => option(c,label(c),v.output)).join("")}</select></label>
     <label>Target / minute<input type="number" min="0.1" step="1" value="${v.rate}" ${field("rate")}></label></div>
     <p><b>${limits.join(" · ") || "Rated output covered"}</b></p><p>Staffed ${amount(p.staffed)}/min · installed ${amount(p.rated)}/min · workforce ${s.workforce?.posted ?? 0}/${s.workforce?.units ?? 0}</p>
     <small>Planning from the latest received reports. Freight is a cruise-speed ceiling, not an arrival promise.</small>
@@ -450,7 +526,7 @@ function projectsHtml(st: ViewState, v: Ui): string {
   const buildReason = s ? colonyProjectReason(st,s,v.body,v.project,v.resource) : "Choose a colony.";
   const cost = (t: ProjectTarget) => t.kind === "development" ? catalog?.projects.find(p => p.kind === t.project)?.costs ?? []
     : (st.galaxy?.build_options.find(b => b.key === (t.kind === "academy" ? "academy" : t.kind))?.costs ?? []).map(x => [x.commodity,x.units] as [Commodity,number]);
-  const descriptions = { orbital_assembly: "Shipyard II · Fusion Reactors · Composites + Precision Components + Iridium → Hull Sections and Warp Cores.",
+  const descriptions = { orbital_assembly: "Shipyard II · Autoforges · Composites + Precision Components → Hull Sections, Fission Reactors and Zephyr Drives.",
     agricultural_export: "Habitable Biomass world · Biomass + Polymers → bulk Provisions.",
     deep_extraction: "Mineral deposit · Machinery → deep reserves of one chosen mineral." };
   return `<section class="industry-panel"><h3>Projects & reserves</h3><label>Colony<select ${field("system")}>${sites.map(s => option(s.id,sysName(st,s.id),v.system)).join("")}</select></label>
@@ -466,7 +542,7 @@ function projectsHtml(st: ViewState, v: Ui): string {
       <small>Imports / min: ${spec ? goods(Object.fromEntries(spec.inputs.map(([c,n]) => [c,n*60]))) : "—"}</small>
       <button type="button" ${act("build-project")} ${buildReason ? "disabled" : ""}>Build ${projectName(target)}</button>${buildReason ? `<small>${esc(buildReason)}</small>` : ""}</section>`}` : `<p>No owned colonies.</p>`}</section>` + outpostsHtml(st,v);
 }
-function resourceSelect(value: Commodity, name: string, list = COMMODITIES): string {
+function resourceSelect(value: Commodity, name: string, list = knownCommodities()): string {
   return `<label>Resource<select ${field(name)}>${list.map(c => option(c,label(c),value)).join("")}</select></label>`;
 }
 function outpostsHtml(st: ViewState, v: Ui): string {
@@ -575,8 +651,8 @@ export function handleIndustryInput(el: HTMLInputElement | HTMLSelectElement, st
   return true;
 }
 /** Stage a route (and its escort's guard order) behind the standard confirmation. */
-function stageRoute(ctx: CoreContext, v: Ui, fleetId: string, route: FreightRoute): void {
-  const commands: FleetCommand[] = [{type:"SetFreightRoute",fleet_id:fleetId,route:structuredClone(route)}];
+function stageRoute(ctx: CoreContext, v: Ui, fleetId: string, route: FreightRoute, revise = false): void {
+  const commands: FleetCommand[] = [{type:"SetFreightRoute",fleet_id:fleetId,route:structuredClone(route),...revise ? {revise} : {}}];
   if (route.escort) commands.push({type:"GuardFleet",interceptor_id:route.escort,target_id:fleetId});
   v.sent = { fleet: fleetId, seen: false };
   ctx.intent.beginFleetCommand(commands);
@@ -601,15 +677,15 @@ export function handleIndustryAction(el: HTMLElement, ctx: CoreContext): boolean
     ctx.send({type:"SetDepotRule",system_id:el.dataset.system,commodity:el.dataset.good as Commodity,target:0});
     v.feedback = "Depot rule cleared.";
   }
-  else if (a === "pick-fleet" && el.dataset.fleet) { v.fleet = el.dataset.fleet; v.editing = false; v.picker = null; }
-  else if (a === "new-route") { v.route = supplyDraft(st); v.editing = true; v.picker = null; }
-  else if (a === "close-editor") { v.editing = false; v.picker = null; }
+  else if (a === "pick-fleet" && el.dataset.fleet) { v.fleet = el.dataset.fleet; v.editing = false; v.picker = null; v.revising = false; }
+  else if (a === "new-route") { v.route = supplyDraft(st); v.editing = true; v.picker = null; v.revising = false; }
+  else if (a === "close-editor") { v.editing = false; v.picker = null; v.revising = false; }
   else if (a === "advanced") v.advanced = !v.advanced;
   else if (a === "basket") {
     const home = homeSystem(st), good = el.dataset.good as Commodity, step = Number(el.dataset.step);
     if (!home || !fleet || !good || !step) return true;
     const basket = { ...(v.basket ?? openingImportPlan(st, home, shipmentGoal(st)).manifest) };
-    if (step > 0 && total(basket) >= fleetTradeCapacity(fleet)) return true;
+    if (step > 0 && basketRoom(basket) + commodityRoom(good) > fleetTradeCapacity(fleet) * ROOM_SCALE) return true;
     basket[good] = Math.max(0, (basket[good] ?? 0) + step);
     v.basket = basket;
   }
@@ -619,7 +695,7 @@ export function handleIndustryAction(el: HTMLElement, ctx: CoreContext): boolean
     if (!home || !f) return true;
     v.fleet = f.id;
     const route = firstShipmentRoute(home, f, defaultEscort(st, f)?.id ?? null, v.basket ?? openingImportPlan(st, home, shipmentGoal(st)).manifest, v.cap);
-    if (a !== "send-shipment") { v.route = route; v.editing = true; v.picker = null; v.tab = "routes"; return true; }
+    if (a !== "send-shipment") { v.route = route; v.editing = true; v.picker = null; v.revising = false; v.tab = "routes"; return true; }
     const reason = freightRouteReason(st, f, route);
     if (reason) { v.feedback = reason; return true; }
     stageRoute(ctx, v, f.id, route);
@@ -628,7 +704,8 @@ export function handleIndustryAction(el: HTMLElement, ctx: CoreContext): boolean
     const source = st.ghosts.find(g => g.own && g.id === (el.dataset.fleet ?? v.fleet))?.industry;
     if (source?.kind !== "route") return true;
     if (a === "run-again") stageRoute(ctx, v, v.fleet, source.run.route);
-    else { v.route = structuredClone(source.run.route); v.editing = true; v.picker = null; }
+    // §route-edit: an edit of the trip under way keeps its place.
+    else { v.route = structuredClone(source.run.route); v.editing = true; v.picker = null; v.revising = source.run.phase !== "complete"; }
   }
   else if (a === "stop" && el.dataset.fleet) ctx.intent.beginFleetCommand({type:"SetFreightRoute",fleet_id:el.dataset.fleet,route:null});
   else if (a === "add-stop" && v.route.stops.length < stopCap(st)) {
@@ -639,20 +716,29 @@ export function handleIndustryAction(el: HTMLElement, ctx: CoreContext): boolean
   else if (a === "open-pick" && (el.dataset.side === "load" || el.dataset.side === "unload")) {
     const stop = Number(el.dataset.stop), port = v.route.stops[stop]?.port;
     v.picker = { stop, side: el.dataset.side };
+    v.goodsOpen = false;
     // Loading at a colony suggests its largest free stock first.
     const system = port?.kind === "system" ? st.systems.find(s => s.id === port.id) : undefined;
     if (system && el.dataset.side === "load") {
-      const best = [...COMMODITIES].sort((x, y) => availableStock(system, y) - availableStock(system, x))[0];
+      const best = knownCommodities().sort((x, y) => availableStock(system, y) - availableStock(system, x))[0];
       if (best && availableStock(system, best) > 0) v.good = best;
     }
   }
-  else if (a === "close-pick") v.picker = null;
-  else if (a === "add-cargo") { const stop = v.route.stops[Number(el.dataset.stop)]; const side = el.dataset.side; if (stop && (side === "load" || side === "unload")) stop[side][v.good] = v.qty; v.picker = null; }
+  else if (a === "close-pick") { v.picker = null; v.goodsOpen = false; }
+  else if (a === "add-cargo") { const stop = v.route.stops[Number(el.dataset.stop)]; const side = el.dataset.side; if (stop && (side === "load" || side === "unload")) stop[side][v.good] = v.qty; v.picker = null; v.goodsOpen = false; }
+  // §route-picker: the styled goods list.
+  else if (a === "goods-menu") { v.goodsOpen = !v.goodsOpen; if (v.goodsOpen) v.goodsTab = goodsTab(v.good); }
+  else if (a === "goods-tab") { if (isGoodsTab(el.dataset.goodsTab)) v.goodsTab = el.dataset.goodsTab; }
+  else if (a === "pick-good") {
+    const good = el.dataset.good as Commodity | undefined;
+    if (good && knownCommodities().includes(good)) v.good = good;
+    v.goodsOpen = false;
+  }
   else if (a === "drop-cargo") { const stop = v.route.stops[Number(el.dataset.stop)]; const side = el.dataset.side; if (stop && (side === "load" || side === "unload")) delete stop[side][el.dataset.good as Commodity]; }
   else if (a === "assign" && fleet) {
     const reason = freightRouteReason(st,fleet,v.route);
     if (reason) { v.feedback = reason; return true; }
-    stageRoute(ctx, v, fleet.id, v.route);
+    stageRoute(ctx, v, fleet.id, v.route, v.revising);
   } else if (a === "reserve") { const target = targets(st).find(t => key(t) === el.dataset.target); if (target) { ctx.send({type:"ReserveProject",system_id:v.system,target,reserve:el.dataset.on === "true"}); v.feedback = "Reservation order sent; awaiting the system report."; } }
   else if (a === "build-project") {
     const s = st.systems.find(s => s.id === v.system), reason = s ? colonyProjectReason(st,s,v.body,v.project,v.resource) : "Choose a colony.";

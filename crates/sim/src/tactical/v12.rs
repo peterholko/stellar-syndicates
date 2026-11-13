@@ -105,6 +105,11 @@ pub(super) struct Volley<'a> {
     /// §research-wiring: a Lance Array, which Reflective Plating blunts twice
     /// over.
     pub lance: bool,
+    /// v17: the fleet magazine these guns draw on (none before v17, for NPC
+    /// fleets and platforms), and the hull's beam guns, whose crystals one
+    /// shot wears.
+    pub magazine: Option<EntityId>,
+    pub beam_guns: f64,
 }
 
 /// Fire combatant `i`'s guns at the in-range candidates (`cid`, v6 target
@@ -120,6 +125,12 @@ pub(super) fn volley(state: &mut TacticalState, i: usize, cands: &[(u32, f64, f6
     for _ in 0..v.shots {
         let live: Vec<usize> = (0..cands.len()).filter(|&k| state.combatants[at[k]].hp > 0.0).collect();
         let Some(&last) = live.last() else { break };
+        // v17: worn crystals hit softer; a torpedo or slug leaves the magazine
+        // as it fires, and a rack that just ran dry holds the rest of the volley.
+        let crystal = if v.family == DamageType::Beam { state.crystal_factor(v.magazine) } else { 1.0 };
+        if !state.fire_round(v.magazine, v.family, v.beam_guns) {
+            break;
+        }
         let total: f64 = live.iter().map(|&k| cands[k].1).sum();
         let mut roll = state.rng.next_f64() * total;
         let mut pick = last;
@@ -139,7 +150,7 @@ pub(super) fn volley(state: &mut TacticalState, i: usize, cands: &[(u32, f64, f6
             let armed = platform || rules_v1::attack_weight(target_kind) > 0.0;
             v11::gun_weight(kind, v.family, armed.then_some((mass, platform)), v.aw, math)
         };
-        let base = v.per_gun * aw * HIT_DMG_CAL * v.aff * v.opening * v.raid * v.research * v.fortune
+        let base = v.per_gun * aw * HIT_DMG_CAL * v.aff * v.opening * v.raid * v.research * v.fortune * crystal
             * if platform { v.siege * v.vs_defenses } else { 1.0 };
         let armoured = !platform || (v.mount_armour && state.combatants[at[pick]].mount.is_some());
         let track = if !v.platform && !platform && super::v13::tracks_poorly(kind, target_kind) {

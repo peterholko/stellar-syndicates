@@ -171,8 +171,10 @@ impl World {
             }
             && opportunity.costs.iter().all(|(c, n)| fleet.cargo_stacks().iter()
                 .filter(|s| s.commodity == *c).map(|s| s.units).sum::<u32>() >= *n)
-            && (task != ExpeditionTask::Extract || (opportunity.cargo.values().any(|n| *n > 0)
-                && fleet.cargo_units().saturating_sub(opportunity.costs.values().sum()) < fleet.cargo_capacity()));
+            // §hold-room: with the supplies spent, a unit of the cache fits.
+            && (task != ExpeditionTask::Extract || crate::ship::HoldRoom::new(fleet.cargo_capacity(),
+                    fleet.hold_used().saturating_sub(crate::cargo::manifest_quarters(&opportunity.costs)))
+                .fits_any(opportunity.cargo.iter().filter(|(_, n)| **n > 0).map(|(c, _)| *c)));
         if !ready { self.reject_deep_expedition(id, player, site_id, events); return; }
         let fleet = self.fleets.get_mut(&id).unwrap();
         for (&kind, &units) in &opportunity.costs { fleet.remove_cargo(kind, units); }
@@ -181,7 +183,7 @@ impl World {
             // Conservation and charging happen atomically at completion. An
             // interruption consumes no supplies and grants no partial discovery.
             for (&kind, amount) in &mut site.details.opportunity.as_mut().unwrap().cargo {
-                let taken = (*amount).min(fleet.cargo_capacity().saturating_sub(fleet.cargo_units()));
+                let taken = (*amount).min(fleet.cargo_room().fits(kind));
                 fleet.add_cargo(kind, taken);
                 *amount -= taken;
             }
@@ -423,7 +425,7 @@ mod tests {
         let before = w.fleets[&b].cargo_stacks();
         w.finish_deep_expedition(b, p, site, ExpeditionTask::Extract, &mut vec![]);
         assert_eq!(w.fleets[&b].cargo_stacks(), before, "exhausted cache consumes no more supplies");
-        for id in [a, b] { assert!(w.fleets[&id].cargo_units() <= w.fleets[&id].cargo_capacity()); }
+        for id in [a, b] { assert!(w.fleets[&id].cargo_fits(w.fleets[&id].cargo_capacity())); }
         arrive(&mut w);
         assert_eq!(w.exploration.sites[&site].known[&p].details.as_ref().unwrap().opportunity.as_ref().unwrap().cargo[&C::Volatiles], 0);
     }
@@ -437,11 +439,14 @@ mod tests {
         w.fleets.get_mut(&f).unwrap().add_cargo(C::Deuterium, 6);
         w.finish_deep_expedition(f, p, site, ExpeditionTask::Extract, &mut vec![]);
         assert_eq!(w.fleets[&f].cargo_units(), 6);
+        // §hold-room: with the supplies spent, 15 room units are free: 30
+        // Rare Elements (half a room each) and the hold is full.
         w.fleets.get_mut(&f).unwrap().add_cargo(C::Polymers, 8);
-        w.fleets.get_mut(&f).unwrap().add_cargo(C::Alloys, ShipKind::Convoy.cargo_units() - 15);
+        w.fleets.get_mut(&f).unwrap().add_cargo(C::MetallicOre, ShipKind::Convoy.cargo_units() - 15);
         w.finish_deep_expedition(f, p, site, ExpeditionTask::Extract, &mut vec![]);
-        assert_eq!(w.fleets[&f].cargo_units(), ShipKind::Convoy.cargo_units());
-        assert_eq!(w.exploration.sites[&site].details.opportunity.as_ref().unwrap().cargo.values().sum::<u32>(), 132 - 15);
+        assert_eq!(w.fleets[&f].hold_used(), ShipKind::Convoy.cargo_units() as u64 * crate::cargo::ROOM_SCALE as u64);
+        assert_eq!(w.fleets[&f].cargo_amount(C::RareElements), 30);
+        assert_eq!(w.exploration.sites[&site].details.opportunity.as_ref().unwrap().cargo.values().sum::<u32>(), 132 - 30);
     }
 
     #[test]
@@ -536,12 +541,9 @@ mod tests {
             for (c, cost) in crate::build::module_recipe(module).costs { assert_eq!(sys.stockpile[c], before[c] - cost); }
             w.tick += 10_000; w.resolve_builds(&mut vec![]);
             assert!(w.build_queue.is_empty());
-            assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().modules[&module], 1);
-            let credits = w.players[&p].credits;
-            let fleets = w.fleets.len();
-            w.apply_now(&Command::BuyModule { player_id: p, module, n: 1, dest_system: home }, &mut vec![]);
-            assert_eq!(w.players[&p].credits, credits);
-            assert_eq!(w.fleets.len(), fleets, "a license does not unlock an infinite Authority supply");
+            assert_eq!(w.systems.iter().find(|s| s.id == home).unwrap().module_stock(module), 1);
+            // §modules-as-goods: a license does not unlock an Authority supply.
+            assert_eq!(w.market.available_to_buy(module.good()), 0);
         }
     }
 

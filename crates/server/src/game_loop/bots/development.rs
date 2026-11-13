@@ -122,8 +122,8 @@ impl Bot {
             "development: awaiting reported construction completion".into()
         } else if self.recovering(p) {
             "development: protecting operating cash before investment".into()
-        } else if p.fuel_critical() {
-            "development: awaiting operating fuel".into()
+        } else if let Some((fuel, have, target)) = p.critical_fuel() {
+            format!("development: awaiting operating fuel ({} {have:.0} of {target:.0})", fuel.display_name())
         } else if let Some(project) = project {
             let missing: Vec<_> = p.project_costs(project).into_iter()
                 .filter(|(c, n)| p.stock(*c) + 1e-9 < *n)

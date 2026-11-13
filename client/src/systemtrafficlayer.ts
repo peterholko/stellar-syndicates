@@ -75,6 +75,8 @@ const COL_THREAT = 0xff4d4d;
 /** §belts: the spacing of a belt's working fleets along its band. */
 const BELT_ARC_STEP = 0.16;
 const COL_SIEGE = 0xffb347;
+/** §veil: the aurora of an ionised sky. */
+const COL_VEIL = 0x7df9c6;
 const SHIP_ART_FACING = Math.PI / 2;
 
 const KIND_LABEL: Record<ShipKind, string> = {
@@ -703,6 +705,22 @@ export class SystemTrafficLayer {
         .lineTo(body.sx + Math.cos(a1) * rx, body.sy + Math.sin(a1) * ry);
     }
     g.stroke({ width: 1.6, color: COL_THREAT, alpha: 0.4 + 0.35 * pulse });
+    // §veil: the ionised sky — an aurora shell just above the world, slowly
+    // breathing, that the cordon's guns can't reach through.
+    if (siege.veil) {
+      const shimmer = 0.5 + 0.5 * Math.sin(now / 1400);
+      const ax = body.r * 1.18 + 2 * shimmer;
+      g.ellipse(body.sx, body.sy, ax + 5, (ax + 5) * RING_TILT).stroke({ width: 7, color: COL_VEIL, alpha: 0.10 + 0.08 * shimmer });
+      g.ellipse(body.sx, body.sy, ax, ax * RING_TILT).stroke({ width: 2, color: COL_VEIL, alpha: 0.55 + 0.25 * shimmer });
+      const seg = 36;
+      for (let i = 0; i < seg; i++) {
+        const a = (i / seg) * Math.PI * 2 - now / 6000;
+        const h = 3 + 4 * (0.5 + 0.5 * Math.sin(a * 5 + now / 700));
+        g.moveTo(body.sx + Math.cos(a) * ax, body.sy + Math.sin(a) * ax * RING_TILT)
+          .lineTo(body.sx + Math.cos(a) * (ax + h), body.sy + Math.sin(a) * (ax + h) * RING_TILT);
+      }
+      g.stroke({ width: 1, color: COL_VEIL, alpha: 0.35 });
+    }
     const caption = siege.badge ?? "LANDING UNDER WAY";
     if (siege.progress !== null) {
       const r2 = rx + 7;
@@ -723,6 +741,7 @@ export class SystemTrafficLayer {
     const hy = frame.headline.y + 12;
     this.text(`${caption.startsWith("CONTEST") ? "⚔" : "⛔"} ${caption}`, hx, hy, COL_THREAT, 0.5, 10, true);
     const detail: string[] = [];
+    if (siege.veil) detail.push("VEIL UP");
     if (siege.landing) detail.push(`LANDING ${Math.round(siege.landing.marines * 100)}% vs ${Math.round(siege.landing.defenders * 100)}%`);
     if (siege.suppression > 0.02) detail.push(`GARRISON PINNED ${Math.round(siege.suppression * 100)}%`);
     if (detail.length) this.text(detail.join(" · "), hx, hy + 14, COL_SIEGE, 0.5, 9, true);

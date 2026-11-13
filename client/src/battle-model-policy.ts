@@ -53,7 +53,6 @@ export interface BattleModelFrame {
   ships: readonly BattleModelShip[];
   bursts: readonly BattleBurst[];
   tier: number;
-  reducedMotion: boolean;
   /** Hull pitch (rad). Negative leans hulls as seen from the battlefield's
    * lower (near) edge, as every angled view in the game is; −inclination lays
    * them in an angled battlefield. Defaults to the top-down lean. */

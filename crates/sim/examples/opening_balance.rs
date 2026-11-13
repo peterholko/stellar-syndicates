@@ -300,7 +300,7 @@ fn run(seed: u64, strategy: Strategy) -> Result<String, String> {
     })?;
 
     // Industry · 3: a Survey Probe charts the assigned local stop.
-    world.step(&[Command::BuildShip {
+    world.step(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
         player_id: owner,
         system_id: home,
         ship_kind: ShipKind::SurveyProbe,
@@ -367,7 +367,7 @@ fn run(seed: u64, strategy: Strategy) -> Result<String, String> {
             job.system == home && matches!(job.what, sim::build::BuildKind::Ship { .. })
         })
     })?;
-    world.step(&[Command::BuildShip {
+    world.step(&[Command::BuildShip { reactor: Default::default(), drive: Default::default(),
         player_id: owner,
         system_id: home,
         ship_kind: ShipKind::MiningBarge,

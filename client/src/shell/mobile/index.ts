@@ -1,5 +1,7 @@
 import "../../styles/mobile.css";
+import { coach, CONTRACT_COACH } from "../coach";
 import { commsBadge } from "../../core/derive/social";
+import { bindResearchNet } from "../../core/derive/research";
 import { bindAccountForm } from "../account";
 
 import { intentReadinessWarnings } from "../../core/derive/readiness";
@@ -61,6 +63,8 @@ class MobileShell implements Shell {
     this.root = root;
     this.ctx = ctx;
     this.abort = new AbortController();
+    // §research-panel: both shells send research queues through the shared guard.
+    bindResearchNet(() => ctx.net);
     mountMobileMarkup(root);
     installPressGuard();
 
@@ -97,6 +101,12 @@ class MobileShell implements Shell {
       armMove: (id) => this.map?.armMove(id),
       enterSystem: (id) => this.map?.enterSystem(id),
       flyIntoSystem: (id) => { if (!this.map?.flyInto(id)) this.map?.enterSystem(id); },
+      followShipment: (id) => {
+        const home = foundingHomeSystemId();
+        if (!home) return;
+        this.focusShipment(id, home);
+        this.ctx?.renderer.trackShipment(id, home);
+      },
       exitSemantic: () => this.map?.exitSemanticView(),
       notice: (html) => this.notices?.push(html),
     });
@@ -199,6 +209,31 @@ class MobileShell implements Shell {
     this.map.focusFleet(id);
     renderer.frameRaid(raider.pos, home.pos);
     this.notices?.push({ html: `<b>Raider detected</b> · on course for ${escapeHtml(home.name)}`, tone: "bad", durationMs: 20_000 });
+  }
+
+  /** §privateer-contract: the Operations sheet, the charter's contract on
+   * top, its Accept ringed. */
+  openContract(): void {
+    this.openSheet({ id: "operations" });
+    coach("contract-accept", CONTRACT_COACH);
+  }
+
+  /** §export-follow (Peter, Nov 2 2026): the first shipment's departure takes
+   * the player to the freighter, selected and framed with home above the
+   * sheet, to follow it out of the well. */
+  focusShipment(id: string, homeId: string): void {
+    const renderer = this.ctx?.renderer;
+    const freighter = this.ctx?.state.ghosts.find((entry) => entry.id === id);
+    const home = this.ctx?.state.galaxy?.systems.find((entry) => entry.id === homeId);
+    if (!renderer || !this.map || !freighter || !home || renderer.viewMode.type === "battle") return;
+    if (renderer.viewMode.type === "system") {
+      renderer.exitSystemView();
+      renderer.setSystemDynamic([], [], true);
+    }
+    this.sheets?.closeAll();
+    this.map.focusFleet(id);
+    renderer.frameRaid(freighter.pos, home.pos);
+    this.notices?.push({ html: `<b>First shipment</b> · follow it to the hyperlimit`, tone: "info", durationMs: 20_000 });
   }
 
   onCore(events: CoreEvent[]): void {
@@ -388,6 +423,7 @@ class MobileShell implements Shell {
     this.foundingResizeObserver = null;
     document.documentElement.style.removeProperty("--mobile-founding-stack-height");
     this.abort = null;
+    bindResearchNet(() => null);
     this.root?.replaceChildren();
     this.root = null;
     this.ctx = null;
